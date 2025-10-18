@@ -14,6 +14,57 @@
       ...
     }:
     {
+      nixosModules.nirion-v2 =
+        { config, lib, ... }:
+        {
+          options.virtualisation.nirion.projects = lib.mkOption {
+            type = lib.types.attrsOf (lib.types.anything);
+            default = { };
+            description = "Arion project configuration with lockfile support";
+          };
+
+          config.virtualisation.arion.projects = lib.mapAttrs (
+            projectName: projectConfig:
+            let
+              services = projectConfig.settings.services or { };
+              resolvedServices = lib.mapAttrs (
+                serviceName: serviceConfig:
+                let
+                  service = serviceConfig.service or { };
+                  lockedImage = service.locked_image or null;
+                in
+                if lockedImage != null then
+                  serviceConfig
+                  // {
+                    service =
+                      let
+                        newImage = config.virtualisation.nirion.locked_images.${lockedImage};
+                      in
+                      assert
+                        (!builtins.hasAttr "image" service || service.image == newImage)
+                        || builtins.throw ''
+                          Conflicting image definitions for service:
+                          existing image: ${service.image}
+                          locked image: ${newImage}
+                        '';
+                      (removeAttrs service [ "locked_image" ])
+                      // {
+                        image = newImage;
+                      };
+                  }
+                else
+                  serviceConfig
+              ) services;
+            in
+            projectConfig
+            // {
+              settings = (projectConfig.settings or { }) // {
+                services = resolvedServices;
+              };
+            }
+          ) config.virtualisation.nirion.projects;
+        };
+
       nixosModules.nirion =
         {
           config,
@@ -23,6 +74,7 @@
         }:
         let
           arionProjects = config.virtualisation.arion.projects;
+
           projectMapping = lib.concatStringsSep "\n" (
             builtins.attrValues (
               lib.attrsets.mapAttrs' (name: project: {
@@ -31,11 +83,17 @@
               }) arionProjects
             )
           );
+
           imageNameRefs = lib.concatStringsSep "\n" (
-            lib.attrsets.mapAttrsToList (name: ref: "${name}=${ref}") config.nirion.images
+            lib.attrsets.mapAttrsToList (name: ref: "${name}=${ref}") config.virtualisation.nirion.images
           );
+
           lockFileOutputStr =
-            if config.nirion.lockFileOutput != null then toString config.nirion.lockFileOutput else "";
+            if config.virtualisation.nirion.lockFileOutput != null then
+              toString config.virtualisation.nirion.lockFileOutput
+            else
+              "";
+
           nirionScript = pkgs.writeScriptBin "nirion" ''
             #!/usr/bin/env bash
             set -e
@@ -159,8 +217,12 @@
           '';
         in
         {
+          imports = [
+            self.nixosModules.nirion-v2
+          ];
+
           options = {
-            nirion = {
+            virtualisation.nirion = {
               lockFile = lib.mkOption {
                 type = lib.types.nullOr lib.types.path;
                 default = null;
@@ -176,8 +238,14 @@
                 default = { };
                 description = "Image references to be resolved with digests";
               };
-              locked-images = lib.mkOption {
+              locked_images = lib.mkOption {
                 type = lib.types.attrsOf lib.types.str;
+                readOnly = true;
+                internal = true;
+                description = "Resolved image references with digests";
+              };
+              locked_images_v2 = lib.mkOption {
+                type = lib.types.attrsOf lib.types.anything;
                 readOnly = true;
                 internal = true;
                 description = "Resolved image references with digests";
@@ -186,9 +254,13 @@
           };
 
           config = {
-            nirion.locked-images =
+            virtualisation.nirion.locked_images =
               let
-                lockFile = if config.nirion.lockFile != null then lib.importJSON config.nirion.lockFile else { };
+                lockFile =
+                  if config.virtualisation.nirion.lockFile != null then
+                    lib.importJSON config.virtualisation.nirion.lockFile
+                  else
+                    { };
               in
               lib.mapAttrs (
                 name: imageRef:
@@ -205,9 +277,22 @@
                     "${imageRef}@${digest}"
                   else
                     lib.warn "nirion: Image '${name}' (${imageRef}) not locked - using mutable tag" imageRef
-              ) config.nirion.images;
+              ) config.virtualisation.nirion.images;
 
-            environment.systemPackages = [ nirionScript ];
+            virtualisation.nirion.locked_images_v2 = lib.mapAttrs (
+              _: projectConfig:
+              let
+                locked_images = lib.attrsets.mapAttrsToList (
+                  _: serviceConfig: serviceConfig.service.locked_image or null
+                ) projectConfig.settings.services;
+                filtered_images = builtins.filter (x: x != null) locked_images;
+              in
+              filtered_images
+            ) config.virtualisation.nirion.projects;
+
+            environment.systemPackages = [
+              nirionScript
+            ];
           };
         };
     };
