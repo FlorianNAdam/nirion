@@ -16,6 +16,9 @@
     {
       nixosModules.nirion-v2 =
         { config, lib, ... }:
+        let
+          cfg = config.virtualisation.nirion;
+        in
         {
           options.virtualisation.nirion.projects = lib.mkOption {
             type = lib.types.attrsOf (lib.types.anything);
@@ -29,31 +32,12 @@
               services = projectConfig.settings.services or { };
               resolvedServices = lib.mapAttrs (
                 serviceName: serviceConfig:
-                let
-                  service = serviceConfig.service or { };
-                  lockedImage = service.locked_image or null;
-                in
-                if lockedImage != null then
-                  serviceConfig
-                  // {
-                    service =
-                      let
-                        newImage = config.virtualisation.nirion.locked_images.${lockedImage};
-                      in
-                      assert
-                        (!builtins.hasAttr "image" service || service.image == newImage)
-                        || builtins.throw ''
-                          Conflicting image definitions for service:
-                          existing image: ${service.image}
-                          locked image: ${newImage}
-                        '';
-                      (removeAttrs service [ "locked_image" ])
-                      // {
-                        image = newImage;
-                      };
-                  }
-                else
-                  serviceConfig
+                serviceConfig
+                // {
+                  service = {
+                    image = cfg.locked_images."${projectName}.${serviceName}";
+                  };
+                }
               ) services;
             in
             projectConfig
@@ -62,7 +46,7 @@
                 services = resolvedServices;
               };
             }
-          ) config.virtualisation.nirion.projects;
+          ) cfg.projects;
         };
 
       nixosModules.nirion =
@@ -238,14 +222,14 @@
                 default = { };
                 description = "Image references to be resolved with digests";
               };
-              locked_images = lib.mkOption {
-                type = lib.types.attrsOf lib.types.str;
+              images_v2 = lib.mkOption {
+                type = lib.types.attrsOf lib.types.anything;
                 readOnly = true;
                 internal = true;
-                description = "Resolved image references with digests";
+                description = "Image references to be resolved with digests";
               };
-              locked_images_v2 = lib.mkOption {
-                type = lib.types.attrsOf lib.types.anything;
+              locked_images = lib.mkOption {
+                type = lib.types.attrsOf lib.types.str;
                 readOnly = true;
                 internal = true;
                 description = "Resolved image references with digests";
@@ -259,6 +243,8 @@
                 lockFile =
                   if config.virtualisation.nirion.lockFile != null then
                     lib.importJSON config.virtualisation.nirion.lockFile
+                  else if config.virtualisation.nirion.images != { } then
+                    lib.warn "nirion: No lockFile specified" { }
                   else
                     { };
               in
@@ -279,16 +265,24 @@
                     lib.warn "nirion: Image '${name}' (${imageRef}) not locked - using mutable tag" imageRef
               ) config.virtualisation.nirion.images;
 
-            virtualisation.nirion.locked_images_v2 = lib.mapAttrs (
+            virtualisation.nirion.images_v2 = lib.mapAttrs (
               _: projectConfig:
-              let
-                locked_images = lib.attrsets.mapAttrsToList (
-                  _: serviceConfig: serviceConfig.service.locked_image or null
-                ) projectConfig.settings.services;
-                filtered_images = builtins.filter (x: x != null) locked_images;
-              in
-              filtered_images
+              lib.attrsets.mapAttrs (
+                _: serviceConfig: serviceConfig.service.image
+              ) projectConfig.settings.services
             ) config.virtualisation.nirion.projects;
+
+            virtualisation.nirion.images = lib.foldlAttrs (
+              acc: name: value:
+              if builtins.isAttrs value then
+                acc
+                // (lib.mapAttrs' (subname: subvalue: {
+                  name = "${name}.${subname}";
+                  value = subvalue;
+                }) value)
+              else
+                acc // { ${name} = value; }
+            ) { } config.virtualisation.nirion.images_v2;
 
             environment.systemPackages = [
               nirionScript
