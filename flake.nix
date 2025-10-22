@@ -34,7 +34,7 @@
                 serviceName: serviceConfig:
                 serviceConfig
                 // {
-                  service = {
+                  service = (serviceConfig.service or { }) // {
                     image = cfg.locked_images."${projectName}.${serviceName}";
                   };
                 }
