@@ -4,14 +4,18 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    naersk = {
+      url = "github:nix-community/naersk";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
     {
       self,
       nixpkgs,
-      arion,
-      ...
+      flake-utils,
+      naersk,
     }:
     {
       nixosModules.nirion-v2 =
@@ -35,7 +39,7 @@
                 serviceConfig
                 // {
                   service = (serviceConfig.service or { }) // {
-                    image = cfg.locked_images."${projectName}.${serviceName}";
+                    image = cfg.out.locked_images."${projectName}.${serviceName}";
                   };
                 }
               ) services;
@@ -57,26 +61,29 @@
           ...
         }:
         let
-          arionProjects = config.virtualisation.arion.projects;
+          system = pkgs.stdenv.hostPlatform.system;
+
+          nirionPkg = self.packages.${system}.nirion;
+
+          nirionConfig = config.virtualisation.nirion;
+
+          arionConfig = config.virtualisation.arion;
 
           projectMapping = lib.concatStringsSep "\n" (
             builtins.attrValues (
               lib.attrsets.mapAttrs' (name: project: {
                 inherit name;
                 value = "${name}=${project.settings.out.dockerComposeYaml}";
-              }) arionProjects
+              }) arionConfig.projects
             )
           );
 
           imageNameRefs = lib.concatStringsSep "\n" (
-            lib.attrsets.mapAttrsToList (name: ref: "${name}=${ref}") config.virtualisation.nirion.images
+            lib.attrsets.mapAttrsToList (name: ref: "${name}=${ref}") nirionConfig.images
           );
 
           lockFileOutputStr =
-            if config.virtualisation.nirion.lockFileOutput != null then
-              toString config.virtualisation.nirion.lockFileOutput
-            else
-              "";
+            if nirionConfig.lockFileOutput != null then toString nirionConfig.lockFileOutput else "";
 
           nirionScript = pkgs.writeScriptBin "nirion" ''
             #!/usr/bin/env bash
@@ -199,6 +206,21 @@
               echo
             done
           '';
+
+          nirion-v2 = pkgs.stdenv.mkDerivation {
+            name = "nirion-v2";
+
+            src = "${nirionPkg}";
+
+            buildInputs = [ pkgs.makeWrapper ];
+
+            installPhase = ''
+              mkdir -p $out/bin
+              makeWrapper ${nirionPkg}/bin/nirion $out/bin/nirion-v2 \
+                --set NIRION_LOCK_FILE "${nirionConfig.lockFileOutput}" \
+                --set NIRION_PROJECT_FILE "${nirionConfig.out.projectsFile}"
+            '';
+          };
         in
         {
           imports = [
@@ -222,72 +244,135 @@
                 default = { };
                 description = "Image references to be resolved with digests";
               };
-              images_v2 = lib.mkOption {
-                type = lib.types.attrsOf lib.types.anything;
-                readOnly = true;
-                internal = true;
-                description = "Image references to be resolved with digests";
-              };
-              locked_images = lib.mkOption {
-                type = lib.types.attrsOf lib.types.str;
-                readOnly = true;
-                internal = true;
-                description = "Resolved image references with digests";
+              out = {
+                images_v2 = lib.mkOption {
+                  type = lib.types.attrsOf lib.types.anything;
+                  readOnly = true;
+                  internal = true;
+                  description = "Image references to be resolved with digests";
+                };
+                locked_images = lib.mkOption {
+                  type = lib.types.attrsOf lib.types.str;
+                  readOnly = true;
+                  internal = true;
+                  description = "Resolved image references with digests";
+                };
+                projects = lib.mkOption {
+                  type = lib.types.attrsOf lib.types.anything;
+                  readOnly = true;
+                  internal = true;
+                };
+                projectsFile = lib.mkOption {
+                  type = lib.types.str;
+                  readOnly = true;
+                  internal = true;
+                };
               };
             };
           };
 
           config = {
-            virtualisation.nirion.locked_images =
-              let
-                lockFile =
-                  if config.virtualisation.nirion.lockFile != null then
-                    lib.importJSON config.virtualisation.nirion.lockFile
-                  else if config.virtualisation.nirion.images != { } then
-                    lib.warn "nirion: No lockFile specified" { }
-                  else
-                    { };
-              in
-              lib.mapAttrs (
-                name: imageRef:
+            virtualisation.nirion = {
+              out.locked_images =
                 let
-                  hasDigest = builtins.match ".*@sha256:.*" imageRef != null;
+                  lockFile =
+                    if nirionConfig.lockFile != null then
+                      lib.importJSON nirionConfig.lockFile
+                    else if nirionConfig.images != { } then
+                      lib.warn "nirion: No lockFile specified" { }
+                    else
+                      { };
                 in
-                if hasDigest then
-                  imageRef
-                else
+                lib.mapAttrs (
+                  name: imageRef:
                   let
-                    digest = lockFile.${name} or null;
+                    hasDigest = builtins.match ".*@sha256:.*" imageRef != null;
                   in
-                  if digest != null then
-                    "${imageRef}@${digest}"
+                  if hasDigest then
+                    imageRef
                   else
-                    lib.warn "nirion: Image '${name}' (${imageRef}) not locked - using mutable tag" imageRef
-              ) config.virtualisation.nirion.images;
+                    let
+                      digest = lockFile.${name} or null;
+                    in
+                    if digest != null then
+                      "${imageRef}@${digest}"
+                    else
+                      lib.warn "nirion: Image '${name}' (${imageRef}) not locked - using mutable tag" imageRef
+                ) nirionConfig.images;
 
-            virtualisation.nirion.images_v2 = lib.mapAttrs (
-              _: projectConfig:
-              lib.attrsets.mapAttrs (
-                _: serviceConfig: serviceConfig.service.image
-              ) projectConfig.settings.services
-            ) config.virtualisation.nirion.projects;
+              out.images_v2 = lib.mapAttrs (
+                _: projectConfig:
+                lib.attrsets.mapAttrs (
+                  _: serviceConfig: serviceConfig.service.image
+                ) projectConfig.settings.services
+              ) nirionConfig.projects;
 
-            virtualisation.nirion.images = lib.foldlAttrs (
-              acc: name: value:
-              if builtins.isAttrs value then
-                acc
-                // (lib.mapAttrs' (subname: subvalue: {
-                  name = "${name}.${subname}";
-                  value = subvalue;
-                }) value)
-              else
-                acc // { ${name} = value; }
-            ) { } config.virtualisation.nirion.images_v2;
+              images = lib.foldlAttrs (
+                acc: name: value:
+                if builtins.isAttrs value then
+                  acc
+                  // (lib.mapAttrs' (subname: subvalue: {
+                    name = "${name}.${subname}";
+                    value = subvalue;
+                  }) value)
+                else
+                  acc // { ${name} = value; }
+              ) { } nirionConfig.out.images_v2;
+
+              out.projects = lib.mapAttrs (name: project: {
+                docker-compose = arionConfig.projects.${name}.settings.out.dockerComposeYaml;
+                images = nirionConfig.out.images_v2.${name} or { };
+              }) nirionConfig.projects;
+
+              out.projectsFile =
+                let
+                  json = builtins.toJSON nirionConfig.out.projects;
+                  file = pkgs.writeText "projects.json" "${json}";
+                in
+                "${file}";
+            };
 
             environment.systemPackages = [
               nirionScript
+              nirion-v2
             ];
           };
         };
-    };
+    }
+    // flake-utils.lib.eachDefaultSystem (
+      system:
+      let
+        pkgs = (import nixpkgs) {
+          inherit system;
+        };
+
+        naersk-lib = pkgs.callPackage naersk { };
+
+        nirion = naersk-lib.buildPackage {
+          pname = "nirion";
+          src = ./.;
+        };
+      in
+      {
+        packages = {
+          inherit nirion;
+          default = nirion;
+        };
+
+        devShell = pkgs.mkShell {
+          buildInputs = [
+            pkgs.cargo
+            pkgs.rustc
+          ];
+          packages = [
+            pkgs.rust-analyzer
+            pkgs.sqlx-cli
+          ];
+          shellHook = ''
+            export NIRION_LOCK_FILE="/home/florian/my-nixos/modules/arion/nirion.lock"
+            export NIRION_PROJECT_FILE="/nix/store/ak1491m0ppxawn5l63khhsqq5blriy6x-projects.json"
+          '';
+        };
+      }
+    );
 }
