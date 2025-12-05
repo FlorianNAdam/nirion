@@ -321,7 +321,7 @@
 
               out.projects = lib.mapAttrs (name: project: {
                 docker-compose = arionConfig.projects.${name}.settings.out.dockerComposeYaml;
-                images = nirionConfig.out.images_v2.${name} or { };
+                services = nirionConfig.out.images_v2.${name} or { };
               }) nirionConfig.projects;
 
               out.projectsFile =
@@ -351,6 +351,15 @@
         nirion = naersk-lib.buildPackage {
           pname = "nirion";
           src = ./.;
+
+          buildInputs = with pkgs; [
+            makeWrapper
+          ];
+
+          postInstall = ''
+            wrapProgram $out/bin/nirion \
+              --prefix PATH : ${pkgs.skopeo}/bin
+          '';
         };
       in
       {
@@ -360,18 +369,69 @@
         };
 
         devShell = pkgs.mkShell {
-          buildInputs = [
-            pkgs.cargo
-            pkgs.rustc
+          buildInputs = with pkgs; [
+            cargo
+            rustc
+            openssl
           ];
-          packages = [
-            pkgs.rust-analyzer
-            pkgs.sqlx-cli
+
+          nativeBuildInputs = with pkgs; [
+            pkg-config
           ];
-          shellHook = ''
-            export NIRION_LOCK_FILE="/home/florian/my-nixos/modules/arion/nirion.lock"
-            export NIRION_PROJECT_FILE="/nix/store/ak1491m0ppxawn5l63khhsqq5blriy6x-projects.json"
-          '';
+
+          packages = with pkgs; [
+            rust-analyzer
+            sqlx-cli
+            skopeo
+          ];
+
+          shellHook =
+            let
+              compose = {
+                "networks" = {
+                  "default" = {
+                    "name" = "hello-world";
+                  };
+                  "dmz" = {
+                    "external" = true;
+                    "name" = "dmz";
+                  };
+                };
+                "services" = {
+                  "hello-world-service" = {
+                    "container_name" = "hello-world";
+                    "environment" = { };
+                    "image" = "library/hello-world";
+                    "networks" = [ "dmz" ];
+                    "restart" = "always";
+                    "sysctls" = { };
+                    "volumes" = [ ];
+                  };
+                };
+                "version" = "3.4";
+                "volumes" = { };
+              };
+
+              projects = {
+                "hello-world-project" = {
+                  "docker-compose" = "${pkgs.writeText "project.json" (builtins.toJSON compose)}";
+                  "images" = {
+                    "hello-world-service-0" = "library/hello-world";
+                    "hello-world-service-1" = "library/hello-world";
+                    "hello-world-service-2" = "library/hello-world";
+                    "hello-world-service-3" = "library/hello-world";
+                    "hello-world-service-4" = "library/hello-world";
+                    "hello-world-service-5" = "library/hello-world";
+                    "hello-world-service-6" = "library/hello-world";
+                    "hello-world-service-7" = "library/hello-world";
+                  };
+                };
+              };
+            in
+            ''
+              export NIRION_LOCK_FILE="/home/florian/my-nixos/modules/arion/nirion.lock"
+              export NIRION_PROJECT_FILE="${pkgs.writeText "project.json" (builtins.toJSON projects)}"
+            '';
         };
       }
     );
