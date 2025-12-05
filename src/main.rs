@@ -9,12 +9,14 @@ use std::{
 use crate::{
     down::handle_down,
     exec::{handle_exec, ExecArgs},
+    lock::handle_lock,
     up::handle_up,
     update::handle_update,
 };
 
 mod down;
 mod exec;
+mod lock;
 mod up;
 mod update;
 
@@ -80,6 +82,10 @@ enum Commands {
         project: Option<String>,
     },
     Update {
+        #[arg(default_value = "*", value_parser = clap_parse_selector)]
+        target: TargetSelector,
+    },
+    Lock {
         #[arg(default_value = "*", value_parser = clap_parse_selector)]
         target: TargetSelector,
     },
@@ -171,6 +177,9 @@ async fn main() -> Result<()> {
         Commands::Update { target } => {
             handle_update(&target, &PROJECTS, &locked_images, &lock_file)
                 .await?
+        }
+        Commands::Lock { target } => {
+            handle_lock(&target, &PROJECTS, &locked_images, &lock_file).await?
         }
         Commands::Exec { args } => handle_exec(&args, &PROJECTS)?,
     }

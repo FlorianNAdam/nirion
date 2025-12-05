@@ -6,7 +6,7 @@ use std::{
 
 use crate::{fetch_digest, get_images, Project, TargetSelector};
 
-pub async fn handle_update(
+pub async fn handle_lock(
     target: &TargetSelector,
     projects: &BTreeMap<String, Project>,
     locked_images: &BTreeMap<String, String>,
@@ -18,6 +18,10 @@ pub async fn handle_update(
     let mut new_digests = BTreeMap::new();
 
     for (service, image) in images {
+        if locked_images.contains_key(&service) {
+            continue;
+        }
+
         println!("Checking {} ({})", service, image);
         let digest = if let Some(digest) = digest_cache.get(&image) {
             digest.to_string()
@@ -27,17 +31,8 @@ pub async fn handle_update(
             digest
         };
 
-        if let Some(old_digest) = locked_images.get(&service) {
-            if old_digest != &digest {
-                println!("Digest changed: {} -> {}", old_digest, digest);
-                new_digests.insert(service, digest);
-            } else {
-                println!("Already up-to-date")
-            }
-        } else {
-            println!("New digest: {}", digest);
-            new_digests.insert(service, digest);
-        }
+        println!("New digest: {}", digest);
+        new_digests.insert(service, digest);
     }
 
     if new_digests.is_empty() {
