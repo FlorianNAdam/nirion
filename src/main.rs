@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueHint};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -42,9 +42,12 @@ fn clap_parse_selector(s: &str) -> Result<TargetSelector, String> {
     parse_selector(s, &PROJECTS).map_err(|e| e.to_string())
 }
 
+fn clap_parse_image_selector(s: &str) -> Result<ImageSelector, String> {
+    parse_image_selector(s, &PROJECTS).map_err(|e| e.to_string())
+}
+
 #[derive(Parser)]
-#[command(name = "mycli")]
-#[command(about = "A small CLI with multiple subcommands")]
+#[command(name = "nirion")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -68,6 +71,51 @@ enum Commands {
         #[arg(default_value = "*", value_parser = clap_parse_selector)]
         target: TargetSelector,
     },
+    Exec {
+        #[command(flatten)]
+        args: ExecArgs,
+    },
+}
+
+#[derive(Parser, Debug, Clone)]
+struct ExecArgs {
+    #[arg(value_parser = clap_parse_image_selector)]
+    target: ImageSelector,
+
+    /// Detached mode: run in background
+    #[arg(short = 'd', long)]
+    detach: bool,
+
+    /// Execute command in dry run mode
+    #[arg(long)]
+    dry_run: bool,
+
+    /// Disable pseudo-TTY allocation
+    #[arg(short = 'T', long)]
+    no_tty: bool,
+
+    /// Run as this user
+    #[arg(short = 'u', long)]
+    user: Option<String>,
+
+    /// Set working directory inside container
+    #[arg(short = 'w', long, value_hint = ValueHint::DirPath)]
+    workdir: Option<String>,
+
+    /// Container index if service has multiple replicas
+    #[arg(long)]
+    index: Option<u32>,
+
+    /// Environment variables (can be repeated)
+    #[arg(short = 'e', long)]
+    env: Vec<String>,
+
+    /// Privileged mode
+    #[arg(long)]
+    privileged: bool,
+
+    /// Command to execute in container
+    cmd: Vec<String>,
 }
 
 fn parse_selector(
@@ -112,6 +160,20 @@ fn parse_selector(
     }
 }
 
+fn parse_image_selector(
+    s: &str,
+    projects: &BTreeMap<String, Project>,
+) -> Result<ImageSelector> {
+    let selector = parse_selector(s, projects)?;
+    match selector {
+        TargetSelector::Image(image_selector) => Ok(image_selector),
+        _ => anyhow::bail!(
+            "Expected image selector like <project>.<image> but got {}",
+            s
+        ),
+    }
+}
+
 fn get_env_path(key: &str) -> anyhow::Result<PathBuf> {
     let val = std::env::var(key)
         .map_err(|_| anyhow::anyhow!("Env var {} must be set", key))?;
@@ -138,6 +200,7 @@ async fn main() -> Result<()> {
         Commands::Update { target } => {
             handle_update(&target, &PROJECTS).await?
         }
+        Commands::Exec { args } => handle_exec(&args, &PROJECTS)?,
     }
 
     Ok(())
@@ -323,4 +386,79 @@ pub fn fetch_digest(image: &str) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout)
         .trim()
         .to_string())
+}
+
+fn handle_exec(
+    args: &ExecArgs,
+    projects: &BTreeMap<String, Project>,
+) -> Result<()> {
+    if args.cmd.is_empty() {
+        anyhow::bail!("No command specified for exec");
+    }
+
+    let mut common_args = vec![];
+    if args.detach {
+        common_args.push("-d".to_string());
+    }
+    if args.no_tty {
+        common_args.push("-T".to_string());
+    }
+    if let Some(user) = &args.user {
+        common_args.push("-u".to_string());
+        common_args.push(user.clone());
+    }
+    if let Some(workdir) = &args.workdir {
+        common_args.push("-w".to_string());
+        common_args.push(workdir.clone());
+    }
+    if let Some(idx) = args.index {
+        common_args.push("--index".to_string());
+        common_args.push(idx.to_string());
+    }
+    for e in &args.env {
+        common_args.push("-e".to_string());
+        common_args.push(e.clone());
+    }
+    if args.privileged {
+        common_args.push("--privileged".to_string());
+    }
+
+    let project_name = &args.target.project;
+    let service_name = &args.target.image;
+
+    let project = &projects[project_name];
+    let mut cmd_args = vec![
+        "--file".to_string(),
+        project.docker_compose.clone(),
+        "--project-name".to_string(),
+        project_name.clone(),
+        "exec".to_string(),
+        service_name.clone(),
+    ];
+
+    cmd_args.extend(common_args.clone());
+    cmd_args.extend(args.cmd.clone());
+
+    println!("Running: docker compose {:?}", cmd_args);
+
+    if !args.dry_run {
+        let status = ProcCommand::new("docker")
+            .arg("compose")
+            .args(&cmd_args)
+            .status()?;
+
+        if status.success() {
+            println!(
+                "Command executed successfully in {}.{}",
+                project_name, service_name
+            );
+        } else {
+            println!(
+                "Command failed in {}.{} with status {}",
+                project_name, service_name, status
+            );
+        }
+    }
+
+    Ok(())
 }
