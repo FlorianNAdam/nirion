@@ -1,8 +1,10 @@
 use anyhow::Result;
-use clap::{Arg, ArgMatches, Command};
+use clap::{Parser, Subcommand};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use std::process::Command as ProcCommand;
-use std::{collections::BTreeMap, fs, path::PathBuf};
+use std::{
+    collections::BTreeMap, fs, path::PathBuf, process::Command as ProcCommand,
+};
 
 #[derive(Clone, Debug)]
 struct ProjectSelector {
@@ -29,19 +31,55 @@ struct Project {
     images: BTreeMap<String, String>,
 }
 
-/// Custom parser that resolves projects during arg parsing
+static PROJECTS: Lazy<BTreeMap<String, Project>> = Lazy::new(|| {
+    let path = std::env::var("NIRION_PROJECT_FILE")
+        .expect("Env var NIRION_PROJECT_FILE must be set");
+    let data = fs::read_to_string(path).expect("Failed to read project file");
+    serde_json::from_str(&data).expect("Failed to parse project JSON")
+});
+
+fn clap_parse_selector(s: &str) -> Result<TargetSelector, String> {
+    parse_selector(s, &PROJECTS).map_err(|e| e.to_string())
+}
+
+#[derive(Parser)]
+#[command(name = "mycli")]
+#[command(about = "A small CLI with multiple subcommands")]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    Up {
+        #[arg(default_value = "*", value_parser = clap_parse_selector)]
+        target: TargetSelector,
+    },
+    Down {
+        #[arg(default_value = "*", value_parser = clap_parse_selector)]
+        target: TargetSelector,
+    },
+    List {
+        #[arg(help = "If specified, list containers/images in this project")]
+        project: Option<String>,
+    },
+    Update {
+        #[arg(default_value = "*", value_parser = clap_parse_selector)]
+        target: TargetSelector,
+    },
+}
+
 fn parse_selector(
     s: &str,
     projects: &BTreeMap<String, Project>,
 ) -> Result<TargetSelector> {
     let s = s.trim();
-
     if s == "*" {
         return Ok(TargetSelector::All);
     }
 
     let parts: Vec<&str> = s.splitn(2, '.').collect();
-
     match parts.as_slice() {
         [project_name] => {
             if projects.contains_key(*project_name) {
@@ -74,18 +112,6 @@ fn parse_selector(
     }
 }
 
-fn parse_image_selector(
-    s: &str,
-    projects: &BTreeMap<String, Project>,
-) -> anyhow::Result<ImageSelector> {
-    let selector = parse_selector(s, projects)?;
-
-    match selector {
-        TargetSelector::Image(selector) => Ok(selector),
-        _ => anyhow::bail!("Expected image selector, but got {s}"),
-    }
-}
-
 fn get_env_path(key: &str) -> anyhow::Result<PathBuf> {
     let val = std::env::var(key)
         .map_err(|_| anyhow::anyhow!("Env var {} must be set", key))?;
@@ -96,73 +122,32 @@ fn get_env_path(key: &str) -> anyhow::Result<PathBuf> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let lock_file = get_env_path("NIRION_LOCK_FILE")?;
-    let locked_images: BTreeMap<String, String> = if lock_file.exists() {
+    let _locked_images: BTreeMap<String, String> = if lock_file.exists() {
         let lock_file_data = fs::read_to_string(lock_file)?;
         serde_json::from_str(&lock_file_data)?
     } else {
         BTreeMap::new()
     };
 
-    let project_file = get_env_path("NIRION_PROJECT_FILE")?;
+    let cli = Cli::parse();
 
-    let json_data = fs::read_to_string(&project_file)?;
-    let projects: BTreeMap<String, Project> = serde_json::from_str(&json_data)?;
-
-    let matches = Command::new("mycli")
-        .about("A small CLI with multiple subcommands")
-        .subcommand(
-            Command::new("up").about("Bring up a project or image").arg(
-                Arg::new("target")
-                    .help("Target project or project.image")
-                    .default_value("*"),
-            ),
-        )
-        .subcommand(
-            Command::new("down")
-                .about("Bring down a project or image")
-                .arg(
-                    Arg::new("target")
-                        .help("Target project or project.image")
-                        .default_value("*"),
-                ),
-        )
-        .subcommand(
-            Command::new("list")
-                .about("List projects or containers")
-                .arg(
-                    Arg::new("project")
-                        .help("If specified, list containers/images in this project")
-                        .required(false),
-                ),
-        )
-        .subcommand(
-            Command::new("update")
-                .about("Update a project or image")
-                .arg(
-                    Arg::new("target")
-                        .help("Target project or project.image")
-                        .default_value("*"),
-                ),
-        )
-        .get_matches();
-
-    // Resolve subcommands
-    match matches.subcommand() {
-        Some(("list", sub)) => handle_list(sub, &projects)?,
-        Some(("up", sub)) => handle_up(sub, &projects)?,
-        Some(("down", sub)) => handle_down(sub, &projects)?,
-        Some(("update", sub)) => handle_update(sub, &projects).await?,
-        _ => println!("No valid subcommand"),
+    match cli.command {
+        Commands::List { project } => handle_list(&project, &PROJECTS)?,
+        Commands::Up { target } => handle_up(&target, &PROJECTS)?,
+        Commands::Down { target } => handle_down(&target, &PROJECTS)?,
+        Commands::Update { target } => {
+            handle_update(&target, &PROJECTS).await?
+        }
     }
 
     Ok(())
 }
 
 fn handle_list(
-    matches: &ArgMatches,
+    project: &Option<String>,
     projects: &BTreeMap<String, Project>,
 ) -> Result<()> {
-    if let Some(project_name) = matches.get_one::<String>("project") {
+    if let Some(project_name) = project {
         if let Some(proj) = projects.get(project_name) {
             println!("Images:");
             for image in proj.images.keys() {
@@ -263,25 +248,17 @@ fn compose_target_cmd(
 }
 
 fn handle_up(
-    matches: &ArgMatches,
+    target: &TargetSelector,
     projects: &BTreeMap<String, Project>,
 ) -> Result<()> {
-    let target_str = matches
-        .get_one::<String>("target")
-        .expect("required");
-    let target = parse_selector(target_str, projects)?;
-    compose_target_cmd(&target, projects, &["up", "-d"])
+    compose_target_cmd(target, projects, &["up", "-d"])
 }
 
 fn handle_down(
-    matches: &ArgMatches,
+    target: &TargetSelector,
     projects: &BTreeMap<String, Project>,
 ) -> Result<()> {
-    let target_str = matches
-        .get_one::<String>("target")
-        .expect("required");
-    let target = parse_selector(target_str, projects)?;
-    compose_target_cmd(&target, projects, &["down"])
+    compose_target_cmd(target, projects, &["down"])
 }
 
 fn get_images(
@@ -301,17 +278,14 @@ fn get_images(
         TargetSelector::Project(proj) => {
             let project = &projects[&proj.name];
             for (service_name, image) in project.images.iter() {
-                let project_name = &proj.name;
-                let identifier = format!("{project_name}.{service_name}");
+                let identifier = format!("{}.{}", proj.name, service_name);
                 images.insert(identifier, image.to_string());
             }
         }
         TargetSelector::Image(img) => {
-            let project_name = &img.project;
-            let service_name = &img.image;
-            let project = &projects[project_name];
-            let image = &project.images[service_name];
-            let identifier = format!("{project_name}.{service_name}");
+            let project = &projects[&img.project];
+            let image = &project.images[&img.image];
+            let identifier = format!("{}.{}", img.project, img.image);
             images.insert(identifier, image.to_string());
         }
     }
@@ -319,17 +293,12 @@ fn get_images(
 }
 
 async fn handle_update(
-    matches: &ArgMatches,
+    target: &TargetSelector,
     projects: &BTreeMap<String, Project>,
 ) -> Result<()> {
-    let target_str = matches
-        .get_one::<String>("target")
-        .expect("required");
-    let target = parse_selector(target_str, projects)?;
+    let images = get_images(target, projects);
 
-    let images = get_images(&target, projects);
-
-    for (service, image) in images {
+    for (_service, image) in images {
         let digest = fetch_digest(&image)?;
         println!("{}", digest);
     }

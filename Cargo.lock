@@ -722,6 +722,7 @@ dependencies = [
  "anyhow",
  "clap",
  "oci-registry-client",
+ "once_cell",
  "serde",
  "serde_json",
  "tokio",
