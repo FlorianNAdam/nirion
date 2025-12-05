@@ -155,8 +155,8 @@ fn get_env_path(key: &str) -> anyhow::Result<PathBuf> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let lock_file = get_env_path("NIRION_LOCK_FILE")?;
-    let _locked_images: BTreeMap<String, String> = if lock_file.exists() {
-        let lock_file_data = fs::read_to_string(lock_file)?;
+    let locked_images: BTreeMap<String, String> = if lock_file.exists() {
+        let lock_file_data = fs::read_to_string(&lock_file)?;
         serde_json::from_str(&lock_file_data)?
     } else {
         BTreeMap::new()
@@ -169,7 +169,8 @@ async fn main() -> Result<()> {
         Commands::Up { target } => handle_up(&target, &PROJECTS)?,
         Commands::Down { target } => handle_down(&target, &PROJECTS)?,
         Commands::Update { target } => {
-            handle_update(&target, &PROJECTS).await?
+            handle_update(&target, &PROJECTS, &locked_images, &lock_file)
+                .await?
         }
         Commands::Exec { args } => handle_exec(&args, &PROJECTS)?,
     }
