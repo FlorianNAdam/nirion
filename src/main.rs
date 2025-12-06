@@ -42,7 +42,7 @@ enum TargetSelector {
 struct Project {
     #[serde(rename = "docker-compose")]
     docker_compose: String,
-    images: BTreeMap<String, String>,
+    services: BTreeMap<String, String>,
 }
 
 static PROJECTS: Lazy<BTreeMap<String, Project>> = Lazy::new(|| {
@@ -117,7 +117,7 @@ fn parse_selector(
         }
         [project_name, image_name] => {
             if let Some(proj) = projects.get(*project_name) {
-                if proj.images.contains_key(*image_name) {
+                if proj.services.contains_key(*image_name) {
                     Ok(TargetSelector::Image(ImageSelector {
                         project: project_name.to_string(),
                         image: image_name.to_string(),
@@ -194,7 +194,7 @@ fn handle_list(
     if let Some(project_name) = project {
         if let Some(proj) = projects.get(project_name) {
             println!("Images:");
-            for image in proj.images.keys() {
+            for image in proj.services.keys() {
                 println!("- {}", image);
             }
         } else {
@@ -299,7 +299,7 @@ fn get_images(
     match target {
         TargetSelector::All => {
             for (project_name, project) in projects {
-                for (service_name, image) in project.images.iter() {
+                for (service_name, image) in project.services.iter() {
                     let identifier = format!("{project_name}.{service_name}");
                     images.insert(identifier, image.to_string());
                 }
@@ -307,14 +307,14 @@ fn get_images(
         }
         TargetSelector::Project(proj) => {
             let project = &projects[&proj.name];
-            for (service_name, image) in project.images.iter() {
+            for (service_name, image) in project.services.iter() {
                 let identifier = format!("{}.{}", proj.name, service_name);
                 images.insert(identifier, image.to_string());
             }
         }
         TargetSelector::Image(img) => {
             let project = &projects[&img.project];
-            let image = &project.images[&img.image];
+            let image = &project.services[&img.image];
             let identifier = format!("{}.{}", img.project, img.image);
             images.insert(identifier, image.to_string());
         }

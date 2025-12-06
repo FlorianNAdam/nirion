@@ -36,12 +36,23 @@
               services = projectConfig.settings.services or { };
               resolvedServices = lib.mapAttrs (
                 serviceName: serviceConfig:
+                let
+                  attrName = lib.attrByPath [
+                    "service"
+                    "locked_image"
+                  ] "${projectName}.${serviceName}" serviceConfig;
+                in
                 serviceConfig
-                // {
-                  service = (serviceConfig.service or { }) // {
-                    image = cfg.out.locked_images."${projectName}.${serviceName}";
-                  };
-                }
+                // (
+                  if builtins.hasAttr attrName cfg.out.locked_images then
+                    {
+                      service = (builtins.removeAttrs (serviceConfig.service or { }) [ "locked_image" ]) // {
+                        image = cfg.out.locked_images.${attrName};
+                      };
+                    }
+                  else
+                    { }
+                )
               ) services;
             in
             projectConfig
@@ -302,10 +313,10 @@
 
               out.images_v2 = lib.mapAttrs (
                 _: projectConfig:
-                lib.attrsets.mapAttrs (
-                  _: serviceConfig: serviceConfig.service.image
-                ) projectConfig.settings.services
-              ) nirionConfig.projects;
+                lib.filterAttrs (_: v: v != null) (
+                  lib.mapAttrs (_: lib.attrByPath [ "service" "image" ] null) (projectConfig.settings.services or { })
+                )
+              ) (nirionConfig.projects or { });
 
               images = lib.foldlAttrs (
                 acc: name: value:
