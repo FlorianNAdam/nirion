@@ -8,13 +8,15 @@ use std::{
 
 use crate::commands::{
     cat::{handle_cat, CatArgs},
-    down::handle_down,
+    down::{handle_down, DownArgs},
     exec::{handle_exec, ExecArgs},
-    lock::handle_lock,
+    list::{handle_list, ListArgs},
+    lock::{handle_lock, LockArgs},
     logs::{handle_logs, LogsArgs},
     ps::{handle_ps, PsArgs},
-    up::handle_up,
-    update::handle_update,
+    top::{handle_top, TopArgs},
+    up::{handle_up, UpArgs},
+    update::{handle_update, UpdateArgs},
 };
 
 mod commands;
@@ -69,24 +71,24 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Up {
-        #[arg(default_value = "*", value_parser = clap_parse_selector)]
-        target: TargetSelector,
+        #[command(flatten)]
+        args: UpArgs,
     },
     Down {
-        #[arg(default_value = "*", value_parser = clap_parse_selector)]
-        target: TargetSelector,
+        #[command(flatten)]
+        args: DownArgs,
     },
     List {
-        #[arg(help = "If specified, list containers/images in this project")]
-        project: Option<String>,
+        #[command(flatten)]
+        args: ListArgs,
     },
     Update {
-        #[arg(default_value = "*", value_parser = clap_parse_selector)]
-        target: TargetSelector,
+        #[command(flatten)]
+        args: UpdateArgs,
     },
     Lock {
-        #[arg(default_value = "*", value_parser = clap_parse_selector)]
-        target: TargetSelector,
+        #[command(flatten)]
+        args: LockArgs,
     },
     Exec {
         #[command(flatten)]
@@ -103,6 +105,10 @@ enum Commands {
     Ps {
         #[command(flatten)]
         args: PsArgs,
+    },
+    Top {
+        #[command(flatten)]
+        args: TopArgs,
     },
 }
 
@@ -182,44 +188,22 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::List { project } => handle_list(&project, &PROJECTS)?,
-        Commands::Up { target } => handle_up(&target, &PROJECTS)?,
-        Commands::Down { target } => handle_down(&target, &PROJECTS)?,
-        Commands::Update { target } => {
-            handle_update(&target, &PROJECTS, &locked_images, &lock_file)
-                .await?
+        Commands::List { args } => handle_list(&args, &PROJECTS)?,
+        Commands::Up { args } => handle_up(&args, &PROJECTS)?,
+        Commands::Down { args } => handle_down(&args, &PROJECTS)?,
+        Commands::Update { args } => {
+            handle_update(&args, &PROJECTS, &locked_images, &lock_file).await?
         }
-        Commands::Lock { target } => {
-            handle_lock(&target, &PROJECTS, &locked_images, &lock_file).await?
+        Commands::Lock { args } => {
+            handle_lock(&args, &PROJECTS, &locked_images, &lock_file).await?
         }
         Commands::Exec { args } => handle_exec(&args, &PROJECTS)?,
         Commands::Logs { args } => handle_logs(&args, &PROJECTS)?,
         Commands::Cat { args } => handle_cat(&args, &PROJECTS)?,
         Commands::Ps { args } => handle_ps(&args, &PROJECTS)?,
+        Commands::Top { args } => handle_top(&args, &PROJECTS)?,
     }
 
-    Ok(())
-}
-
-fn handle_list(
-    project: &Option<String>,
-    projects: &BTreeMap<String, Project>,
-) -> Result<()> {
-    if let Some(project_name) = project {
-        if let Some(proj) = projects.get(project_name) {
-            println!("Images:");
-            for image in proj.services.keys() {
-                println!("- {}", image);
-            }
-        } else {
-            println!("Project '{}' not found", project_name);
-        }
-    } else {
-        println!("Projects:");
-        for project_name in projects.keys() {
-            println!("- {}", project_name);
-        }
-    }
     Ok(())
 }
 

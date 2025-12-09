@@ -1,3 +1,4 @@
+use clap::Parser;
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
@@ -6,13 +7,20 @@ use std::{
 
 use crate::{fetch_digest, get_images, Project, TargetSelector};
 
+#[derive(Parser, Debug, Clone)]
+pub struct UpdateArgs {
+    /// Target selector: *, project, or project.service
+    #[arg(default_value = "*", value_parser = crate::clap_parse_selector)]
+    pub target: TargetSelector,
+}
+
 pub async fn handle_update(
-    target: &TargetSelector,
+    args: &UpdateArgs,
     projects: &BTreeMap<String, Project>,
     locked_images: &BTreeMap<String, String>,
     lock_file: &Path,
 ) -> anyhow::Result<()> {
-    let images = get_images(target, projects);
+    let images = get_images(&args.target, projects);
 
     let mut digest_cache: HashMap<String, String> = HashMap::new();
     let mut new_digests = BTreeMap::new();

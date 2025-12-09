@@ -19,11 +19,11 @@ pub struct PsArgs {
     pub filter: Option<String>,
 
     /// Format output (table, json, Go template)
-    #[arg(long)]
+    #[arg(short = 'f', long)]
     pub format: Option<String>,
 
     /// Short format
-    #[arg(long, conflicts_with = "format")]
+    #[arg(short = 's', long, conflicts_with = "format")]
     pub short: bool,
 
     /// Don't truncate output
