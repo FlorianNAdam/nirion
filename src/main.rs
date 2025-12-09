@@ -12,6 +12,7 @@ use crate::commands::{
     exec::{handle_exec, ExecArgs},
     lock::handle_lock,
     logs::{handle_logs, LogsArgs},
+    ps::{handle_ps, PsArgs},
     up::handle_up,
     update::handle_update,
 };
@@ -98,6 +99,10 @@ enum Commands {
     Cat {
         #[command(flatten)]
         args: CatArgs,
+    },
+    Ps {
+        #[command(flatten)]
+        args: PsArgs,
     },
 }
 
@@ -190,6 +195,7 @@ async fn main() -> Result<()> {
         Commands::Exec { args } => handle_exec(&args, &PROJECTS)?,
         Commands::Logs { args } => handle_logs(&args, &PROJECTS)?,
         Commands::Cat { args } => handle_cat(&args, &PROJECTS)?,
+        Commands::Ps { args } => handle_ps(&args, &PROJECTS)?,
     }
 
     Ok(())

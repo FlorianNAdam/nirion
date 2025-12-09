@@ -17,7 +17,7 @@
 - [ ] kill
 - [x] exec
 - [x] log
-- [ ] ps
+- [x] ps
 - [ ] ls
 - [ ] pause
 - [ ] unpause

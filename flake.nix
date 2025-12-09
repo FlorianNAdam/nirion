@@ -460,12 +460,12 @@
               };
 
               projects = {
-                "hello-world" = {
-                  "docker-compose" = "/nix/store/a3hp9zdwg9w9x1fq7dh71alccgbcdacj-docker-compose.yaml";
-                  "services" = {
-                    "hello-world" = "library/hello-world";
-                  };
-                };
+                # "hello-world" = {
+                #   "docker-compose" = "/nix/store/a3hp9zdwg9w9x1fq7dh71alccgbcdacj-docker-compose.yaml";
+                #   "services" = {
+                #     "hello-world" = "library/hello-world";
+                #   };
+                # };
                 "hello-world-project" = {
                   "docker-compose" = "${pkgs.writeText "project.json" (builtins.toJSON compose)}";
                   "services" = {
