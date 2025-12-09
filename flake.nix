@@ -409,7 +409,43 @@
                   };
                 };
                 "services" = {
-                  "hello-world-service" = {
+                  "hello-world-service-0" = {
+                    "container_name" = "hello-world";
+                    "environment" = { };
+                    "image" = "library/hello-world";
+                    "networks" = [ "dmz" ];
+                    "restart" = "always";
+                    "sysctls" = { };
+                    "volumes" = [ ];
+                  };
+                  "hello-world-service-1" = {
+                    "container_name" = "hello-world";
+                    "environment" = { };
+                    "image" = "library/hello-world";
+                    "networks" = [ "dmz" ];
+                    "restart" = "always";
+                    "sysctls" = { };
+                    "volumes" = [ ];
+                  };
+                  "hello-world-service-2" = {
+                    "container_name" = "hello-world";
+                    "environment" = { };
+                    "image" = "library/hello-world";
+                    "networks" = [ "dmz" ];
+                    "restart" = "always";
+                    "sysctls" = { };
+                    "volumes" = [ ];
+                  };
+                  "hello-world-service-3" = {
+                    "container_name" = "hello-world";
+                    "environment" = { };
+                    "image" = "library/hello-world";
+                    "networks" = [ "dmz" ];
+                    "restart" = "always";
+                    "sysctls" = { };
+                    "volumes" = [ ];
+                  };
+                  "hello-world-service-4" = {
                     "container_name" = "hello-world";
                     "environment" = { };
                     "image" = "library/hello-world";
@@ -426,13 +462,13 @@
               projects = {
                 "hello-world" = {
                   "docker-compose" = "/nix/store/a3hp9zdwg9w9x1fq7dh71alccgbcdacj-docker-compose.yaml";
-                  "images" = {
+                  "services" = {
                     "hello-world" = "library/hello-world";
                   };
                 };
                 "hello-world-project" = {
                   "docker-compose" = "${pkgs.writeText "project.json" (builtins.toJSON compose)}";
-                  "images" = {
+                  "services" = {
                     "hello-world-service-0" = "library/hello-world";
                     "hello-world-service-1" = "library/hello-world";
                     "hello-world-service-2" = "library/hello-world";

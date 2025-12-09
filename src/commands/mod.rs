@@ -1,3 +1,4 @@
+pub mod cat;
 pub mod down;
 pub mod exec;
 pub mod lock;

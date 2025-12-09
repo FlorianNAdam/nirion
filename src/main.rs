@@ -7,6 +7,7 @@ use std::{
 };
 
 use crate::commands::{
+    cat::{handle_cat, CatArgs},
     down::handle_down,
     exec::{handle_exec, ExecArgs},
     lock::handle_lock,
@@ -93,6 +94,10 @@ enum Commands {
     Logs {
         #[command(flatten)]
         args: LogsArgs,
+    },
+    Cat {
+        #[command(flatten)]
+        args: CatArgs,
     },
 }
 
@@ -184,6 +189,7 @@ async fn main() -> Result<()> {
         }
         Commands::Exec { args } => handle_exec(&args, &PROJECTS)?,
         Commands::Logs { args } => handle_logs(&args, &PROJECTS)?,
+        Commands::Cat { args } => handle_cat(&args, &PROJECTS)?,
     }
 
     Ok(())

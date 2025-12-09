@@ -6,7 +6,7 @@
 - [ ] compose
  
 # Arion
-- [ ] cat
+- [x] cat
 - [ ] repl? 
 
 # Docker-Compose
