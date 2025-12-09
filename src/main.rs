@@ -10,6 +10,7 @@ use crate::{
     down::handle_down,
     exec::{handle_exec, ExecArgs},
     lock::handle_lock,
+    logs::{handle_logs, LogsArgs},
     up::handle_up,
     update::handle_update,
 };
@@ -17,6 +18,7 @@ use crate::{
 mod down;
 mod exec;
 mod lock;
+mod logs;
 mod up;
 mod update;
 
@@ -92,6 +94,10 @@ enum Commands {
     Exec {
         #[command(flatten)]
         args: ExecArgs,
+    },
+    Logs {
+        #[command(flatten)]
+        args: LogsArgs,
     },
 }
 
@@ -182,6 +188,7 @@ async fn main() -> Result<()> {
             handle_lock(&target, &PROJECTS, &locked_images, &lock_file).await?
         }
         Commands::Exec { args } => handle_exec(&args, &PROJECTS)?,
+        Commands::Logs { args } => handle_logs(&args, &PROJECTS)?,
     }
 
     Ok(())

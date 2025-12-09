@@ -1,7 +1,7 @@
 # Nirion
-- [ ] list
-- [ ] lock
-- [ ] update
+- [x] list
+- [x] lock
+- [x] update
 - [ ] arion
 - [ ] compose
  
@@ -15,8 +15,8 @@
 - [ ] start
 - [ ] stop
 - [ ] kill
-- [ ] exec
-- [ ] log
+- [x] exec
+- [x] log
 - [ ] ps
 - [ ] ls
 - [ ] pause
