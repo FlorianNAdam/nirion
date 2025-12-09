@@ -6,7 +6,7 @@ use std::{
     collections::BTreeMap, fs, path::PathBuf, process::Command as ProcCommand,
 };
 
-use crate::{
+use crate::commands::{
     down::handle_down,
     exec::{handle_exec, ExecArgs},
     lock::handle_lock,
@@ -15,12 +15,7 @@ use crate::{
     update::handle_update,
 };
 
-mod down;
-mod exec;
-mod lock;
-mod logs;
-mod up;
-mod update;
+mod commands;
 
 #[derive(Clone, Debug)]
 struct ProjectSelector {
