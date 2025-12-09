@@ -225,7 +225,7 @@ fn compose_target_cmd(
                 ];
                 cmd_args.extend_from_slice(args);
 
-                println!("Running: docker-compose {:?}", cmd_args);
+                println!("Running: docker compose {:?}", cmd_args.join(" "));
 
                 let status = ProcCommand::new("docker-compose")
                     .args(&cmd_args)
@@ -269,7 +269,8 @@ fn compose_target_cmd(
 
             println!(
                 "Running: docker-compose {:?} (image {})",
-                cmd_args, img.image
+                cmd_args.join(" "),
+                img.image
             );
 
             let status = ProcCommand::new("docker-compose")

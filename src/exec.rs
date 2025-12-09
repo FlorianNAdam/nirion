@@ -90,13 +90,12 @@ pub fn handle_exec(
         "--project-name".to_string(),
         project_name.clone(),
         "exec".to_string(),
-        service_name.clone(),
     ];
-
-    cmd_args.extend(common_args.clone());
+    cmd_args.extend(common_args);
+    cmd_args.push(service_name.clone());
     cmd_args.extend(args.cmd.clone());
 
-    println!("Running: docker compose {:?}", cmd_args);
+    println!("Running: docker compose {:?}", cmd_args.join(" "));
 
     if !args.dry_run {
         let status = ProcCommand::new("docker")
