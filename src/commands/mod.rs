@@ -14,6 +14,7 @@ use crate::{
         top::{handle_top, TopArgs},
         up::{handle_up, UpArgs},
         update::{handle_update, UpdateArgs},
+        volumes::{handle_volumes, VolumesArgs},
     },
     Project,
 };
@@ -28,6 +29,7 @@ pub mod ps;
 pub mod top;
 pub mod up;
 pub mod update;
+pub mod volumes;
 
 #[derive(Subcommand)]
 pub enum Commands {
@@ -71,6 +73,10 @@ pub enum Commands {
         #[command(flatten)]
         args: TopArgs,
     },
+    Volumes {
+        #[command(flatten)]
+        args: VolumesArgs,
+    },
 }
 
 pub async fn handle_command(
@@ -94,6 +100,7 @@ pub async fn handle_command(
         Commands::Cat { args } => handle_cat(&args, &projects)?,
         Commands::Ps { args } => handle_ps(&args, &projects)?,
         Commands::Top { args } => handle_top(&args, &projects)?,
+        Commands::Volumes { args } => handle_volumes(&args, &projects)?,
     }
 
     Ok(())

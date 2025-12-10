@@ -21,6 +21,6 @@
 - [ ] ls
 - [ ] pause
 - [ ] unpause
-- [ ] volumes
-- [ ] top
+- [x] volumes
+- [x] top
 - [ ] attach
