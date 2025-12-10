@@ -5,7 +5,7 @@ use std::{
     path::Path,
 };
 
-use crate::{fetch_digest, get_images, Project, TargetSelector};
+use crate::{docker::fetch_digest, get_images, Project, TargetSelector};
 
 #[derive(Parser, Debug, Clone)]
 pub struct LockArgs {

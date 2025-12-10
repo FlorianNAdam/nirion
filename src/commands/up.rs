@@ -1,7 +1,7 @@
 use clap::Parser;
 use std::collections::BTreeMap;
 
-use crate::{compose_target_cmd, Project, TargetSelector};
+use crate::{docker::compose_target_cmd, Project, TargetSelector};
 
 #[derive(Parser, Debug, Clone)]
 pub struct UpArgs {
