@@ -37,105 +37,114 @@ pub struct UpArgs {
     pub boring: bool,
 }
 
-impl ProjectStatus {
-    pub fn summary_line(
-        &self,
-        num_services: usize,
-        show_bar: bool,
-        name_width: usize,
-        width: usize,
-    ) -> String {
-        let bar = if show_bar {
-            self.colored_progress_bar(num_services, width)
-        } else {
-            String::new()
-        };
+pub fn summary_line(
+    status: &ProjectStatus,
+    num_services: usize,
+    show_bar: bool,
+    name_width: usize,
+    width: usize,
+) -> String {
+    let name = &status.name;
 
-        let status_icon = if self.exited() > 0 {
-            "✗".red().to_string()
-        } else if self.running() == self.total()
-            && self.healthy() == self.running()
-        {
-            "✓".green().to_string()
-        } else if self.running() == self.total() {
-            "✓".yellow().to_string()
-        } else if self.starting() > 0 {
-            "↗".cyan().to_string()
-        } else {
-            "⚠".yellow().to_string()
-        };
+    let bar = if show_bar {
+        colored_progress_bar(status, num_services, width)
+    } else {
+        String::new()
+    };
 
-        let healthy_str =
-            if self.healthy() > 0 && self.healthy() < self.running() {
-                format!(" ({} healthy)", self.healthy())
-            } else if self.healthy() == self.running() && self.healthy() > 0 {
-                " (all healthy)".to_string()
-            } else {
-                String::new()
-            };
+    let status_icon = status_icon(status);
 
-        format!(
-            "{:name_width$}  {} {:2}/{}{} {}",
-            self.name,
-            bar,
-            self.running(),
-            num_services.max(self.total()),
-            healthy_str,
-            status_icon
-        )
+    let health_str = health_str(status);
+
+    let running_services = status.running();
+    let total_num_services = num_services.max(status.total());
+
+    format!(
+        "{name:name_width$}  {bar} {running_services:2}/{total_num_services}{health_str} {status_icon}",
+    )
+}
+
+fn status_icon(status: &ProjectStatus) -> String {
+    let healthy = status.healthy();
+    let running = status.running();
+    let total = status.total();
+
+    if status.exited() > 0 {
+        "✗".red().to_string()
+    } else if running == total && healthy == running {
+        "✓".green().to_string()
+    } else if running == total {
+        "✓".yellow().to_string()
+    } else if status.starting() > 0 {
+        "↗".cyan().to_string()
+    } else {
+        "⚠".yellow().to_string()
+    }
+}
+
+fn health_str(status: &ProjectStatus) -> String {
+    let healthy = status.healthy();
+    let running = status.running();
+
+    if healthy > 0 && healthy < running {
+        format!(" ({} healthy)", healthy)
+    } else if healthy == running && healthy > 0 {
+        " (all healthy)".to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn colored_progress_bar(
+    status: &ProjectStatus,
+    num_services: usize,
+    width: usize,
+) -> String {
+    let display_width = width.max(10);
+    let bar_width = display_width - 2;
+
+    let total = num_services.max(status.total());
+    if total == 0 {
+        return format!("[{:^width$}]", "N/A", width = bar_width);
     }
 
-    fn colored_progress_bar(
-        &self,
-        num_services: usize,
-        width: usize,
-    ) -> String {
-        let display_width = width.max(10);
-        let bar_width = display_width - 2;
+    let healthy = status.healthy();
+    let running = status.running() - status.healthy();
+    let starting = status.starting();
+    let exited = status.exited();
 
-        let total = num_services.max(self.total());
-        if total == 0 {
-            return format!("[{:^width$}]", "N/A", width = bar_width);
-        }
-
-        let healthy = self.healthy();
-        let running = self.running() - self.healthy();
-        let starting = self.starting();
-        let exited = self.exited();
-
-        let mut segments = Vec::new();
-        for _ in 0..healthy {
-            segments.push(Color::Green);
-        }
-        for _ in 0..running {
-            segments.push(Color::Yellow);
-        }
-        for _ in 0..starting {
-            segments.push(Color::Cyan);
-        }
-        for _ in 0..exited {
-            segments.push(Color::Red);
-        }
-        for _ in segments.len()..total {
-            segments.push(Color::Grey);
-        }
-
-        let mut out = String::from("│ ");
-        for (i, color) in segments.iter().enumerate() {
-            let width = optimal_sublist_length(bar_width, total, i);
-
-            out.push_str(
-                "█"
-                    .repeat(width.saturating_sub(1))
-                    .with(*color)
-                    .to_string()
-                    .as_str(),
-            );
-            out.push_str("▊".with(*color).to_string().as_str());
-        }
-        out.push_str(" │");
-        out
+    let mut segments = Vec::new();
+    for _ in 0..healthy {
+        segments.push(Color::Green);
     }
+    for _ in 0..running {
+        segments.push(Color::Yellow);
+    }
+    for _ in 0..starting {
+        segments.push(Color::Cyan);
+    }
+    for _ in 0..exited {
+        segments.push(Color::Red);
+    }
+    for _ in segments.len()..total {
+        segments.push(Color::Grey);
+    }
+
+    let mut out = String::from("│ ");
+    for (i, color) in segments.iter().enumerate() {
+        let width = optimal_sublist_length(bar_width, total, i);
+
+        out.push_str(
+            "█"
+                .repeat(width.saturating_sub(1))
+                .with(*color)
+                .to_string()
+                .as_str(),
+        );
+        out.push_str("▊".with(*color).to_string().as_str());
+    }
+    out.push_str(" │");
+    out
 }
 
 fn optimal_sublist_length(width: usize, n: usize, i: usize) -> usize {
@@ -207,7 +216,8 @@ async fn fancy_up(
             let st = proc.project_status().await;
             let project = &projects[name];
 
-            let line = st.summary_line(
+            let line = summary_line(
+                &st,
                 project.services.len(),
                 !args.quiet,
                 max_name_width,
