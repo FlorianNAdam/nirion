@@ -188,8 +188,12 @@ async fn fancy_up(
 
     for name in &selected {
         let project = &projects[name];
-        let proc =
-            DockerMonitoredProcess::new(name.clone(), project, vec![]).await?;
+        let proc = DockerMonitoredProcess::new(name.clone(), project)
+            .arg("up")
+            .arg("-d")
+            .build()
+            .await?;
+
         map.insert(name.clone(), proc);
     }
 

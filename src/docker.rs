@@ -1,5 +1,10 @@
 use anyhow::Result;
-use std::{collections::BTreeMap, process::Command as ProcCommand, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    ffi::{OsStr, OsString},
+    process::Command as ProcCommand,
+    sync::Arc,
+};
 use tokio::{process::Command, sync::RwLock};
 
 use crate::{Project, TargetSelector};
@@ -115,48 +120,37 @@ pub struct DockerMonitoredProcess {
 }
 
 impl DockerMonitoredProcess {
-    pub async fn new(
-        project_name: String,
-        project: &Project,
-        args: Vec<String>,
-    ) -> Result<Arc<Self>> {
-        let proc = Arc::new(Self {
-            project_name: project_name.clone(),
-            compose_file: project.docker_compose.to_string(),
-            project_status: Arc::new(RwLock::new(ProjectStatus {
-                name: project_name.clone(),
-                services: BTreeMap::new(),
-            })),
-            finished: Arc::new(RwLock::new(false)),
-        });
-
-        proc.spawn_background(args).await?;
-        proc.refresh_status().await?;
-
-        Ok(proc)
+    pub fn new<'a>(
+        name: impl Into<String>,
+        project: &'a Project,
+    ) -> DockerMonitoredProcessBuilder<'a> {
+        DockerMonitoredProcessBuilder::new(name, project)
     }
 
-    pub async fn spawn_background(
+    async fn spawn(
         self: &Arc<Self>,
-        args: Vec<String>,
+        args: impl IntoIterator<Item = impl AsRef<OsStr> + Send + 'static>,
     ) -> Result<()> {
         let compose_file = self.compose_file.clone();
         let project_name = self.project_name.clone();
         let finished = self.finished.clone();
+        let args: Vec<_> = args
+            .into_iter()
+            .map(|a| a.as_ref().to_os_string())
+            .collect();
 
         tokio::spawn(async move {
-            let _out = Command::new("docker")
+            let _ = Command::new("docker")
                 .arg("compose")
                 .arg("-f")
-                .arg(&compose_file)
+                .arg(compose_file)
                 .arg("--project-name")
-                .arg(&project_name)
-                .args(&args)
+                .arg(project_name)
+                .args(args)
                 .output()
                 .await;
 
-            let mut finished = finished.write().await;
-            *finished = true;
+            *finished.write().await = true;
         });
 
         Ok(())
@@ -193,6 +187,58 @@ impl DockerMonitoredProcess {
 
     pub async fn finished(&self) -> bool {
         *self.finished.read().await
+    }
+}
+
+pub struct DockerMonitoredProcessBuilder<'a> {
+    project_name: String,
+    project: &'a Project,
+    args: Vec<OsString>,
+}
+
+impl<'a> DockerMonitoredProcessBuilder<'a> {
+    pub fn new(name: impl Into<String>, project: &'a Project) -> Self {
+        Self {
+            project_name: name.into(),
+            project: project,
+            args: Vec::new(),
+        }
+    }
+
+    #[allow(unused)]
+    pub fn arg(mut self, arg: impl AsRef<OsStr>) -> Self {
+        self.args
+            .push(arg.as_ref().to_os_string());
+        self
+    }
+
+    #[allow(unused)]
+    pub fn args<I, S>(mut self, args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        self.args.extend(
+            args.into_iter()
+                .map(|a| a.as_ref().to_os_string()),
+        );
+        self
+    }
+
+    pub async fn build(self) -> Result<Arc<DockerMonitoredProcess>> {
+        let proc = Arc::new(DockerMonitoredProcess {
+            project_name: self.project_name.clone(),
+            compose_file: self.project.docker_compose.clone(),
+            project_status: Arc::new(RwLock::new(ProjectStatus {
+                name: self.project_name,
+                services: BTreeMap::new(),
+            })),
+            finished: Arc::new(RwLock::new(false)),
+        });
+
+        proc.spawn(self.args).await?;
+        proc.refresh_status().await?;
+        Ok(proc)
     }
 }
 
