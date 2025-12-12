@@ -1,9 +1,13 @@
 use clap::Parser;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
     path::Path,
+    sync::Arc,
+    time::Duration,
 };
+use tokio::sync::Mutex;
 
 use crate::{docker::fetch_digest, get_images, Project, TargetSelector};
 
@@ -12,6 +16,10 @@ pub struct UpdateArgs {
     /// Target selector: *, project, or project.service
     #[arg(default_value = "*", value_parser = crate::clap_parse_selector)]
     pub target: TargetSelector,
+
+    /// Number of concurrent digest fetches
+    #[arg(short = 'j', long = "jobs", default_value_t = 10)]
+    pub jobs: usize,
 }
 
 pub async fn handle_update(
@@ -21,41 +29,148 @@ pub async fn handle_update(
     lock_file: &Path,
 ) -> anyhow::Result<()> {
     let images = get_images(&args.target, projects);
+    let total_images = images.len();
 
-    let mut digest_cache: HashMap<String, String> = HashMap::new();
-    let mut new_digests = BTreeMap::new();
-
-    for (service, image) in images {
-        println!("Checking {} ({})", service, image);
-        let digest = if let Some(digest) = digest_cache.get(&image) {
-            digest.to_string()
-        } else {
-            let digest = fetch_digest(&image).await?;
-            digest_cache.insert(image, digest.clone());
-            digest
-        };
-
-        if let Some(old_digest) = locked_images.get(&service) {
-            if old_digest != &digest {
-                println!("Digest changed: {} -> {}", old_digest, digest);
-                new_digests.insert(service, digest);
-            } else {
-                println!("Already up-to-date")
-            }
-        } else {
-            println!("New digest: {}", digest);
-            new_digests.insert(service, digest);
-        }
-    }
-
-    if new_digests.is_empty() {
+    if total_images == 0 {
+        println!("No images found to update");
         return Ok(());
     }
 
-    let mut new_locked_images = locked_images.clone();
+    let multi_progress = MultiProgress::new();
+    let overall_pb = multi_progress.add(ProgressBar::new(total_images as u64));
+    overall_pb.set_style(
+        ProgressStyle::default_bar()
+            .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} ({eta}) {msg}")
+            .unwrap()
+            .progress_chars("██")
+    );
+
+    overall_pb.enable_steady_tick(Duration::from_millis(100));
+
+    overall_pb.set_message("Starting...");
+
+    let digest_cache: Arc<Mutex<HashMap<String, String>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let new_digests: Arc<Mutex<BTreeMap<String, String>>> =
+        Arc::new(Mutex::new(BTreeMap::new()));
+    let locked_images = Arc::new(locked_images.clone());
+
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(args.jobs));
+    let mut tasks = Vec::new();
+
+    for (service, image) in images {
+        let semaphore = Arc::clone(&semaphore);
+        let digest_cache = Arc::clone(&digest_cache);
+        let new_digests = Arc::clone(&new_digests);
+        let locked_images = Arc::clone(&locked_images);
+        let overall_pb = overall_pb.clone();
+        let multi_progress = multi_progress.clone();
+
+        let task = tokio::spawn(async move {
+            let _permit = semaphore.acquire().await.unwrap();
+
+            let pb = multi_progress.add(ProgressBar::new_spinner());
+            pb.set_style(
+                ProgressStyle::default_spinner()
+                    .template("{spinner:.green} {msg}")
+                    .unwrap()
+                    .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
+            );
+            pb.enable_steady_tick(Duration::from_millis(100));
+            pb.set_message(format!("Checking {}", image));
+
+            let result = process_image(
+                &service,
+                &image,
+                &digest_cache,
+                &locked_images,
+                &new_digests,
+                pb,
+            )
+            .await;
+
+            overall_pb.inc(1);
+            overall_pb.set_message(format!(
+                "Processed {}/{}",
+                overall_pb.position(),
+                total_images
+            ));
+
+            result
+        });
+
+        tasks.push(task);
+    }
+
+    let mut results = Vec::new();
+    for task in tasks {
+        results.push(task.await?);
+    }
+    for result in results {
+        result?;
+    }
+
+    overall_pb.finish_with_message("All images checked");
+
+    let new_digests = Arc::try_unwrap(new_digests)
+        .unwrap_or_else(|_| panic!("Failed to unwrap new_digests"))
+        .into_inner();
+
+    if new_digests.is_empty() {
+        println!("All images are already up-to-date");
+        return Ok(());
+    }
+
+    println!("\nUpdating lock file...");
+    let mut new_locked_images = locked_images.as_ref().clone();
     new_locked_images.extend(new_digests);
     let new_lock_file = serde_json::to_string_pretty(&new_locked_images)?;
     fs::write(lock_file, new_lock_file)?;
 
+    println!("Lock file updated successfully");
+
+    Ok(())
+}
+
+async fn process_image(
+    service: &str,
+    image: &str,
+    digest_cache: &Arc<Mutex<HashMap<String, String>>>,
+    locked_images: &Arc<BTreeMap<String, String>>,
+    new_digests: &Arc<Mutex<BTreeMap<String, String>>>,
+    pb: ProgressBar,
+) -> anyhow::Result<()> {
+    let digest = {
+        let cache = digest_cache.lock().await;
+        if let Some(digest) = cache.get(image) {
+            pb.set_message(format!("Cache hit for {}", image));
+            digest.clone()
+        } else {
+            drop(cache); // Release lock before async operation
+
+            pb.set_message(format!("Fetching digest for {}", image));
+            let digest = fetch_digest(image).await?;
+
+            let mut cache = digest_cache.lock().await;
+            cache.insert(image.to_string(), digest.clone());
+            digest
+        }
+    };
+
+    let mut new_digests = new_digests.lock().await;
+
+    if let Some(old_digest) = locked_images.get(service) {
+        if old_digest != &digest {
+            pb.set_message(format!("✓ {}: Updated", service));
+            new_digests.insert(service.to_string(), digest);
+        } else {
+            pb.set_message(format!("✓ {}: Up-to-date", service));
+        }
+    } else {
+        pb.set_message(format!("✓ {}: New image", service));
+        new_digests.insert(service.to_string(), digest);
+    }
+
+    pb.finish_and_clear();
     Ok(())
 }
