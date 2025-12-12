@@ -16,17 +16,12 @@ use crate::{Project, TargetSelector};
 pub fn summary_line(
     status: &ProjectStatus,
     num_services: usize,
-    show_bar: bool,
     name_width: usize,
     width: usize,
 ) -> String {
     let name = &status.name;
 
-    let bar = if show_bar {
-        colored_progress_bar(status, num_services, width)
-    } else {
-        String::new()
-    };
+    let bar = colored_progress_bar(status, num_services, width);
 
     let status_icon = status_icon(status);
 
@@ -134,6 +129,65 @@ fn optimal_sublist_length(width: usize, n: usize, i: usize) -> usize {
     }
 }
 
+async fn print_progress(
+    map: &BTreeMap<String, Arc<DockerMonitoredProcess>>,
+    projects: &BTreeMap<String, Project>,
+    spinner: &Spinner,
+) -> anyhow::Result<()> {
+    let bar_width = 40;
+
+    let max_name_width = projects
+        .keys()
+        .map(String::len)
+        .max()
+        .unwrap_or_default();
+
+    let mut stdout = stdout();
+
+    println!(
+        "  {}  ┌{}┐",
+        " ".repeat(max_name_width),
+        "─".repeat(bar_width + 2)
+    );
+
+    for (i, (name, proc)) in map.iter().enumerate() {
+        let st = proc.project_status().await;
+        let project = &projects[name];
+
+        let line = summary_line(
+            &st,
+            project.services.len(),
+            max_name_width,
+            bar_width,
+        );
+
+        let icon = if proc.finished().await {
+            "✓".green().to_string()
+        } else {
+            spinner.get().yellow().to_string()
+        };
+
+        execute!(stdout, MoveToColumn(0))?;
+        println!("{} {}", icon, line);
+
+        if i != map.len().saturating_sub(1) {
+            println!(
+                "  {}  ├{}┤",
+                " ".repeat(max_name_width),
+                "─".repeat(bar_width + 2)
+            )
+        }
+    }
+
+    println!(
+        "  {}  └{}┘",
+        " ".repeat(max_name_width),
+        "─".repeat(bar_width + 2)
+    );
+
+    Ok(())
+}
+
 pub async fn run_command_with_progress(
     target: &TargetSelector,
     projects: &BTreeMap<String, Project>,
@@ -142,16 +196,13 @@ pub async fn run_command_with_progress(
     quiet: bool,
     refresh: Duration,
 ) -> anyhow::Result<()> {
-    let bar_width = 40;
-
     let selected: Vec<String> = match target {
         TargetSelector::All => projects.keys().cloned().collect(),
         TargetSelector::Project(p) => vec![p.name.clone()],
         TargetSelector::Image(img) => vec![img.project.clone()],
     };
 
-    let mut map: BTreeMap<String, Arc<DockerMonitoredProcess>> =
-        BTreeMap::new();
+    let mut map = BTreeMap::new();
 
     for name in &selected {
         let project = &projects[name];
@@ -172,12 +223,6 @@ pub async fn run_command_with_progress(
 
     let project_count = selected.len();
 
-    let max_name_width = projects
-        .keys()
-        .map(String::len)
-        .max()
-        .unwrap_or_default();
-
     let spinner = Spinner::default();
 
     let _ = {
@@ -193,71 +238,34 @@ pub async fn run_command_with_progress(
         })
     };
 
-    loop {
-        println!(
-            "  {}  ┌{}┐",
-            " ".repeat(max_name_width),
-            "─".repeat(bar_width + 2)
-        );
-
-        for (i, (name, proc)) in map.iter().enumerate() {
-            let st = proc.project_status().await;
-            let project = &projects[name];
-
-            let line = summary_line(
-                &st,
-                project.services.len(),
-                !quiet,
-                max_name_width,
-                bar_width,
-            );
-
-            let icon = if proc.finished().await {
-                "✓".green().to_string()
-            } else {
-                spinner.get().yellow().to_string()
-            };
-
-            if !quiet {
-                execute!(
-                    stdout,
-                    Clear(ClearType::CurrentLine),
-                    MoveToColumn(0)
-                )?;
-                println!("{} {}", icon, line);
-            }
-
-            if i != map.len().saturating_sub(1) {
-                println!(
-                    "  {}  ├{}┤",
-                    " ".repeat(max_name_width),
-                    "─".repeat(bar_width + 2)
-                )
-            }
+    let mut finished = false;
+    while !finished {
+        if !quiet {
+            print_progress(&map, projects, &spinner).await?;
+            execute!(
+                stdout,
+                Clear(ClearType::CurrentLine),
+                MoveUp((project_count * 2 + 1) as u16)
+            )?;
+            stdout.flush()?;
         }
 
-        println!(
-            "  {}  └{}┘",
-            " ".repeat(max_name_width),
-            "─".repeat(bar_width + 2)
-        );
-
-        let mut all_done = true;
+        finished = true;
         for project in map.values() {
             if !project.finished().await {
-                all_done = false;
+                finished = false;
                 break;
             }
         }
-        if all_done {
-            stdout.flush()?;
-            break;
-        } else {
-            if !quiet {
-                execute!(stdout, MoveUp((project_count * 2 + 1) as u16))?;
-            }
-            stdout.flush()?;
-        }
+    }
+
+    for proj in map.values() {
+        proj.refresh_status().await?;
+    }
+
+    if !quiet {
+        print_progress(&map, projects, &spinner).await?;
+        stdout.flush()?;
     }
 
     Ok(())

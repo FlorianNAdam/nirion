@@ -237,7 +237,6 @@ impl<'a> DockerMonitoredProcessBuilder<'a> {
         });
 
         proc.spawn(self.args).await?;
-        proc.refresh_status().await?;
         Ok(proc)
     }
 }
