@@ -46,7 +46,7 @@ pub async fn handle_restart(
         )
         .await?;
     } else {
-        compose_target_cmd(&args.target, projects, &["restart", "-d"])?;
+        compose_target_cmd(&args.target, projects, &["restart", "-d"]).await?;
     }
     Ok(())
 }

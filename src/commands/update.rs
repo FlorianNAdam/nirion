@@ -30,7 +30,7 @@ pub async fn handle_update(
         let digest = if let Some(digest) = digest_cache.get(&image) {
             digest.to_string()
         } else {
-            let digest = fetch_digest(&image)?;
+            let digest = fetch_digest(&image).await?;
             digest_cache.insert(image, digest.clone());
             digest
         };

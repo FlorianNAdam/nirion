@@ -19,5 +19,5 @@ pub async fn handle_top(
     // docker compose top has no flags: just ["top"]
     let cmd: Vec<&str> = vec!["top"];
 
-    compose_target_cmd(&args.target, projects, &cmd)
+    compose_target_cmd(&args.target, projects, &cmd).await
 }

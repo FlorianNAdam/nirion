@@ -34,5 +34,5 @@ pub async fn handle_volumes(
 
     let cmd_slices: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
 
-    compose_target_cmd(&args.target, projects, &cmd_slices)
+    compose_target_cmd(&args.target, projects, &cmd_slices).await
 }

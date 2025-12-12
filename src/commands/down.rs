@@ -46,7 +46,7 @@ pub async fn handle_down(
         )
         .await?;
     } else {
-        compose_target_cmd(&args.target, projects, &["down"])?;
+        compose_target_cmd(&args.target, projects, &["down"]).await?;
     }
     Ok(())
 }
