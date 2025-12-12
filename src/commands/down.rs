@@ -168,7 +168,7 @@ pub async fn handle_down(
     if !args.boring && !matches!(args.target, TargetSelector::Image(_)) {
         fancy_down(args, projects).await?;
     } else {
-        compose_target_cmd(&args.target, projects, &["down", "-d"])?;
+        compose_target_cmd(&args.target, projects, &["down"])?;
     }
     Ok(())
 }
@@ -189,8 +189,7 @@ async fn fancy_down(
     for name in &selected {
         let project = &projects[name];
         let proc = DockerMonitoredProcess::new(name, project)
-            .arg("up")
-            .arg("-d")
+            .arg("down")
             .build()
             .await?;
         map.insert(name.clone(), proc);
