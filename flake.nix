@@ -482,8 +482,11 @@
               };
             in
             ''
-              export NIRION_LOCK_FILE="/home/florian/my-nixos/modules/arion/nirion.lock"
-              export NIRION_PROJECT_FILE="${pkgs.writeText "project.json" (builtins.toJSON projects)}"
+              # export NIRION_LOCK_FILE="/home/florian/my-nixos/modules/arion/nirion.lock"
+              # export NIRION_PROJECT_FILE="${pkgs.writeText "project.json" (builtins.toJSON projects)}"
+
+              export NIRION_LOCK_FILE='/home/florian/my-nixos/modules/arion/nirion.lock'
+              export NIRION_PROJECT_FILE='/nix/store/869wwrik1r62qcdjafkrcpamfj3g486k-projects.json'
             '';
         };
       }

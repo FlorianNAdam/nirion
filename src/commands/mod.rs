@@ -87,7 +87,7 @@ pub async fn handle_command(
 ) -> anyhow::Result<()> {
     match command {
         Commands::List { args } => handle_list(&args, &projects)?,
-        Commands::Up { args } => handle_up(&args, &projects)?,
+        Commands::Up { args } => handle_up(&args, &projects).await?,
         Commands::Down { args } => handle_down(&args, &projects)?,
         Commands::Update { args } => {
             handle_update(&args, &projects, &locked_images, &lock_file).await?
