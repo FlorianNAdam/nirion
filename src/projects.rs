@@ -28,7 +28,7 @@ pub enum TargetSelector {
     Image(ImageSelector),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
     #[serde(rename = "docker-compose")]
     pub docker_compose: String,

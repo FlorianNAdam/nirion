@@ -6,8 +6,7 @@ use crossterm::{
 };
 use std::collections::BTreeMap;
 use std::io::{stdout, Write};
-use std::sync::Arc;
-use tokio::time::{sleep, Duration};
+use tokio::time::Duration;
 
 use crate::docker::{DockerMonitoredProcess, ProjectStatus};
 use crate::spinner::Spinner;
@@ -130,7 +129,7 @@ fn optimal_sublist_length(width: usize, n: usize, i: usize) -> usize {
 }
 
 async fn print_progress(
-    map: &BTreeMap<String, Arc<DockerMonitoredProcess>>,
+    map: &BTreeMap<String, DockerMonitoredProcess>,
     projects: &BTreeMap<String, Project>,
     spinner: &Spinner,
 ) -> anyhow::Result<()> {
@@ -194,7 +193,7 @@ pub async fn run_command_with_progress(
     args: &[&str],
     no_monitor: bool,
     quiet: bool,
-    refresh: Duration,
+    refresh_interval: Duration,
 ) -> anyhow::Result<()> {
     let selected: Vec<String> = match target {
         TargetSelector::All => projects.keys().cloned().collect(),
@@ -206,10 +205,13 @@ pub async fn run_command_with_progress(
 
     for name in &selected {
         let project = &projects[name];
-        let proc = DockerMonitoredProcess::new(name.clone(), project)
-            .args(args)
-            .build()
-            .await?;
+        let proc = DockerMonitoredProcess::new(
+            name.clone(),
+            project.clone(),
+            refresh_interval,
+            args,
+        )
+        .await;
 
         map.insert(name.clone(), proc);
     }
@@ -221,22 +223,7 @@ pub async fn run_command_with_progress(
     let mut stdout = stdout();
     execute!(stdout, cursor::Hide)?;
 
-    let project_count = selected.len();
-
     let spinner = Spinner::default();
-
-    let _ = {
-        let map = map.clone();
-        let refresh = refresh.clone();
-        tokio::spawn(async move {
-            loop {
-                for proc in map.values() {
-                    let _ = proc.refresh_status().await;
-                    sleep(refresh).await;
-                }
-            }
-        })
-    };
 
     let mut finished = false;
     while !finished {
@@ -245,7 +232,7 @@ pub async fn run_command_with_progress(
             execute!(
                 stdout,
                 Clear(ClearType::CurrentLine),
-                MoveUp((project_count * 2 + 1) as u16)
+                MoveUp((selected.len() * 2 + 1) as u16)
             )?;
             stdout.flush()?;
         }

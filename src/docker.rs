@@ -1,11 +1,9 @@
 use anyhow::Result;
 use std::{
-    collections::BTreeMap,
-    ffi::{OsStr, OsString},
-    process::Command as ProcCommand,
-    sync::Arc,
+    collections::BTreeMap, ffi::OsStr, process::Command as ProcCommand,
+    sync::Arc, time::Duration,
 };
-use tokio::{process::Command, sync::RwLock};
+use tokio::{process::Command, sync::RwLock, task::JoinHandle};
 
 use crate::{Project, TargetSelector};
 
@@ -111,134 +109,108 @@ pub fn fetch_digest(image: &str) -> anyhow::Result<String> {
         .to_string())
 }
 
-pub struct DockerMonitoredProcess {
+pub struct DockerProjectMonitor {
     pub project_name: String,
     pub compose_file: String,
-
     project_status: Arc<RwLock<ProjectStatus>>,
-    finished: Arc<RwLock<bool>>,
+    refresh_handle: Option<JoinHandle<()>>,
 }
 
-impl DockerMonitoredProcess {
-    pub fn new<'a>(
-        name: impl Into<String>,
-        project: &'a Project,
-    ) -> DockerMonitoredProcessBuilder<'a> {
-        DockerMonitoredProcessBuilder::new(name, project)
-    }
-
-    async fn spawn(
-        self: &Arc<Self>,
-        args: impl IntoIterator<Item = impl AsRef<OsStr> + Send + 'static>,
-    ) -> Result<()> {
-        let compose_file = self.compose_file.clone();
-        let project_name = self.project_name.clone();
-        let finished = self.finished.clone();
-        let args: Vec<_> = args
-            .into_iter()
-            .map(|a| a.as_ref().to_os_string())
-            .collect();
-
-        tokio::spawn(async move {
-            let _ = Command::new("docker")
-                .arg("compose")
-                .arg("-f")
-                .arg(compose_file)
-                .arg("--project-name")
-                .arg(project_name)
-                .args(args)
-                .output()
-                .await;
-
-            *finished.write().await = true;
-        });
-
-        Ok(())
-    }
-
-    pub async fn refresh_status(self: &Arc<Self>) -> Result<()> {
-        let output = Command::new("docker")
-            .arg("compose")
-            .arg("-f")
-            .arg(&self.compose_file)
-            .arg("--project-name")
-            .arg(&self.project_name)
-            .arg("ps")
-            .arg("--format")
-            .arg("json")
-            .output()
-            .await?;
-
-        let json = if output.status.success() {
-            String::from_utf8_lossy(&output.stdout).to_string()
-        } else {
-            "[]".to_string()
+impl DockerProjectMonitor {
+    pub fn new(
+        project_name: impl Into<String>,
+        project: &Project,
+        refresh_interval: Duration,
+    ) -> Self {
+        let name: String = project_name.into();
+        let mut monitor = Self {
+            project_name: name.clone(),
+            compose_file: project.docker_compose.clone(),
+            project_status: Arc::new(RwLock::new(ProjectStatus {
+                name: name.clone(),
+                services: BTreeMap::new(),
+            })),
+            refresh_handle: None,
         };
 
-        let parsed = ProjectStatus::from_json(&self.project_name, &json)?;
-        *self.project_status.write().await = parsed;
+        let handle = {
+            let project_status = monitor.project_status.clone();
+            let project_name = name;
+            let compose_file = monitor.compose_file.clone();
+            tokio::spawn(project_refresh_thread(
+                project_status,
+                compose_file,
+                project_name,
+                refresh_interval,
+            ))
+        };
 
+        monitor.refresh_handle = Some(handle);
+        monitor
+    }
+
+    pub async fn refresh_status(&self) -> Result<()> {
+        let new_status =
+            query_project_status(&self.compose_file, &self.project_name)
+                .await?;
+
+        let mut status = self.project_status.write().await;
+        *status = new_status;
         Ok(())
     }
 
     pub async fn project_status(&self) -> ProjectStatus {
         self.project_status.read().await.clone()
     }
-
-    pub async fn finished(&self) -> bool {
-        *self.finished.read().await
-    }
 }
 
-pub struct DockerMonitoredProcessBuilder<'a> {
+async fn project_refresh_thread(
+    project_status: Arc<RwLock<ProjectStatus>>,
+    compose_file: String,
     project_name: String,
-    project: &'a Project,
-    args: Vec<OsString>,
+    interval: Duration,
+) {
+    loop {
+        match query_project_status(&compose_file, &project_name).await {
+            Ok(new_status) => {
+                let mut status = project_status.write().await;
+                *status = new_status;
+            }
+            Err(e) => {
+                eprintln!(
+                    "Failed to refresh status for {}: {:?}",
+                    project_name, e
+                );
+            }
+        }
+        tokio::time::sleep(interval).await;
+    }
 }
 
-impl<'a> DockerMonitoredProcessBuilder<'a> {
-    pub fn new(name: impl Into<String>, project: &'a Project) -> Self {
-        Self {
-            project_name: name.into(),
-            project: project,
-            args: Vec::new(),
-        }
-    }
+pub async fn query_project_status(
+    compose_file: &str,
+    project_name: &str,
+) -> Result<ProjectStatus> {
+    let output = Command::new("docker")
+        .arg("compose")
+        .arg("-f")
+        .arg(compose_file)
+        .arg("--project-name")
+        .arg(project_name)
+        .arg("ps")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .await?;
 
-    #[allow(unused)]
-    pub fn arg(mut self, arg: impl AsRef<OsStr>) -> Self {
-        self.args
-            .push(arg.as_ref().to_os_string());
-        self
-    }
+    let json = if output.status.success() {
+        String::from_utf8_lossy(&output.stdout).to_string()
+    } else {
+        "[]".to_string()
+    };
 
-    #[allow(unused)]
-    pub fn args<I, S>(mut self, args: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<OsStr>,
-    {
-        self.args.extend(
-            args.into_iter()
-                .map(|a| a.as_ref().to_os_string()),
-        );
-        self
-    }
-
-    pub async fn build(self) -> Result<Arc<DockerMonitoredProcess>> {
-        let proc = Arc::new(DockerMonitoredProcess {
-            project_name: self.project_name.clone(),
-            compose_file: self.project.docker_compose.clone(),
-            project_status: Arc::new(RwLock::new(ProjectStatus {
-                name: self.project_name,
-                services: BTreeMap::new(),
-            })),
-            finished: Arc::new(RwLock::new(false)),
-        });
-
-        proc.spawn(self.args).await?;
-        Ok(proc)
-    }
+    let status = ProjectStatus::from_json(project_name, &json)?;
+    Ok(status)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -350,5 +322,62 @@ impl ProjectStatus {
             .values()
             .filter(|s| matches!(s.state, ServiceState::Starting))
             .count()
+    }
+}
+
+pub struct DockerMonitoredProcess {
+    pub monitor: DockerProjectMonitor,
+    finished: Arc<RwLock<bool>>,
+}
+
+impl DockerMonitoredProcess {
+    pub async fn new(
+        project_name: impl Into<String>,
+        project: Project,
+        refresh_interval: Duration,
+        args: impl IntoIterator<Item = impl AsRef<OsStr>>,
+    ) -> Self {
+        let name = project_name.into();
+        let monitor =
+            DockerProjectMonitor::new(&name, &project, refresh_interval);
+
+        let finished = Arc::new(RwLock::new(false));
+
+        let _ = {
+            let project_name = name.clone();
+            let compose_file = project.docker_compose.clone();
+            let args: Vec<_> = args
+                .into_iter()
+                .map(|a| a.as_ref().to_os_string())
+                .collect();
+            let finished = finished.clone();
+
+            tokio::spawn(async move {
+                let _ = Command::new("docker")
+                    .arg("compose")
+                    .arg("-f")
+                    .arg(compose_file)
+                    .arg("--project-name")
+                    .arg(project_name)
+                    .args(args)
+                    .output()
+                    .await;
+
+                *finished.write().await = true;
+            })
+        };
+
+        Self { monitor, finished }
+    }
+    pub async fn refresh_status(&self) -> anyhow::Result<()> {
+        self.monitor.refresh_status().await
+    }
+
+    pub async fn project_status(&self) -> ProjectStatus {
+        self.monitor.project_status().await
+    }
+
+    pub async fn finished(&self) -> bool {
+        *self.finished.read().await
     }
 }
