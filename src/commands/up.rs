@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use std::collections::BTreeMap;
+use std::path::Path;
 use tokio::time::Duration;
 
 use crate::docker::compose_target_cmd;
@@ -31,6 +32,8 @@ pub struct UpArgs {
 pub async fn handle_up(
     args: &UpArgs,
     projects: &BTreeMap<String, Project>,
+    _locked_images: &BTreeMap<String, String>,
+    _lock_file: &Path,
 ) -> Result<()> {
     if !args.boring && !matches!(args.target, TargetSelector::Image(_)) {
         run_command_with_progress(

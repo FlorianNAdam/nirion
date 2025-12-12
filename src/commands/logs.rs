@@ -1,5 +1,5 @@
 use clap::Parser;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::Path};
 
 use crate::{
     clap_parse_selector, docker::compose_target_cmd, Project, TargetSelector,
@@ -39,9 +39,11 @@ pub struct LogsArgs {
     pub timestamps: bool,
 }
 
-pub fn handle_logs(
+pub async fn handle_logs(
     args: &LogsArgs,
     projects: &BTreeMap<String, Project>,
+    _locked_images: &BTreeMap<String, String>,
+    _lock_file: &Path,
 ) -> anyhow::Result<()> {
     let mut cmd = vec!["logs".into()];
 

@@ -1,5 +1,5 @@
 use clap::{Parser, ValueHint};
-use std::{collections::BTreeMap, process::Command as ProcCommand};
+use std::{collections::BTreeMap, path::Path, process::Command as ProcCommand};
 
 use crate::{clap_parse_image_selector, ImageSelector, Project};
 
@@ -44,9 +44,11 @@ pub struct ExecArgs {
     cmd: Vec<String>,
 }
 
-pub fn handle_exec(
+pub async fn handle_exec(
     args: &ExecArgs,
     projects: &BTreeMap<String, Project>,
+    _locked_images: &BTreeMap<String, String>,
+    _lock_file: &Path,
 ) -> anyhow::Result<()> {
     if args.cmd.is_empty() {
         anyhow::bail!("No command specified for exec");

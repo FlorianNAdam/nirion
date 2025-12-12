@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use serde_yml as serde_yaml;
 use serde_yml::{Mapping, Value};
+use std::path::Path;
 use std::{collections::BTreeMap, fs};
 
 use crate::{Project, TargetSelector};
@@ -13,9 +14,11 @@ pub struct CatArgs {
     pub target: TargetSelector,
 }
 
-pub fn handle_cat(
+pub async fn handle_cat(
     args: &CatArgs,
     projects: &BTreeMap<String, Project>,
+    _locked_images: &BTreeMap<String, String>,
+    _lock_file: &Path,
 ) -> Result<()> {
     match &args.target {
         TargetSelector::All => {

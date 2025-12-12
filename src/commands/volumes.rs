@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::Path};
 
 use crate::{docker::compose_target_cmd, Project, TargetSelector};
 
@@ -19,9 +19,11 @@ pub struct VolumesArgs {
     pub quiet: bool,
 }
 
-pub fn handle_volumes(
+pub async fn handle_volumes(
     args: &VolumesArgs,
     projects: &BTreeMap<String, Project>,
+    _locked_images: &BTreeMap<String, String>,
+    _lock_file: &Path,
 ) -> Result<()> {
     let mut cmd: Vec<String> =
         vec!["volumes".into(), "--format".into(), args.format.clone()];

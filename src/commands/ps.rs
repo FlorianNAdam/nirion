@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::Path};
 
 use crate::{docker::compose_target_cmd, Project, TargetSelector};
 
@@ -47,9 +47,11 @@ pub struct PsArgs {
     pub status: Vec<String>,
 }
 
-pub fn handle_ps(
+pub async fn handle_ps(
     args: &PsArgs,
     projects: &BTreeMap<String, Project>,
+    _locked_images: &BTreeMap<String, String>,
+    _lock_file: &Path,
 ) -> Result<()> {
     // Build ps-specific arguments
     let mut cmd_args: Vec<String> = vec!["ps".into()];

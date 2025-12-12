@@ -1,5 +1,5 @@
 use clap::Parser;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::Path};
 
 use crate::{
     clap_parse_selector, docker::compose_target_cmd, Project, TargetSelector,
@@ -14,9 +14,11 @@ pub struct ComposeExecArgs {
     cmd: Vec<String>,
 }
 
-pub fn handle_compose_exec(
+pub async fn handle_compose_exec(
     args: &ComposeExecArgs,
     projects: &BTreeMap<String, Project>,
+    _locked_images: &BTreeMap<String, String>,
+    _lock_file: &Path,
 ) -> anyhow::Result<()> {
     let cmd_slices: Vec<&str> = args
         .cmd
