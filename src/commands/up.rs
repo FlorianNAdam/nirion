@@ -11,7 +11,7 @@ use std::io::{stdout, Write};
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
-use crate::docker::{DockerUpProcess, ProjectStatus};
+use crate::docker::{compose_target_cmd, DockerUpProcess, ProjectStatus};
 use crate::{Project, TargetSelector};
 
 #[derive(Parser, Debug, Clone)]
@@ -30,6 +30,9 @@ pub struct UpArgs {
 
     #[arg(short, long)]
     pub quiet: bool,
+
+    #[arg(short, long)]
+    pub boring: bool,
 }
 
 impl ProjectStatus {
@@ -151,6 +154,18 @@ pub async fn handle_up(
     args: &UpArgs,
     projects: &BTreeMap<String, Project>,
 ) -> Result<()> {
+    if !args.boring && !matches!(args.target, TargetSelector::Image(_)) {
+        fancy_up(args, projects).await?;
+    } else {
+        compose_target_cmd(&args.target, projects, &["up", "-d"])?;
+    }
+    Ok(())
+}
+
+async fn fancy_up(
+    args: &UpArgs,
+    projects: &BTreeMap<String, Project>,
+) -> anyhow::Result<()> {
     let selected: Vec<String> = match &args.target {
         TargetSelector::All => projects.keys().cloned().collect(),
         TargetSelector::Project(p) => vec![p.name.clone()],
