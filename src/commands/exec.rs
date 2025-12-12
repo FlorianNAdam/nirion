@@ -1,4 +1,3 @@
-use anyhow::Result;
 use clap::{Parser, ValueHint};
 use std::{collections::BTreeMap, process::Command as ProcCommand};
 
@@ -48,7 +47,7 @@ pub struct ExecArgs {
 pub fn handle_exec(
     args: &ExecArgs,
     projects: &BTreeMap<String, Project>,
-) -> Result<()> {
+) -> anyhow::Result<()> {
     if args.cmd.is_empty() {
         anyhow::bail!("No command specified for exec");
     }
@@ -94,8 +93,6 @@ pub fn handle_exec(
     cmd_args.extend(common_args);
     cmd_args.push(service_name.clone());
     cmd_args.extend(args.cmd.clone());
-
-    println!("Running: docker compose {:?}", cmd_args.join(" "));
 
     if !args.dry_run {
         let status = ProcCommand::new("docker")

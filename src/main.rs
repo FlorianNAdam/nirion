@@ -1,4 +1,3 @@
-use anyhow::Result;
 use clap::Parser;
 use std::{collections::BTreeMap, fs, path::PathBuf};
 
@@ -35,7 +34,7 @@ fn get_env_path(key: &str) -> anyhow::Result<PathBuf> {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> anyhow::Result<()> {
     let lock_file = get_env_path("NIRION_LOCK_FILE")?;
     let locked_images: BTreeMap<String, String> = if lock_file.exists() {
         let lock_file_data = fs::read_to_string(&lock_file)?;

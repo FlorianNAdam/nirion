@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::Parser;
-use std::{collections::BTreeMap, process::Command as ProcCommand};
+use std::collections::BTreeMap;
 
-use crate::{Project, TargetSelector};
+use crate::{docker::compose_target_cmd, Project, TargetSelector};
 
 #[derive(Parser, Debug, Clone)]
 pub struct VolumesArgs {
@@ -23,64 +23,14 @@ pub fn handle_volumes(
     args: &VolumesArgs,
     projects: &BTreeMap<String, Project>,
 ) -> Result<()> {
-    match &args.target {
-        TargetSelector::All => {
-            for (project_name, project) in projects {
-                run_volumes(project_name, project, None, args)?;
-            }
-        }
-        TargetSelector::Project(proj) => {
-            let project = &projects[&proj.name];
-            run_volumes(&proj.name, project, None, args)?;
-        }
-        TargetSelector::Image(img) => {
-            let project = &projects[&img.project];
-            run_volumes(&img.project, project, Some(&img.image), args)?;
-        }
-    }
-
-    Ok(())
-}
-
-fn run_volumes(
-    project_name: &str,
-    project: &Project,
-    service: Option<&str>,
-    args: &VolumesArgs,
-) -> Result<()> {
-    let mut cmd_args = vec![
-        "--file".into(),
-        project.docker_compose.clone(),
-        "--project-name".into(),
-        project_name.into(),
-        "volumes".into(),
-    ];
-
-    cmd_args.push("--format".into());
-    cmd_args.push(args.format.clone());
+    let mut cmd: Vec<String> =
+        vec!["volumes".into(), "--format".into(), args.format.clone()];
 
     if args.quiet {
-        cmd_args.push("--quiet".into());
+        cmd.push("--quiet".into());
     }
 
-    if let Some(service_name) = service {
-        cmd_args.push(service_name.into());
-    }
+    let cmd_slices: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
 
-    println!("Running: docker compose {}", cmd_args.join(" "));
-
-    let status = ProcCommand::new("docker")
-        .arg("compose")
-        .args(&cmd_args)
-        .status()?;
-
-    if !status.success() {
-        anyhow::bail!(
-            "docker compose volumes failed for {}{}",
-            project_name,
-            service.map_or("".to_string(), |s| format!(".{}", s))
-        );
-    }
-
-    Ok(())
+    compose_target_cmd(&args.target, projects, &cmd_slices)
 }

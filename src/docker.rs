@@ -1,7 +1,11 @@
-use anyhow::Result;
+use crossterm::style::Stylize;
 use std::{
-    collections::BTreeMap, ffi::OsStr, process::Command as ProcCommand,
-    sync::Arc, time::Duration,
+    collections::BTreeMap,
+    ffi::OsStr,
+    io::{BufRead, BufReader},
+    process::{Command as ProcCommand, Stdio},
+    sync::Arc,
+    time::Duration,
 };
 use tokio::{process::Command, sync::RwLock, task::JoinHandle};
 
@@ -11,53 +15,39 @@ pub fn compose_target_cmd(
     target: &TargetSelector,
     projects: &BTreeMap<String, Project>,
     args: &[&str],
-) -> Result<()> {
+) -> anyhow::Result<()> {
     match target {
         TargetSelector::All => {
-            for (project_name, project) in projects {
+            for (name, project) in projects {
+                println!("[{}]", name.to_string().cyan());
+
                 let mut cmd_args = vec![
                     "--file",
                     &project.docker_compose,
                     "--project-name",
-                    &project_name,
+                    name,
                 ];
                 cmd_args.extend_from_slice(args);
 
-                println!("Running: docker compose {:?}", cmd_args.join(" "));
-
-                let status = ProcCommand::new("docker-compose")
-                    .args(&cmd_args)
-                    .status()?;
-                if status.success() {
-                    println!(
-                        "Project '{}' completed successfully.",
-                        project_name
-                    );
-                } else {
-                    println!(
-                        "Project '{}' failed. Status: {}",
-                        project_name, status
-                    );
+                if let Err(e) = run_docker_compose(&cmd_args) {
+                    println!("Project '{}' failed: {}", name, e)
                 }
+
+                println!()
             }
         }
+
         TargetSelector::Project(proj) => {
             let compose_file = &projects[&proj.name].docker_compose;
             let mut cmd_args =
                 vec!["--file", compose_file, "--project-name", &proj.name];
             cmd_args.extend_from_slice(args);
 
-            println!("Running: docker-compose {:?}", cmd_args);
-
-            let status = ProcCommand::new("docker-compose")
-                .args(&cmd_args)
-                .status()?;
-            if status.success() {
-                println!("Project '{}' completed successfully.", proj.name);
-            } else {
-                println!("Project '{}' failed. Status: {}", proj.name, status);
+            if let Err(e) = run_docker_compose(&cmd_args) {
+                println!("Project '{}' failed: {}", proj.name, e)
             }
         }
+
         TargetSelector::Image(img) => {
             let compose_file = &projects[&img.project].docker_compose;
             let mut cmd_args =
@@ -65,28 +55,51 @@ pub fn compose_target_cmd(
             cmd_args.extend_from_slice(args);
             cmd_args.push(&img.image);
 
-            println!(
-                "Running: docker-compose {:?} (image {})",
-                cmd_args.join(" "),
-                img.image
-            );
-
-            let status = ProcCommand::new("docker-compose")
-                .args(&cmd_args)
-                .status()?;
-            if status.success() {
-                println!(
-                    "Image '{}' in project '{}' completed successfully.",
-                    img.image, img.project
-                );
-            } else {
-                println!(
-                    "Image '{}' in project '{}' failed. Status: {}",
-                    img.image, img.project, status
-                );
+            if let Err(e) = run_docker_compose(&cmd_args) {
+                println!("Project '{}' failed: {}", img.project, e)
             }
         }
     }
+
+    Ok(())
+}
+
+pub fn run_docker_compose(cmd_args: &[&str]) -> anyhow::Result<()> {
+    let mut child = ProcCommand::new("docker-compose")
+        .args(cmd_args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+
+    let out_thread = std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().flatten() {
+            println!("{}", line);
+        }
+    });
+
+    let err_thread = std::thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines().flatten() {
+            if line.contains("the attribute `version` is obsolete") {
+                continue;
+            }
+            println!("{}", line);
+        }
+    });
+
+    let status = child.wait()?;
+
+    out_thread.join().ok();
+    err_thread.join().ok();
+
+    if !status.success() {
+        println!("docker-compose exited with status {}", status);
+    }
+
     Ok(())
 }
 
@@ -149,7 +162,7 @@ impl DockerProjectMonitor {
         monitor
     }
 
-    pub async fn refresh_status(&self) -> Result<()> {
+    pub async fn refresh_status(&self) -> anyhow::Result<()> {
         let new_status =
             query_project_status(&self.compose_file, &self.project_name)
                 .await?;
@@ -190,7 +203,7 @@ async fn project_refresh_thread(
 pub async fn query_project_status(
     compose_file: &str,
     project_name: &str,
-) -> Result<ProjectStatus> {
+) -> anyhow::Result<ProjectStatus> {
     let output = Command::new("docker")
         .arg("compose")
         .arg("-f")
@@ -235,7 +248,7 @@ pub struct ProjectStatus {
 }
 
 impl ProjectStatus {
-    pub fn from_json(project_name: &str, json: &str) -> Result<Self> {
+    pub fn from_json(project_name: &str, json: &str) -> anyhow::Result<Self> {
         let mut status = ProjectStatus {
             name: project_name.to_string(),
             services: BTreeMap::new(),
