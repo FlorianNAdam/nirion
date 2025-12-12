@@ -5,6 +5,7 @@ use clap::Subcommand;
 use crate::{
     commands::{
         cat::{handle_cat, CatArgs},
+        compose_exec::{handle_compose_exec, ComposeExecArgs},
         down::{handle_down, DownArgs},
         exec::{handle_exec, ExecArgs},
         list::{handle_list, ListArgs},
@@ -21,6 +22,7 @@ use crate::{
 };
 
 pub mod cat;
+pub mod compose_exec;
 pub mod down;
 pub mod exec;
 pub mod list;
@@ -83,6 +85,10 @@ pub enum Commands {
         #[command(flatten)]
         args: RestartArgs,
     },
+    ComposeExec {
+        #[command(flatten)]
+        args: ComposeExecArgs,
+    },
 }
 
 pub async fn handle_command(
@@ -108,6 +114,9 @@ pub async fn handle_command(
         Commands::Top { args } => handle_top(&args, &projects)?,
         Commands::Volumes { args } => handle_volumes(&args, &projects)?,
         Commands::Restart { args } => handle_restart(&args, &projects).await?,
+        Commands::ComposeExec { args } => {
+            handle_compose_exec(&args, &projects)?
+        }
     }
 
     Ok(())
