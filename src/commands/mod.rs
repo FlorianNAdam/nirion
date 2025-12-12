@@ -11,6 +11,7 @@ use crate::{
         lock::{handle_lock, LockArgs},
         logs::{handle_logs, LogsArgs},
         ps::{handle_ps, PsArgs},
+        restart::{handle_restart, RestartArgs},
         top::{handle_top, TopArgs},
         up::{handle_up, UpArgs},
         update::{handle_update, UpdateArgs},
@@ -26,6 +27,7 @@ pub mod list;
 pub mod lock;
 pub mod logs;
 pub mod ps;
+pub mod restart;
 pub mod top;
 pub mod up;
 pub mod update;
@@ -77,6 +79,10 @@ pub enum Commands {
         #[command(flatten)]
         args: VolumesArgs,
     },
+    Restart {
+        #[command(flatten)]
+        args: RestartArgs,
+    },
 }
 
 pub async fn handle_command(
@@ -101,6 +107,7 @@ pub async fn handle_command(
         Commands::Ps { args } => handle_ps(&args, &projects)?,
         Commands::Top { args } => handle_top(&args, &projects)?,
         Commands::Volumes { args } => handle_volumes(&args, &projects)?,
+        Commands::Restart { args } => handle_restart(&args, &projects).await?,
     }
 
     Ok(())

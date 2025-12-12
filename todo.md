@@ -12,6 +12,7 @@
 # Docker-Compose
 - [x] up
 - [x] down
+- [x] restart
 - [ ] start
 - [ ] stop
 - [ ] kill

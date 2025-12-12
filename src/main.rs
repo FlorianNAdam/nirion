@@ -8,7 +8,9 @@ pub use crate::projects::*;
 
 mod commands;
 mod docker;
+mod progress;
 mod projects;
+mod spinner;
 
 fn clap_parse_selector(s: &str) -> Result<TargetSelector, String> {
     parse_selector(s, &PROJECTS).map_err(|e| e.to_string())

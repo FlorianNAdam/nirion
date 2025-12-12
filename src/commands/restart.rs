@@ -8,7 +8,7 @@ use crate::progress::run_command_with_progress;
 use crate::{Project, TargetSelector};
 
 #[derive(Parser, Debug, Clone)]
-pub struct DownArgs {
+pub struct RestartArgs {
     #[arg(default_value = "*", value_parser = crate::clap_parse_selector)]
     pub target: TargetSelector,
 
@@ -28,22 +28,22 @@ pub struct DownArgs {
     pub boring: bool,
 }
 
-pub async fn handle_down(
-    args: &DownArgs,
+pub async fn handle_restart(
+    args: &RestartArgs,
     projects: &BTreeMap<String, Project>,
 ) -> Result<()> {
     if !args.boring && !matches!(args.target, TargetSelector::Image(_)) {
         run_command_with_progress(
             &args.target,
             projects,
-            &["down"],
+            &["restart", "-d"],
             args.no_monitor,
             args.quiet,
             Duration::from_secs(args.refresh),
         )
         .await?;
     } else {
-        compose_target_cmd(&args.target, projects, &["down"])?;
+        compose_target_cmd(&args.target, projects, &["restart", "-d"])?;
     }
     Ok(())
 }
