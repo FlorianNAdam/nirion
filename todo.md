@@ -10,8 +10,8 @@
 - [ ] repl? 
 
 # Docker-Compose
-- [ ] up
-- [ ] down
+- [x] up
+- [x] down
 - [ ] start
 - [ ] stop
 - [ ] kill

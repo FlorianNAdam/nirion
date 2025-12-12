@@ -100,12 +100,9 @@ fn colored_progress_bar(
     num_services: usize,
     width: usize,
 ) -> String {
-    let display_width = width.max(10);
-    let bar_width = display_width - 2;
-
     let total = num_services.max(status.total());
     if total == 0 {
-        return format!("[{:^width$}]", "N/A", width = bar_width);
+        return format!("[{:^width$}]", "N/A");
     }
 
     let healthy = status.healthy();
@@ -132,7 +129,7 @@ fn colored_progress_bar(
 
     let mut out = String::from("│ ");
     for (i, color) in segments.iter().enumerate() {
-        let width = optimal_sublist_length(bar_width, total, i);
+        let width = optimal_sublist_length(width, total, i);
 
         out.push_str(
             "█"
@@ -177,6 +174,8 @@ async fn fancy_up(
     args: &UpArgs,
     projects: &BTreeMap<String, Project>,
 ) -> anyhow::Result<()> {
+    let bar_width = 40;
+
     let selected: Vec<String> = match &args.target {
         TargetSelector::All => projects.keys().cloned().collect(),
         TargetSelector::Project(p) => vec![p.name.clone()],
@@ -213,7 +212,11 @@ async fn fancy_up(
         .unwrap_or_default();
 
     loop {
-        println!("{}  ┌{}┐", " ".repeat(max_name_width), "─".repeat(40));
+        println!(
+            "{}  ┌{}┐",
+            " ".repeat(max_name_width),
+            "─".repeat(bar_width + 2)
+        );
 
         for (i, (name, proc)) in map.iter().enumerate() {
             proc.refresh_status().await?;
@@ -225,7 +228,7 @@ async fn fancy_up(
                 project.services.len(),
                 !args.quiet,
                 max_name_width,
-                40,
+                bar_width,
             );
 
             if !args.quiet {
@@ -238,11 +241,19 @@ async fn fancy_up(
             }
 
             if i != map.len().saturating_sub(1) {
-                println!("{}  ├{}┤", " ".repeat(max_name_width), "─".repeat(40))
+                println!(
+                    "{}  ├{}┤",
+                    " ".repeat(max_name_width),
+                    "─".repeat(bar_width + 2)
+                )
             }
         }
 
-        println!("{}  └{}┘", " ".repeat(max_name_width), "─".repeat(40));
+        println!(
+            "{}  └{}┘",
+            " ".repeat(max_name_width),
+            "─".repeat(bar_width + 2)
+        );
 
         let mut all_done = true;
         for project in map.values() {
