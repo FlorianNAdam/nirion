@@ -106,7 +106,7 @@ pub fn fetch_digest(image: &str) -> anyhow::Result<String> {
         .to_string())
 }
 
-pub struct DockerUpProcess {
+pub struct DockerMonitoredProcess {
     pub project_name: String,
     pub compose_file: String,
 
@@ -114,14 +114,15 @@ pub struct DockerUpProcess {
     finished: Arc<RwLock<bool>>,
 }
 
-impl DockerUpProcess {
-    pub async fn create(
+impl DockerMonitoredProcess {
+    pub async fn new(
         project_name: String,
         project: &Project,
+        args: Vec<String>,
     ) -> Result<Arc<Self>> {
         let proc = Arc::new(Self {
-            compose_file: project.docker_compose.clone(),
             project_name: project_name.clone(),
+            compose_file: project.docker_compose.to_string(),
             project_status: Arc::new(RwLock::new(ProjectStatus {
                 name: project_name.clone(),
                 services: BTreeMap::new(),
@@ -129,48 +130,33 @@ impl DockerUpProcess {
             finished: Arc::new(RwLock::new(false)),
         });
 
-        proc.spawn_background().await?;
+        proc.spawn_background(args).await?;
         proc.refresh_status().await?;
 
         Ok(proc)
     }
 
-    async fn spawn_background(self: &Arc<Self>) -> Result<()> {
+    pub async fn spawn_background(
+        self: &Arc<Self>,
+        args: Vec<String>,
+    ) -> Result<()> {
         let compose_file = self.compose_file.clone();
         let project_name = self.project_name.clone();
         let finished = self.finished.clone();
 
         tokio::spawn(async move {
-            let _out = tokio::process::Command::new("docker")
+            let _out = Command::new("docker")
                 .arg("compose")
                 .arg("-f")
                 .arg(&compose_file)
                 .arg("--project-name")
                 .arg(&project_name)
-                .arg("up")
-                .arg("-d")
+                .args(&args)
                 .output()
                 .await;
 
-            {
-                let mut finished = finished.write().await;
-                *finished = true;
-            }
-
-            // match out {
-            //     Ok(o) if o.status.success() => {
-            //         eprintln!("[{project_name}] docker up -d finished");
-            //     }
-            //     Ok(o) => {
-            //         eprintln!(
-            //             "[{project_name}] docker up -d failed: {}",
-            //             String::from_utf8_lossy(&o.stderr)
-            //         );
-            //     }
-            //     Err(e) => {
-            //         eprintln!("[{project_name}] docker up -d error: {e}");
-            //     }
-            // }
+            let mut finished = finished.write().await;
+            *finished = true;
         });
 
         Ok(())

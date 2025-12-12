@@ -11,7 +11,9 @@ use std::io::{stdout, Write};
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
-use crate::docker::{compose_target_cmd, DockerUpProcess, ProjectStatus};
+use crate::docker::{
+    compose_target_cmd, DockerMonitoredProcess, ProjectStatus,
+};
 use crate::{Project, TargetSelector};
 
 #[derive(Parser, Debug, Clone)]
@@ -172,11 +174,13 @@ async fn fancy_up(
         TargetSelector::Image(img) => vec![img.project.clone()],
     };
 
-    let mut map: BTreeMap<String, Arc<DockerUpProcess>> = BTreeMap::new();
+    let mut map: BTreeMap<String, Arc<DockerMonitoredProcess>> =
+        BTreeMap::new();
 
     for name in &selected {
         let project = &projects[name];
-        let proc = DockerUpProcess::create(name.clone(), project).await?;
+        let proc =
+            DockerMonitoredProcess::new(name.clone(), project, vec![]).await?;
         map.insert(name.clone(), proc);
     }
 
