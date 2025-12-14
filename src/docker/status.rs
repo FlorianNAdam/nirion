@@ -55,8 +55,22 @@ pub struct ServiceStatus {
     pub exit_code: Option<i64>,
     pub running_for: Option<String>,
     pub status: Option<String>,
-    pub ports: Option<String>,
+    pub ports: Vec<Port>,
     pub networks: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Port {
+    pub external: Option<ExternalPort>,
+    pub port: u16,
+    pub proto: String,
+}
+
+#[allow(unused)]
+#[derive(Debug, Clone)]
+pub struct ExternalPort {
+    pub ip: String,
+    pub port: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -118,8 +132,9 @@ impl ProjectStatus {
                 .filter_map(|line| serde_json::from_str(line).ok())
                 .collect()
         };
-
         for c in containers {
+            let ports_c = c.ports.clone();
+
             let state = ServiceState::from_container(&c);
 
             let networks = c
@@ -129,6 +144,48 @@ impl ProjectStatus {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect::<Vec<_>>();
+
+            let ports = c
+                .ports
+                .unwrap_or_default()
+                .split(",")
+                .filter(|s| !s.is_empty())
+                .map(|port_str| {
+                    let (port_str, proto) = port_str
+                        .split_once("/")
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "Failed to split port by '/': {port_str}"
+                            )
+                        })?;
+
+                    if let Some((ip, port_str)) = port_str.rsplit_once(":") {
+                        let (external, internal) = port_str
+                            .split_once("->")
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "Failed to split port by ':': {port_str}"
+                                )
+                            })?;
+
+                        Ok(Port {
+                            external: Some(ExternalPort {
+                                ip: ip.to_string(),
+                                port: external.parse()?,
+                            }),
+                            port: internal.parse()?,
+                            proto: proto.to_string(),
+                        })
+                    } else {
+                        Ok(Port {
+                            port: port_str.parse()?,
+                            external: None,
+                            proto: proto.to_string(),
+                        })
+                    }
+                })
+                .collect::<anyhow::Result<Vec<_>>>()
+                .context(format!("Failed to parse ports: {:?}", ports_c))?;
 
             project.services.insert(
                 c.service.clone(),
@@ -141,7 +198,7 @@ impl ProjectStatus {
                     exit_code: c.exit_code,
                     running_for: c.running_for,
                     status: c.status,
-                    ports: c.ports,
+                    ports,
                     networks,
                 },
             );
