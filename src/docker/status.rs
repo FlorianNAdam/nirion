@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use anyhow::Context;
+use serde::Deserialize;
 use tokio::process::Command;
 
 pub async fn query_project_status(
@@ -16,7 +18,8 @@ pub async fn query_project_status(
         .arg("--format")
         .arg("json")
         .output()
-        .await?;
+        .await
+        .context("failed to execute docker compose ps")?;
 
     let json = if output.status.success() {
         String::from_utf8_lossy(&output.stdout).to_string()
@@ -24,23 +27,36 @@ pub async fn query_project_status(
         "[]".to_string()
     };
 
-    let status = ProjectStatus::from_json(project_name, &json)?;
-    Ok(status)
+    ProjectStatus::from_json(project_name, &json)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServiceState {
-    Running,
     Healthy,
-    Exited,
+    Running,
     Starting,
+    Exited,
+    Unhealthy,
     Unknown,
 }
 
+#[allow(unused)]
 #[derive(Debug, Clone)]
 pub struct ServiceStatus {
-    pub _name: String,
+    pub service: String,
+
+    pub container_name: String,
+
+    pub image: String,
+
     pub state: ServiceState,
+
+    pub health: Option<String>,
+    pub exit_code: Option<i64>,
+    pub running_for: Option<String>,
+    pub status: Option<String>,
+    pub ports: Option<String>,
+    pub networks: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -49,64 +65,107 @@ pub struct ProjectStatus {
     pub services: BTreeMap<String, ServiceStatus>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ContainerInfo {
+    #[serde(rename = "Name")]
+    name: String,
+
+    #[serde(rename = "Service")]
+    service: String,
+
+    #[serde(rename = "Image")]
+    image: String,
+
+    #[serde(rename = "State")]
+    state: String,
+
+    #[serde(rename = "Health")]
+    health: Option<String>,
+
+    #[serde(rename = "ExitCode")]
+    exit_code: Option<i64>,
+
+    #[serde(rename = "RunningFor")]
+    running_for: Option<String>,
+
+    #[serde(rename = "Status")]
+    status: Option<String>,
+
+    #[serde(rename = "Ports")]
+    ports: Option<String>,
+
+    #[serde(rename = "Networks")]
+    networks: Option<String>,
+}
+
 impl ProjectStatus {
     pub fn from_json(project_name: &str, json: &str) -> anyhow::Result<Self> {
-        let mut status = ProjectStatus {
+        let mut project = ProjectStatus {
             name: project_name.to_string(),
             services: BTreeMap::new(),
         };
 
         let json = json.trim();
         if json.is_empty() || json == "[]" {
-            return Ok(status);
+            return Ok(project);
         }
-        if json.starts_with('[') {
-            if let Ok(containers) =
-                serde_json::from_str::<Vec<serde_json::Value>>(json)
-            {
-                for c in containers {
-                    Self::process_container(&mut status, &c);
-                }
-            }
+
+        let containers: Vec<ContainerInfo> = if json.starts_with('[') {
+            serde_json::from_str(json)
+                .context("failed to parse docker compose JSON output")?
         } else {
-            for line in json.lines() {
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
-                }
-
-                if let Ok(c) = serde_json::from_str::<serde_json::Value>(line) {
-                    Self::process_container(&mut status, &c);
-                }
-            }
-        }
-
-        Ok(status)
-    }
-
-    fn process_container(st: &mut ProjectStatus, c: &serde_json::Value) {
-        let name = c["Name"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string();
-
-        let state_str = c["State"].as_str().unwrap_or("unknown");
-        let health_str = c["Health"].as_str().unwrap_or("");
-
-        let state = match state_str {
-            "running" if health_str == "healthy" => ServiceState::Healthy,
-            "running" => ServiceState::Running,
-            "exited" => ServiceState::Exited,
-            "restarting" | "created" => ServiceState::Starting,
-            _ => ServiceState::Unknown,
+            json.lines()
+                .filter_map(|line| serde_json::from_str(line).ok())
+                .collect()
         };
 
-        st.services
-            .insert(name.clone(), ServiceStatus { _name: name, state });
+        for c in containers {
+            let state = ServiceState::from_container(&c);
+
+            let networks = c
+                .networks
+                .unwrap_or_default()
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>();
+
+            project.services.insert(
+                c.service.clone(),
+                ServiceStatus {
+                    service: c.service,
+                    container_name: c.name,
+                    image: c.image,
+                    state,
+                    health: c.health,
+                    exit_code: c.exit_code,
+                    running_for: c.running_for,
+                    status: c.status,
+                    ports: c.ports,
+                    networks,
+                },
+            );
+        }
+
+        Ok(project)
     }
 
     pub fn total(&self) -> usize {
         self.services.len()
+    }
+
+    pub fn healthy(&self) -> usize {
+        self.services
+            .values()
+            .filter(|s| s.state == ServiceState::Healthy)
+            .count()
+    }
+
+    pub fn unhealthy(&self) -> usize {
+        self.services
+            .values()
+            .filter(|s| s.state == ServiceState::Unhealthy)
+            .count()
     }
 
     pub fn running(&self) -> usize {
@@ -118,24 +177,31 @@ impl ProjectStatus {
             .count()
     }
 
-    pub fn healthy(&self) -> usize {
-        self.services
-            .values()
-            .filter(|s| matches!(s.state, ServiceState::Healthy))
-            .count()
-    }
-
     pub fn exited(&self) -> usize {
         self.services
             .values()
-            .filter(|s| matches!(s.state, ServiceState::Exited))
+            .filter(|s| s.state == ServiceState::Exited)
             .count()
     }
 
     pub fn starting(&self) -> usize {
         self.services
             .values()
-            .filter(|s| matches!(s.state, ServiceState::Starting))
+            .filter(|s| s.state == ServiceState::Starting)
             .count()
+    }
+}
+
+impl ServiceState {
+    fn from_container(c: &ContainerInfo) -> Self {
+        match (c.state.as_str(), c.health.as_deref(), c.exit_code) {
+            ("running", Some("healthy"), _) => ServiceState::Healthy,
+            ("running", Some("unhealthy"), _) => ServiceState::Unhealthy,
+            ("running", _, _) => ServiceState::Running,
+            ("created" | "restarting", _, _) => ServiceState::Starting,
+            ("exited", _, Some(0)) => ServiceState::Exited,
+            ("exited", _, _) => ServiceState::Exited,
+            _ => ServiceState::Unknown,
+        }
     }
 }

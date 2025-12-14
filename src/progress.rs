@@ -79,6 +79,7 @@ fn colored_progress_bar(
     let running = status.running() - status.healthy();
     let starting = status.starting();
     let exited = status.exited();
+    let unhealthy = status.unhealthy();
 
     let mut segments = Vec::new();
     for _ in 0..healthy {
@@ -90,8 +91,11 @@ fn colored_progress_bar(
     for _ in 0..starting {
         segments.push(Color::Cyan);
     }
-    for _ in 0..exited {
+    for _ in 0..unhealthy {
         segments.push(Color::Red);
+    }
+    for _ in 0..exited {
+        segments.push(Color::DarkGrey);
     }
     for _ in segments.len()..total {
         segments.push(Color::Grey);
