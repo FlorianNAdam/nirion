@@ -1,7 +1,9 @@
+use crossterm::{cursor, execute, style::Stylize};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
+    io::stdout,
     path::Path,
     sync::Arc,
     time::Duration,
@@ -23,13 +25,18 @@ pub async fn update_images(
         return Ok(());
     }
 
+    let mut stdout = stdout();
+    execute!(stdout, cursor::Hide)?;
+
     let multi_progress = MultiProgress::new();
     let overall_pb = multi_progress.add(ProgressBar::new(total_images as u64));
     overall_pb.set_style(
         ProgressStyle::default_bar()
-            .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} ({eta}) {msg}")
+            .template(
+                "[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}",
+            )
             .unwrap()
-            .progress_chars("██")
+            .progress_chars("██"),
     );
 
     overall_pb.enable_steady_tick(Duration::from_millis(100));
@@ -98,6 +105,7 @@ pub async fn update_images(
     }
 
     overall_pb.finish_with_message("All images checked");
+    println!();
 
     let new_digests = Arc::try_unwrap(new_digests)
         .unwrap_or_else(|_| panic!("Failed to unwrap new_digests"))
@@ -106,6 +114,27 @@ pub async fn update_images(
     if new_digests.is_empty() {
         println!("All images are already up-to-date");
         return Ok(());
+    }
+
+    println!("\nDigest changes:");
+    for (service, new_digest) in &new_digests {
+        match locked_images.get(service) {
+            Some(old_digest) => {
+                println!(
+                    "  ~ {}:\n      old: {}\n      new: {}",
+                    service.to_string().cyan(),
+                    old_digest,
+                    new_digest
+                );
+            }
+            None => {
+                println!(
+                    "  + {}:\n      new: {}",
+                    service.to_string().green(),
+                    new_digest
+                );
+            }
+        }
     }
 
     println!("\nUpdating lock file...");
