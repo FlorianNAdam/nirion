@@ -1,5 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
+use console::strip_ansi_codes;
+use crossterm::style::Stylize;
 use std::{
     collections::{BTreeMap, HashSet},
     path::Path,
@@ -135,30 +137,99 @@ async fn fancy_ps(
     _args: &PsArgs,
     projects: &BTreeMap<String, Project>,
 ) -> Result<()> {
-    print_header();
-
+    let mut rows = vec![];
     for (project_name, project) in projects {
-        let status =
-            query_project_status(&project.docker_compose, project_name).await?;
-
-        for svc in status.services.values() {
-            print_row(svc);
-        }
+        let new_rows = print_project_status(project_name, project).await?;
+        rows.extend(new_rows);
     }
+
+    print_table(rows);
 
     Ok(())
 }
 
-fn print_header() {
-    println!(
-        "{:<32} {:<14} {:<28} {}",
-        "NAME", "RUNNING FOR", "STATUS", "PORTS"
-    );
+fn print_table(lines: Vec<String>) {
+    // Split each line into columns by tabs
+    let split_lines: Vec<Vec<&str>> = lines
+        .iter()
+        .map(|line| line.split('\t').collect())
+        .collect();
+
+    // Determine the number of columns (max across all lines)
+    let num_cols = split_lines
+        .iter()
+        .map(|cols| cols.len())
+        .max()
+        .unwrap_or(0);
+
+    // Calculate the max width of each column (ignoring ANSI codes)
+    let mut col_widths = vec![0; num_cols];
+    for cols in &split_lines {
+        for (i, col) in cols.iter().enumerate() {
+            let visible_len = strip_ansi_codes(col).len();
+            if visible_len > col_widths[i] {
+                col_widths[i] = visible_len;
+            }
+        }
+    }
+
+    // Print each line with padded columns
+    for cols in split_lines {
+        for (i, col) in cols.iter().enumerate() {
+            let visible_len = strip_ansi_codes(col).len();
+            if i < cols.len() - 1 {
+                // Pad to the max width
+                print!(
+                    "{}{}",
+                    col,
+                    " ".repeat(col_widths[i] - visible_len + 2)
+                );
+            } else {
+                print!("{}", col);
+            }
+        }
+        println!();
+    }
 }
 
-fn print_row(svc: &crate::docker::ServiceStatus) {
+async fn print_project_status(
+    project_name: &str,
+    project: &Project,
+) -> anyhow::Result<Vec<String>> {
+    let mut rows = vec![];
+
+    rows.push(format!(
+        "[{}]\t{}\t{}\t{}",
+        project_name.cyan(),
+        "created".blue(),
+        "status".blue(),
+        "ports".blue()
+    ));
+    let status =
+        query_project_status(&project.docker_compose, project_name).await?;
+
+    for svc in status.services.values() {
+        rows.push(print_row(svc)?);
+    }
+
+    rows.push(String::new());
+
+    Ok(rows)
+}
+
+fn print_row(svc: &crate::docker::ServiceStatus) -> anyhow::Result<String> {
+    let unhealthy_token = "PS_REPLACE_TOKEN1";
+    let healthy_token = "PS_REPLACE_TOKEN2";
+
     let running_for = svc.running_for.as_deref().unwrap_or("");
-    let status = svc.status.as_deref().unwrap_or("");
+    let status = svc
+        .status
+        .as_deref()
+        .unwrap_or("")
+        .replace("unhealthy", unhealthy_token)
+        .replace("healthy", healthy_token)
+        .replace(healthy_token, &"healthy".green().to_string())
+        .replace(unhealthy_token, &"unhealthy".red().to_string());
 
     let port_strs = svc
         .ports
@@ -179,19 +250,8 @@ fn print_row(svc: &crate::docker::ServiceStatus) {
     port_strs.sort_unstable();
     let port_str = port_strs.join(", ");
 
-    println!(
-        "{:<32} {:<14} {:<28} {}",
-        svc.container_name,
-        truncate(running_for, 14),
-        truncate(status, 28),
-        port_str
-    );
-}
-
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max.saturating_sub(1)])
-    }
+    Ok(format!(
+        " - {}\t{}\t{}\t{}",
+        svc.container_name, running_for, status, port_str
+    ))
 }
