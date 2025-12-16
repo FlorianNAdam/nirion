@@ -35,7 +35,7 @@ pub async fn handle_restart(
     _locked_images: &BTreeMap<String, String>,
     _lock_file: &Path,
 ) -> Result<()> {
-    if !args.boring && !matches!(args.target, TargetSelector::Image(_)) {
+    if !args.boring && !matches!(args.target, TargetSelector::Service(_)) {
         run_command_with_progress(
             &args.target,
             projects,

@@ -202,7 +202,7 @@ pub async fn run_command_with_progress(
     let selected: Vec<String> = match target {
         TargetSelector::All => projects.keys().cloned().collect(),
         TargetSelector::Project(p) => vec![p.name.clone()],
-        TargetSelector::Image(img) => vec![img.project.clone()],
+        TargetSelector::Service(img) => vec![img.project.clone()],
     };
 
     let mut map = BTreeMap::new();

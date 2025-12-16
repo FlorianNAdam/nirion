@@ -16,8 +16,8 @@ fn clap_parse_selector(s: &str) -> Result<TargetSelector, String> {
     parse_selector(s, &PROJECTS).map_err(|e| e.to_string())
 }
 
-fn clap_parse_image_selector(s: &str) -> Result<ImageSelector, String> {
-    parse_image_selector(s, &PROJECTS).map_err(|e| e.to_string())
+fn clap_parse_service_selector(s: &str) -> Result<ServiceSelector, String> {
+    parse_service_selector(s, &PROJECTS).map_err(|e| e.to_string())
 }
 
 #[derive(Parser)]

@@ -31,9 +31,9 @@ pub async fn handle_cat(
             let project = &projects[&proj.name];
             print_full_yaml(&proj.name, project)?;
         }
-        TargetSelector::Image(img) => {
+        TargetSelector::Service(img) => {
             let project = &projects[&img.project];
-            print_service_section(&img.project, project, &img.image)?;
+            print_service_section(&img.project, project, &img.service)?;
         }
     }
 

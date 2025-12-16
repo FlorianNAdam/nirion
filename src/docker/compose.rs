@@ -44,12 +44,12 @@ pub async fn compose_target_cmd(
             }
         }
 
-        TargetSelector::Image(img) => {
+        TargetSelector::Service(img) => {
             let compose_file = &projects[&img.project].docker_compose;
             let mut cmd_args =
                 vec!["--file", compose_file, "--project-name", &img.project];
             cmd_args.extend_from_slice(args);
-            cmd_args.push(&img.image);
+            cmd_args.push(&img.service);
 
             if let Err(e) = run_docker_compose(&cmd_args).await {
                 println!("Project '{}' failed: {}", img.project, e)

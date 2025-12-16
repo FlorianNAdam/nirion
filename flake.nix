@@ -218,10 +218,20 @@
                   acc // { ${name} = value; }
               ) { } nirionConfig.out.images_v2;
 
-              out.projects = lib.mapAttrs (name: project: {
-                docker-compose = arionConfig.projects.${name}.settings.out.dockerComposeYaml;
-                services = nirionConfig.out.images_v2.${name} or { };
-              }) nirionConfig.projects;
+              out.projects = lib.mapAttrs (
+                projectName: project:
+                let
+                  images = nirionConfig.out.images_v2.${projectName} or { };
+                in
+                {
+                  docker-compose = arionConfig.projects.${projectName}.settings.out.dockerComposeYaml;
+                  services = lib.mapAttrs (serviceName: service: {
+                    image = images.${serviceName} or null;
+                    healthcheck = service.service.healthcheck or null;
+                    restart = service.service.restart or null;
+                  }) project.settings.services;
+                }
+              ) nirionConfig.projects;
 
               out.projectsFile =
                 let

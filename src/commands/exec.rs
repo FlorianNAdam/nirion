@@ -1,12 +1,12 @@
 use clap::{Parser, ValueHint};
 use std::{collections::BTreeMap, path::Path, process::Command as ProcCommand};
 
-use crate::{clap_parse_image_selector, ImageSelector, Project};
+use crate::{clap_parse_service_selector, Project, ServiceSelector};
 
 #[derive(Parser, Debug, Clone)]
 pub struct ExecArgs {
-    #[arg(value_parser = clap_parse_image_selector)]
-    target: ImageSelector,
+    #[arg(value_parser = clap_parse_service_selector)]
+    target: ServiceSelector,
 
     /// Detached mode: run in background
     #[arg(short = 'd', long)]
@@ -82,7 +82,7 @@ pub async fn handle_exec(
     }
 
     let project_name = &args.target.project;
-    let service_name = &args.target.image;
+    let service_name = &args.target.service;
 
     let project = &projects[project_name];
     let mut cmd_args = vec![

@@ -16,23 +16,30 @@ pub struct ProjectSelector {
 }
 
 #[derive(Clone, Debug)]
-pub struct ImageSelector {
+pub struct ServiceSelector {
     pub project: String,
-    pub image: String,
+    pub service: String,
 }
 
 #[derive(Clone, Debug)]
 pub enum TargetSelector {
     All,
     Project(ProjectSelector),
-    Image(ImageSelector),
+    Service(ServiceSelector),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
     #[serde(rename = "docker-compose")]
     pub docker_compose: String,
-    pub services: BTreeMap<String, String>,
+    pub services: BTreeMap<String, Service>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Service {
+    pub image: Option<String>,
+    pub healthcheck: Option<serde_json::Value>,
+    pub restart: Option<String>,
 }
 
 pub fn parse_selector(
@@ -55,17 +62,20 @@ pub fn parse_selector(
                 anyhow::bail!("Project '{}' not found", project_name);
             }
         }
-        [project_name, image_name] => {
+        [project_name, service_name] => {
             if let Some(proj) = projects.get(*project_name) {
-                if proj.services.contains_key(*image_name) {
-                    Ok(TargetSelector::Image(ImageSelector {
+                if proj
+                    .services
+                    .contains_key(*service_name)
+                {
+                    Ok(TargetSelector::Service(ServiceSelector {
                         project: project_name.to_string(),
-                        image: image_name.to_string(),
+                        service: service_name.to_string(),
                     }))
                 } else {
                     anyhow::bail!(
-                        "Image '{}' not found in project '{}'",
-                        image_name,
+                        "Service '{}' not found in project '{}'",
+                        service_name,
                         project_name
                     );
                 }
@@ -77,13 +87,13 @@ pub fn parse_selector(
     }
 }
 
-pub fn parse_image_selector(
+pub fn parse_service_selector(
     s: &str,
     projects: &BTreeMap<String, Project>,
-) -> anyhow::Result<ImageSelector> {
+) -> anyhow::Result<ServiceSelector> {
     let selector = parse_selector(s, projects)?;
     match selector {
-        TargetSelector::Image(image_selector) => Ok(image_selector),
+        TargetSelector::Service(service_selector) => Ok(service_selector),
         _ => anyhow::bail!(
             "Expected image selector like <project>.<image> but got {}",
             s
@@ -99,24 +109,30 @@ pub fn get_images(
     match target {
         TargetSelector::All => {
             for (project_name, project) in projects {
-                for (service_name, image) in project.services.iter() {
+                for (service_name, service) in project.services.iter() {
                     let identifier = format!("{project_name}.{service_name}");
-                    images.insert(identifier, image.to_string());
+                    if let Some(image) = &service.image {
+                        images.insert(identifier, image.to_string());
+                    };
                 }
             }
         }
         TargetSelector::Project(proj) => {
             let project = &projects[&proj.name];
-            for (service_name, image) in project.services.iter() {
+            for (service_name, service) in project.services.iter() {
                 let identifier = format!("{}.{}", proj.name, service_name);
-                images.insert(identifier, image.to_string());
+                if let Some(image) = &service.image {
+                    images.insert(identifier, image.to_string());
+                };
             }
         }
-        TargetSelector::Image(img) => {
+        TargetSelector::Service(img) => {
             let project = &projects[&img.project];
-            let image = &project.services[&img.image];
-            let identifier = format!("{}.{}", img.project, img.image);
-            images.insert(identifier, image.to_string());
+            let service = &project.services[&img.service];
+            let identifier = format!("{}.{}", img.project, img.service);
+            if let Some(image) = &service.image {
+                images.insert(identifier, image.to_string());
+            };
         }
     }
     images

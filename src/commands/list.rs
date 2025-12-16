@@ -32,12 +32,12 @@ pub async fn handle_list(
             }
         }
 
-        TargetSelector::Image(img) => {
+        TargetSelector::Service(img) => {
             println!(
-                "Selector '{}' refers to a specific image. Printing that one only:",
-                format!("{}.{}", img.project, img.image)
+                "Selector '{}' refers to a specific service. Printing that one only:",
+                format!("{}.{}", img.project, img.service)
             );
-            println!("- {}", img.image);
+            println!("- {}", img.service);
         }
     }
     Ok(())
