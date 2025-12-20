@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::io::{stdout, Write};
 use tokio::time::Duration;
 
-use crate::docker::{DockerMonitoredProcess, ProjectStatus};
+use crate::docker::{DockerMonitoredProcess, ProjectStatus, ServiceState};
 use crate::spinner::Spinner;
 use crate::{Project, TargetSelector};
 
@@ -198,6 +198,7 @@ pub async fn run_command_with_progress(
     no_monitor: bool,
     quiet: bool,
     refresh_interval: Duration,
+    wait_for_healthchecks: bool,
 ) -> anyhow::Result<()> {
     let selected: Vec<String> = match target {
         TargetSelector::All => projects.keys().cloned().collect(),
@@ -248,6 +249,19 @@ pub async fn run_command_with_progress(
                 break;
             }
         }
+
+        let mut statuses = BTreeMap::new();
+        for (project_name, status) in map.iter() {
+            statuses.insert(
+                project_name.to_string(),
+                status.project_status().await.clone(),
+            );
+        }
+        if wait_for_healthchecks
+            && !healthchecks_finished(target, projects, &statuses)
+        {
+            finished = false;
+        }
     }
 
     for proj in map.values() {
@@ -260,4 +274,54 @@ pub async fn run_command_with_progress(
     }
 
     Ok(())
+}
+
+pub fn healthchecks_finished(
+    target: &TargetSelector,
+    projects: &BTreeMap<String, Project>,
+    statuses: &BTreeMap<String, ProjectStatus>,
+) -> bool {
+    let project_names: Vec<&str> = match target {
+        TargetSelector::All => projects
+            .keys()
+            .map(String::as_str)
+            .collect(),
+        TargetSelector::Project(p) => vec![p.name.as_str()],
+        TargetSelector::Service(s) => vec![s.project.as_str()],
+    };
+
+    for project_name in project_names {
+        let project = match projects.get(project_name) {
+            Some(p) => p,
+            None => continue,
+        };
+
+        let status = match statuses.get(project_name) {
+            Some(s) => s,
+            None => return false,
+        };
+
+        for (service_name, service) in &project.services {
+            if let TargetSelector::Service(sel) = target {
+                if sel.project == project_name && sel.service != *service_name {
+                    continue;
+                }
+            }
+
+            if service.healthcheck.is_none() {
+                continue;
+            }
+
+            let Some(service_status) = status.services.get(service_name) else {
+                return false;
+            };
+
+            match service_status.state {
+                ServiceState::Healthy | ServiceState::Unhealthy => {}
+                _ => return false,
+            }
+        }
+    }
+
+    true
 }

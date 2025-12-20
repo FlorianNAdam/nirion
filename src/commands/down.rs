@@ -43,6 +43,7 @@ pub async fn handle_down(
             args.no_monitor,
             args.quiet,
             Duration::from_secs(args.refresh),
+            false,
         )
         .await?;
     } else {

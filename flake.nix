@@ -70,7 +70,7 @@
 
           shellHook = ''
             export NIRION_LOCK_FILE='/home/florian/my-nixos/modules/arion/nirion.lock'
-            export NIRION_PROJECT_FILE='/nix/store/869wwrik1r62qcdjafkrcpamfj3g486k-projects.json'
+            export NIRION_PROJECT_FILE='/nix/store/sbnzfv95s8y14lsixfm43cka5si3zwg8-projects.json'
           '';
         };
       }

@@ -43,6 +43,7 @@ pub async fn handle_restart(
             args.no_monitor,
             args.quiet,
             Duration::from_secs(args.refresh),
+            true,
         )
         .await?;
     } else {
