@@ -134,17 +134,39 @@ async fn legacy_ps(
 }
 
 async fn fancy_ps(
-    _args: &PsArgs,
+    args: &PsArgs,
     projects: &BTreeMap<String, Project>,
 ) -> Result<()> {
     let mut rows = vec![];
-    for (project_name, project) in projects {
-        let new_rows = print_project_status(project_name, project).await?;
-        rows.extend(new_rows);
+
+    match &args.target {
+        TargetSelector::All => {
+            for (project_name, project) in projects {
+                rows.extend(print_project_status(project_name, project).await?);
+            }
+        }
+
+        TargetSelector::Project(sel) => {
+            if let Some(project) = projects.get(&sel.name) {
+                rows.extend(print_project_status(&sel.name, project).await?);
+            }
+        }
+
+        TargetSelector::Service(sel) => {
+            if let Some(project) = projects.get(&sel.project) {
+                let status =
+                    query_project_status(&project.docker_compose, &sel.project)
+                        .await?;
+
+                if let Some(svc) = status.services.get(&sel.service) {
+                    rows.push(print_header(&sel.project));
+                    rows.push(print_row(svc)?);
+                }
+            }
+        }
     }
 
     print_table(rows);
-
     Ok(())
 }
 
@@ -198,13 +220,8 @@ async fn print_project_status(
 ) -> anyhow::Result<Vec<String>> {
     let mut rows = vec![];
 
-    rows.push(format!(
-        "[{}]\t{}\t{}\t{}",
-        project_name.cyan(),
-        "created".blue(),
-        "status".blue(),
-        "ports".blue()
-    ));
+    rows.push(print_header(project_name));
+
     let status =
         query_project_status(&project.docker_compose, project_name).await?;
 
@@ -215,6 +232,16 @@ async fn print_project_status(
     rows.push(String::new());
 
     Ok(rows)
+}
+
+fn print_header(project_name: &str) -> String {
+    format!(
+        "[{}]\t{}\t{}\t{}",
+        project_name.cyan(),
+        "created".blue(),
+        "status".blue(),
+        "ports".blue()
+    )
 }
 
 fn print_row(svc: &crate::docker::ServiceStatus) -> anyhow::Result<String> {

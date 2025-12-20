@@ -39,7 +39,7 @@ pub async fn handle_restart(
         run_command_with_progress(
             &args.target,
             projects,
-            &["restart", "-d"],
+            &["restart"],
             args.no_monitor,
             args.quiet,
             Duration::from_secs(args.refresh),
