@@ -27,6 +27,9 @@ pub struct UpArgs {
 
     #[arg(short, long)]
     pub boring: bool,
+
+    #[arg(short, long)]
+    pub skip_healthcheck: bool,
 }
 
 pub async fn handle_up(
@@ -43,7 +46,7 @@ pub async fn handle_up(
             args.no_monitor,
             args.quiet,
             Duration::from_secs(args.refresh),
-            true,
+            !args.skip_healthcheck,
         )
         .await?;
     } else {
