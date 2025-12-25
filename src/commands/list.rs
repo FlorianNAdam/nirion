@@ -3,6 +3,7 @@ use std::{collections::BTreeMap, path::Path};
 
 use crate::{Project, TargetSelector};
 
+/// List projects or services
 #[derive(Parser, Debug, Clone)]
 pub struct ListArgs {
     /// Target selector: *, project, or project.service

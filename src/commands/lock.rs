@@ -4,6 +4,7 @@ use clap::Parser;
 
 use crate::{get_images, lock::update_images, Project, TargetSelector};
 
+/// Create missing lock file entries
 #[derive(Parser, Debug, Clone)]
 pub struct LockArgs {
     /// Target selector: *, project, or project.service

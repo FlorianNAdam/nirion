@@ -5,8 +5,10 @@ use crate::{
     clap_parse_selector, docker::compose_target_cmd, Project, TargetSelector,
 };
 
+/// View output from service containers
 #[derive(Parser, Debug, Clone)]
 pub struct LogsArgs {
+    /// Target selector: *, project, or project.service
     #[arg(default_value = "*", value_parser = clap_parse_selector)]
     pub target: TargetSelector,
 

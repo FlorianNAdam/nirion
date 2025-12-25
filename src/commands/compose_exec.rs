@@ -5,8 +5,10 @@ use crate::{
     clap_parse_selector, docker::compose_target_cmd, Project, TargetSelector,
 };
 
+/// Run a docker-compose command for a project or service
 #[derive(Parser, Debug, Clone)]
 pub struct ComposeExecArgs {
+    /// Target selector: *, project, or project.service
     #[arg(value_parser = clap_parse_selector)]
     target: TargetSelector,
 

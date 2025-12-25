@@ -16,6 +16,7 @@ use crate::{
 // ===== CLI =====
 //
 
+/// List running service containers
 #[derive(Parser, Debug, Clone)]
 pub struct PsArgs {
     /// Target selector: *, project, or project.service

@@ -3,8 +3,10 @@ use std::{collections::BTreeMap, path::Path, process::Command as ProcCommand};
 
 use crate::{clap_parse_service_selector, Project, ServiceSelector};
 
+/// Execute a command in a running service container
 #[derive(Parser, Debug, Clone)]
 pub struct ExecArgs {
+    /// Service selector: project.service
     #[arg(value_parser = clap_parse_service_selector)]
     target: ServiceSelector,
 

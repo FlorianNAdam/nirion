@@ -4,6 +4,7 @@ use std::{collections::BTreeMap, path::Path};
 
 use crate::{docker::compose_target_cmd, Project, TargetSelector};
 
+/// List volumes
 #[derive(Parser, Debug, Clone)]
 pub struct VolumesArgs {
     /// Target selector: *, project, or project.service
