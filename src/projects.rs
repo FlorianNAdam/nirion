@@ -1,14 +1,6 @@
-use std::{collections::BTreeMap, fs};
+use std::collections::BTreeMap;
 
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-
-pub static PROJECTS: Lazy<BTreeMap<String, Project>> = Lazy::new(|| {
-    let path = std::env::var("NIRION_PROJECT_FILE")
-        .expect("Env var NIRION_PROJECT_FILE must be set");
-    let data = fs::read_to_string(path).expect("Failed to read project file");
-    serde_json::from_str(&data).expect("Failed to parse project JSON")
-});
 
 #[derive(Clone, Debug)]
 pub struct ProjectSelector {
