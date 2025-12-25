@@ -3,6 +3,7 @@ use anyhow::Context;
 use clap::{CommandFactory, Parser};
 use std::sync::OnceLock;
 use std::{collections::BTreeMap, fs, path::PathBuf};
+use tokio::process::Command;
 
 pub use crate::projects::*;
 
@@ -60,10 +61,12 @@ struct FileCli {
     #[arg(long, env = "NIRION_PROJECT_FILE", hide_env_values = true)]
     project_file: Option<PathBuf>,
 
+    /// Evaluate a nix target to build the project file
     #[arg(long, conflicts_with = "project_file")]
     nix_eval: bool,
 
-    #[arg(long)]
+    /// The nix target to evaluate
+    #[arg(long, env = "NIX_EVAL_TARGET", hide_env_values = true)]
     nix_eval_target: Option<String>,
 }
 
@@ -75,6 +78,27 @@ struct Cli {
 
     #[command(subcommand)]
     command: Commands,
+}
+
+pub async fn get_nix_project_file(
+    nix_eval_target: &str,
+) -> anyhow::Result<PathBuf> {
+    let output = Command::new("nix")
+        .args(["build", &nix_eval_target, "--no-link", "--print-out-paths"])
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        anyhow::bail!("nix build failed with status {}", output.status);
+    }
+
+    let raw_path = str::from_utf8(&output.stdout)?
+        .trim()
+        .to_string();
+
+    let path = PathBuf::from(raw_path);
+
+    Ok(path)
 }
 
 #[tokio::main]
@@ -96,10 +120,24 @@ async fn main() -> anyhow::Result<()> {
         BTreeMap::new()
     };
 
-    let Some(project_file) = core_cli.files.project_file else {
-        eprintln!("No project file specified\n");
-        Cli::command().print_help()?;
-        std::process::exit(0)
+    let project_file = {
+        let mut project_file = core_cli.files.project_file;
+        if core_cli.files.nix_eval {
+            let nix_eval_target = core_cli
+                .files
+                .nix_eval_target
+                .ok_or_else(|| {
+                    anyhow::anyhow!("No nix-eval-target specified")
+                })?;
+
+            project_file = Some(get_nix_project_file(&nix_eval_target).await?);
+        }
+        let Some(project_file) = project_file else {
+            eprintln!("No project file specified\n");
+            Cli::command().print_help()?;
+            std::process::exit(0)
+        };
+        project_file
     };
 
     let project_data = fs::read_to_string(&project_file)
