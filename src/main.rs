@@ -65,9 +65,23 @@ struct FileCli {
     #[arg(long, conflicts_with = "project_file")]
     nix_eval: bool,
 
-    /// The nix target to evaluate
-    #[arg(long, env = "NIX_EVAL_TARGET", hide_env_values = true)]
-    nix_eval_target: Option<String>,
+    /// A nix target to evaluate
+    #[arg(
+        long,
+        env = "NIX_TARGET",
+        hide_env_values = true,
+        conflicts_with = "raw_nix_target"
+    )]
+    nix_target: Option<String>,
+
+    /// A raw nix target to evaluate
+    #[arg(
+        long,
+        env = "RAW_NIX_TARGET",
+        hide_env_values = true,
+        conflicts_with = "nix_target"
+    )]
+    raw_nix_target: Option<String>,
 }
 
 #[derive(Parser)]
@@ -80,7 +94,15 @@ struct Cli {
     command: Commands,
 }
 
-pub async fn get_nix_project_file(
+pub fn get_nix_target(target: String) -> String {
+    format!(
+        "{}.{}",
+        target,
+        ["config", "virtualisation", "nirion", "out", "projectsFile"].join(".")
+    )
+}
+
+pub async fn build_nix_project_file(
     nix_eval_target: &str,
 ) -> anyhow::Result<PathBuf> {
     let output = Command::new("nix")
@@ -89,6 +111,8 @@ pub async fn get_nix_project_file(
         .await?;
 
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("{}", stderr);
         anyhow::bail!("nix build failed with status {}", output.status);
     }
 
@@ -121,23 +145,27 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let project_file = {
-        let mut project_file = core_cli.files.project_file;
         if core_cli.files.nix_eval {
             let nix_eval_target = core_cli
                 .files
-                .nix_eval_target
-                .ok_or_else(|| {
-                    anyhow::anyhow!("No nix-eval-target specified")
-                })?;
-
-            project_file = Some(get_nix_project_file(&nix_eval_target).await?);
-        }
-        let Some(project_file) = project_file else {
+                .nix_target
+                .map(get_nix_target)
+                .or_else(|| {
+                    core_cli
+                        .files
+                        .raw_nix_target
+                        .as_ref()
+                        .map(|t| t.to_string())
+                })
+                .ok_or_else(|| anyhow::anyhow!("No nix target specified"))?;
+            build_nix_project_file(&nix_eval_target).await?
+        } else if let Some(project_file) = core_cli.files.project_file {
+            project_file
+        } else {
             eprintln!("No project file specified\n");
             Cli::command().print_help()?;
             std::process::exit(0)
-        };
-        project_file
+        }
     };
 
     let project_data = fs::read_to_string(&project_file)
