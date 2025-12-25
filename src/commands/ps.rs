@@ -1,6 +1,5 @@
 use anyhow::Result;
 use clap::Parser;
-use console::strip_ansi_codes;
 use crossterm::style::Stylize;
 use std::{
     collections::{BTreeMap, HashSet},
@@ -8,8 +7,9 @@ use std::{
 };
 
 use crate::{
-    docker::compose_target_cmd, docker::query_project_status, Project,
-    TargetSelector,
+    docker::{compose_target_cmd, query_project_status},
+    util::print_table,
+    Project, TargetSelector,
 };
 
 //
@@ -169,50 +169,6 @@ async fn fancy_ps(
 
     print_table(rows);
     Ok(())
-}
-
-fn print_table(lines: Vec<String>) {
-    // Split each line into columns by tabs
-    let split_lines: Vec<Vec<&str>> = lines
-        .iter()
-        .map(|line| line.split('\t').collect())
-        .collect();
-
-    // Determine the number of columns (max across all lines)
-    let num_cols = split_lines
-        .iter()
-        .map(|cols| cols.len())
-        .max()
-        .unwrap_or(0);
-
-    // Calculate the max width of each column (ignoring ANSI codes)
-    let mut col_widths = vec![0; num_cols];
-    for cols in &split_lines {
-        for (i, col) in cols.iter().enumerate() {
-            let visible_len = strip_ansi_codes(col).len();
-            if visible_len > col_widths[i] {
-                col_widths[i] = visible_len;
-            }
-        }
-    }
-
-    // Print each line with padded columns
-    for cols in split_lines {
-        for (i, col) in cols.iter().enumerate() {
-            let visible_len = strip_ansi_codes(col).len();
-            if i < cols.len() - 1 {
-                // Pad to the max width
-                print!(
-                    "{}{}",
-                    col,
-                    " ".repeat(col_widths[i] - visible_len + 2)
-                );
-            } else {
-                print!("{}", col);
-            }
-        }
-        println!();
-    }
 }
 
 async fn print_project_status(

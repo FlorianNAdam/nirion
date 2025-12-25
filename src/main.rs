@@ -13,6 +13,7 @@ mod lock;
 mod progress;
 mod projects;
 mod spinner;
+mod util;
 
 pub static PROJECTS: OnceLock<BTreeMap<String, Project>> = OnceLock::new();
 

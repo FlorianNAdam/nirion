@@ -2,7 +2,6 @@ use crossterm::{
     cursor::{self, MoveToColumn, MoveUp},
     execute,
     style::{Color, Stylize},
-    terminal::{Clear, ClearType},
 };
 use std::collections::BTreeMap;
 use std::io::{stdout, Write};
@@ -10,70 +9,96 @@ use tokio::time::Duration;
 
 use crate::docker::{DockerMonitoredProcess, ProjectStatus, ServiceState};
 use crate::spinner::Spinner;
+use crate::util::{ansi_len, lpad_ansi};
 use crate::{Project, TargetSelector};
 
-pub fn summary_line(
-    status: &ProjectStatus,
-    num_services: usize,
-    name_width: usize,
-    width: usize,
-) -> String {
-    let name = &status.name;
-
-    let bar = colored_progress_bar(status, num_services, width);
-
-    let status_icon = status_icon(status);
-
-    let health_str = health_str(status);
-
-    let running_services = status.running();
-    let total_num_services = num_services.max(status.total());
-
-    format!(
-        "{name:name_width$}  {bar} {running_services:2}/{total_num_services}{health_str} {status_icon}",
-    )
+struct Status {
+    entries: Vec<StatusEntry>,
 }
 
-fn status_icon(status: &ProjectStatus) -> String {
-    let healthy = status.healthy();
-    let running = status.running();
-    let total = status.total();
+struct StatusEntry {
+    prefix: String,
+    segments: Vec<Color>,
+    suffix: String,
+}
 
-    if status.exited() > 0 {
-        "✗".red().to_string()
-    } else if running == total && healthy == running {
-        "✓".green().to_string()
-    } else if running == total {
-        "✓".yellow().to_string()
-    } else if status.starting() > 0 {
-        "↗".cyan().to_string()
-    } else {
-        "⚠".yellow().to_string()
+fn print_status(status: Status) -> anyhow::Result<()> {
+    let bar_width = 40;
+
+    let max_prefix_length = status
+        .entries
+        .iter()
+        .map(|e| ansi_len(&e.prefix))
+        .max()
+        .unwrap_or_default();
+
+    let mut stdout = stdout();
+
+    println!(
+        "{} ┌{}┐",
+        " ".repeat(max_prefix_length),
+        "─".repeat(bar_width + 2)
+    );
+
+    let num_entries = status.entries.len();
+    for (i, entry) in status.entries.into_iter().enumerate() {
+        let line = render_status_line(entry, max_prefix_length, bar_width);
+
+        execute!(stdout, MoveToColumn(0))?;
+        println!("{}", line);
+
+        if i != num_entries.saturating_sub(1) {
+            println!(
+                "{} ├{}┤",
+                " ".repeat(max_prefix_length),
+                "─".repeat(bar_width + 2)
+            )
+        }
     }
+
+    println!(
+        "{} └{}┘",
+        " ".repeat(max_prefix_length),
+        "─".repeat(bar_width + 2)
+    );
+    Ok(())
 }
 
-fn health_str(status: &ProjectStatus) -> String {
-    let healthy = status.healthy();
-    let running = status.running();
-
-    if healthy > 0 && healthy < running {
-        format!(" ({} healthy)", healthy)
-    } else if healthy == running && healthy > 0 {
-        " (all healthy)".to_string()
-    } else {
-        String::new()
-    }
-}
-
-fn colored_progress_bar(
-    status: &ProjectStatus,
-    num_services: usize,
-    width: usize,
+fn render_status_line(
+    entry: StatusEntry,
+    max_prefix_width: usize,
+    bar_width: usize,
 ) -> String {
+    let prefix = lpad_ansi(&entry.prefix, max_prefix_width);
+    let bar = render_status_bar(entry.segments, bar_width);
+    let suffix = entry.suffix;
+
+    format!("{prefix} │ {bar} │ {suffix}")
+}
+
+fn render_status_bar(segments: Vec<Color>, width: usize) -> String {
+    if segments.len() == 0 {
+        return " ".repeat(width);
+    }
+
+    let mut out = String::new();
+    for (i, color) in segments.iter().enumerate() {
+        let width = optimal_sublist_length(width, segments.len(), i);
+
+        out.push_str(
+            "█"
+                .repeat(width.saturating_sub(1))
+                .with(*color)
+                .to_string()
+                .as_str(),
+        );
+        out.push_str("▊".with(*color).to_string().as_str());
+    }
+    out
+}
+
+fn create_segments(status: &ProjectStatus, num_services: usize) -> Vec<Color> {
     let total = num_services.max(status.total());
-    if total == 0 {
-        return format!("[{:^width$}]", "N/A");
-    }
 
     let healthy = status.healthy();
     let running = status.running() - status.healthy();
@@ -101,21 +126,7 @@ fn colored_progress_bar(
         segments.push(Color::Grey);
     }
 
-    let mut out = String::from("│ ");
-    for (i, color) in segments.iter().enumerate() {
-        let width = optimal_sublist_length(width, total, i);
-
-        out.push_str(
-            "█"
-                .repeat(width.saturating_sub(1))
-                .with(*color)
-                .to_string()
-                .as_str(),
-        );
-        out.push_str("▊".with(*color).to_string().as_str());
-    }
-    out.push_str(" │");
-    out
+    segments
 }
 
 fn optimal_sublist_length(width: usize, n: usize, i: usize) -> usize {
@@ -132,37 +143,16 @@ fn optimal_sublist_length(width: usize, n: usize, i: usize) -> usize {
     }
 }
 
-async fn print_progress(
+async fn create_status(
+    spinner: &Spinner,
     map: &BTreeMap<String, DockerMonitoredProcess>,
     projects: &BTreeMap<String, Project>,
-    spinner: &Spinner,
-) -> anyhow::Result<()> {
-    let bar_width = 40;
+) -> anyhow::Result<Status> {
+    let mut entries = Vec::new();
 
-    let max_name_width = projects
-        .keys()
-        .map(String::len)
-        .max()
-        .unwrap_or_default();
-
-    let mut stdout = stdout();
-
-    println!(
-        "  {}  ┌{}┐",
-        " ".repeat(max_name_width),
-        "─".repeat(bar_width + 2)
-    );
-
-    for (i, (name, proc)) in map.iter().enumerate() {
-        let st = proc.project_status().await;
+    for (name, proc) in map.iter() {
+        let project_status = proc.project_status().await;
         let project = &projects[name];
-
-        let line = summary_line(
-            &st,
-            project.services.len(),
-            max_name_width,
-            bar_width,
-        );
 
         let icon = if proc.finished().await {
             "✓".green().to_string()
@@ -170,24 +160,34 @@ async fn print_progress(
             spinner.get().yellow().to_string()
         };
 
-        execute!(stdout, MoveToColumn(0))?;
-        println!("{} {}", icon, line);
+        let name = &project_status.name;
 
-        if i != map.len().saturating_sub(1) {
-            println!(
-                "  {}  ├{}┤",
-                " ".repeat(max_name_width),
-                "─".repeat(bar_width + 2)
-            )
-        }
+        let prefix = format!("{icon} {name}");
+
+        let num_running = project_status.running();
+        let num_services = project.services.len();
+        let segments = create_segments(&project_status, num_services);
+
+        let suffix = format!("({num_running}/{num_services})  ");
+
+        let entry = StatusEntry {
+            prefix,
+            segments,
+            suffix,
+        };
+        entries.push(entry);
     }
 
-    println!(
-        "  {}  └{}┘",
-        " ".repeat(max_name_width),
-        "─".repeat(bar_width + 2)
-    );
+    return Ok(Status { entries });
+}
 
+async fn print_progress(
+    map: &BTreeMap<String, DockerMonitoredProcess>,
+    spinner: &Spinner,
+    projects: &BTreeMap<String, Project>,
+) -> anyhow::Result<()> {
+    let status = create_status(spinner, map, projects).await?;
+    print_status(status)?;
     Ok(())
 }
 
@@ -233,12 +233,8 @@ pub async fn run_command_with_progress(
     let mut finished = false;
     while !finished {
         if !quiet {
-            print_progress(&map, projects, &spinner).await?;
-            execute!(
-                stdout,
-                Clear(ClearType::CurrentLine),
-                MoveUp((selected.len() * 2 + 1) as u16)
-            )?;
+            print_progress(&map, &spinner, &projects).await?;
+            execute!(stdout, MoveUp((selected.len() * 2 + 1) as u16))?;
             stdout.flush()?;
         }
 
@@ -269,7 +265,7 @@ pub async fn run_command_with_progress(
     }
 
     if !quiet {
-        print_progress(&map, projects, &spinner).await?;
+        print_progress(&map, &spinner, &projects).await?;
         stdout.flush()?;
     }
 
