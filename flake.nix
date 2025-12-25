@@ -92,20 +92,43 @@
 
           arionConfig = config.virtualisation.arion;
 
-          nirion = pkgs.stdenv.mkDerivation {
-            name = "nirion";
+          nirion =
+            let
+              nixEvalOption = config.virtualisation.nirion.nixEval;
 
-            src = "${nirionPkg}";
+              setCount =
+                (if nixEvalOption.target != null then 1 else 0)
+                + (if nixEvalOption.rawTarget != null then 1 else 0)
+                + (if nixEvalOption.nixos.config != null || nixEvalOption.nixos.host != null then 1 else 0);
 
-            buildInputs = [ pkgs.makeWrapper ];
+              nixTarget =
+                if setCount <= 1 then
+                  if nixEvalOption.target != null then
+                    "--set NIX_TARGET ${nixEvalOption.target}"
+                  else if nixEvalOption.rawTarget != null then
+                    "--set RAW_NIX_TARGET ${nixEvalOption.rawTarget}"
+                  else if nixEvalOption.nixos.config != null || nixEvalOption.nixos.host != null then
+                    "--set NIX_TARGET ${nixEvalOption.nixos.config}#nixosConfigurations.${nixEvalOption.nixos.host}"
+                  else
+                    ""
+                else
+                  throw "Only one of nixEval.target, nixEval.rawTarget, or nixEval.nixos may be set";
+            in
+            pkgs.stdenv.mkDerivation {
+              name = "nirion";
 
-            installPhase = ''
-              mkdir -p $out/bin
-              makeWrapper ${nirionPkg}/bin/nirion $out/bin/nirion \
-                --set NIRION_LOCK_FILE "${nirionConfig.lockFileOutput}" \
-                --set NIRION_PROJECT_FILE "${nirionConfig.out.projectsFile}"
-            '';
-          };
+              src = "${nirionPkg}";
+
+              buildInputs = [ pkgs.makeWrapper ];
+
+              installPhase = ''
+                mkdir -p $out/bin
+                makeWrapper ${nirionPkg}/bin/nirion $out/bin/nirion \
+                  --set NIRION_LOCK_FILE "${nirionConfig.lockFileOutput}" \
+                  --set NIRION_PROJECT_FILE "${nirionConfig.out.projectsFile}" \
+                  ${nixTarget}
+              '';
+            };
         in
         {
           imports = [
@@ -124,6 +147,30 @@
                 type = lib.types.nullOr lib.types.str;
                 default = null;
                 description = "Optional writable output path for lockfile updates";
+              };
+
+              # Nix-eval
+              nixEval = {
+                target = lib.mkOption {
+                  type = lib.types.nullOr lib.types.str;
+                  default = null;
+                  description = "Target for nix-eval (suffix will be appended)";
+                };
+                rawTarget = lib.mkOption {
+                  type = lib.types.nullOr lib.types.str;
+                  default = null;
+                  description = "Raw target for nix-eval (used as-is)";
+                };
+                nixos = {
+                  config = lib.mkOption {
+                    type = lib.types.nullOr lib.types.str;
+                    default = null;
+                  };
+                  host = lib.mkOption {
+                    type = lib.types.nullOr lib.types.str;
+                    default = null;
+                  };
+                };
               };
 
               # Arion
