@@ -10,6 +10,7 @@ pub use crate::projects::*;
 mod commands;
 mod docker;
 mod lock;
+mod monitor;
 mod progress;
 mod projects;
 mod spinner;
