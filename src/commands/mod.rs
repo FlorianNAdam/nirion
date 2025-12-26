@@ -57,4 +57,5 @@ define_commands!([
     compose_exec,
     monitor,
     patch,
+    inspect
 ]);

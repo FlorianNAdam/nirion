@@ -45,6 +45,8 @@ pub enum ServiceState {
 #[allow(unused)]
 #[derive(Debug, Clone)]
 pub struct ServiceStatus {
+    pub id: String,
+
     pub service: String,
 
     pub container_name: String,
@@ -82,6 +84,9 @@ pub struct ProjectStatus {
 
 #[derive(Debug, Deserialize)]
 struct ContainerInfo {
+    #[serde(rename = "ID")]
+    id: String,
+
     #[serde(rename = "Name")]
     name: String,
 
@@ -190,6 +195,7 @@ impl ProjectStatus {
             project.services.insert(
                 c.service.clone(),
                 ServiceStatus {
+                    id: c.id,
                     service: c.service,
                     container_name: c.name,
                     image: c.image,

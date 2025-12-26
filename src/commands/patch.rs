@@ -17,7 +17,7 @@ pub struct PatchArgs {
     target: TargetSelector,
 
     /// What to patch
-    #[arg(value_enum, default_value = "compose")]
+    #[arg(short, long, value_enum, default_value = "compose")]
     patch_target: PatchTarget,
 }
 
