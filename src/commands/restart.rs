@@ -20,8 +20,8 @@ pub struct RestartArgs {
     pub no_monitor: bool,
 
     /// Refresh interval in seconds for status updates when monitoring
-    #[arg(short = 'r', long, default_value = "1")]
-    pub refresh: u64,
+    #[arg(short = 'r', long, default_value = "250ms", value_parser = humantime::parse_duration)]
+    pub refresh: Duration,
 
     /// Maximum number of containers to display detailed status for
     #[arg(short = 'm', long, default_value = "15")]
@@ -53,7 +53,7 @@ pub async fn handle_restart(
             &["restart"],
             args.no_monitor,
             args.quiet,
-            Duration::from_secs(args.refresh),
+            args.refresh,
             !args.skip_healthcheck,
         )
         .await?;

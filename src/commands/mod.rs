@@ -55,5 +55,6 @@ define_commands!([
     volumes,
     restart,
     compose_exec,
-    monitor
+    monitor,
+    patch,
 ]);

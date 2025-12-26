@@ -13,8 +13,8 @@ pub struct MonitorArgs {
     pub target: TargetSelector,
 
     /// Refresh interval in seconds for status updates when monitoring
-    #[arg(short = 'r', long, default_value = "1")]
-    pub refresh: u64,
+    #[arg(short = 'r', long, default_value = "250ms", value_parser = humantime::parse_duration)]
+    pub refresh: Duration,
 }
 
 pub async fn handle_monitor(
@@ -23,12 +23,7 @@ pub async fn handle_monitor(
     _locked_images: &BTreeMap<String, String>,
     _lock_file: &Path,
 ) -> anyhow::Result<()> {
-    let monitors = create_monitors(
-        &args.target,
-        projects,
-        Duration::from_secs(args.refresh),
-    )
-    .await;
+    let monitors = create_monitors(&args.target, projects, args.refresh).await;
     monitor(&monitors, projects).await?;
     Ok(())
 }
