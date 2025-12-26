@@ -1,20 +1,30 @@
-use anyhow::Result;
-use clap::Parser;
+use anyhow::{Context, Result};
+use clap::{Parser, ValueEnum};
+use serde::Deserialize;
 use serde_yml as serde_yaml;
-use serde_yml::{Mapping, Value};
 use std::path::Path;
+use std::process::Stdio;
 use std::{collections::BTreeMap, fs};
+use tokio::process::Command;
 
-use crate::{Project, TargetSelector};
+use crate::{clap_parse_selector, Project, TargetSelector};
 
-/// Print the docker compose file as yaml
+/// Patch service files using mirage-patch
 #[derive(Parser, Debug, Clone)]
 pub struct PatchArgs {
-    /// Target selector: *, project, or project.service
-    #[arg(default_value = "*", value_parser = crate::clap_parse_selector)]
-    pub target: TargetSelector,
+    /// Service selector: project.service
+    #[arg(value_parser = clap_parse_selector)]
+    target: TargetSelector,
 
-    
+    /// What to patch
+    #[arg(value_enum, default_value = "compose")]
+    patch_target: PatchTarget,
+}
+
+#[derive(Clone, Debug, ValueEnum, PartialEq, Eq)]
+enum PatchTarget {
+    EnvFile,
+    Compose,
 }
 
 pub async fn handle_patch(
@@ -25,85 +35,94 @@ pub async fn handle_patch(
 ) -> Result<()> {
     match &args.target {
         TargetSelector::All => {
-            for (project_name, project) in projects {
-                println!("Project {}:", project_name);
-                print_full_yaml(project_name, project)?;
-            }
+            anyhow::bail!("Only individual projects can be patched");
         }
+
         TargetSelector::Project(proj) => {
+            if args.patch_target == PatchTarget::EnvFile {
+                anyhow::bail!(
+                    "Only individual service env files can be patched"
+                );
+            }
+
             let project = &projects[&proj.name];
-            print_full_yaml(&proj.name, project)?;
+            patch(&project.docker_compose).await?;
         }
+
         TargetSelector::Service(img) => {
             let project = &projects[&img.project];
-            print_service_section(&img.project, project, &img.service)?;
+
+            match args.patch_target {
+                PatchTarget::Compose => {
+                    patch(&project.docker_compose).await?;
+                }
+
+                PatchTarget::EnvFile => {
+                    let compose = load_compose(&project.docker_compose)?;
+
+                    let service = compose
+                        .services
+                        .get(&img.service)
+                        .with_context(|| {
+                            format!(
+                                "Service `{}` not found in docker-compose for project `{}`",
+                                img.service, img.project
+                            )
+                        })?;
+
+                    let env_file =
+                        service
+                            .env_file
+                            .first()
+                            .with_context(|| {
+                                format!(
+                                    "No env_file found for `{}.{}`",
+                                    img.project, img.service
+                                )
+                            })?;
+
+                    patch(env_file).await?;
+                }
+            }
         }
     }
 
     Ok(())
 }
 
-fn load_yaml(path: &str) -> Result<Value> {
+fn load_compose(path: &str) -> anyhow::Result<ComposeFile> {
     let data = fs::read_to_string(path)
-        .map_err(|e| anyhow::anyhow!("Failed reading {}: {}", path, e))?;
+        .with_context(|| format!("Failed reading {}", path))?;
 
-    serde_yaml::from_str::<Value>(&data)
-        .map_err(|e| anyhow::anyhow!("YAML parse error in {}: {}", path, e))
+    serde_yaml::from_str::<ComposeFile>(&data)
+        .with_context(|| format!("YAML parse error in {}", path))
 }
 
-fn print_full_yaml(_project_name: &str, project: &Project) -> Result<()> {
-    let path = &project.docker_compose;
-
-    let yaml = load_yaml(path)?;
-    let pretty = serde_yaml::to_string(&yaml)
-        .map_err(|e| anyhow::anyhow!("Failed to pretty-print YAML: {}", e))?;
-
-    println!("{}", pretty);
-    println!();
-
-    Ok(())
+#[derive(Debug, Deserialize)]
+struct ComposeFile {
+    services: BTreeMap<String, Service>,
 }
 
-fn print_service_section(
-    project_name: &str,
-    project: &Project,
-    service_name: &str,
-) -> Result<()> {
-    let path = &project.docker_compose;
+#[derive(Debug, Deserialize)]
+struct Service {
+    #[serde(default)]
+    env_file: Vec<String>,
+}
 
-    let yaml = load_yaml(path)?;
+pub async fn patch(file: &str) -> Result<()> {
+    let status = Command::new("sudo")
+        .arg("mirage-patch")
+        .arg(file)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .await
+        .context("failed to spawn mirage-patch")?;
 
-    let services = yaml
-        .get("services")
-        .ok_or_else(|| anyhow::anyhow!("No `services:` section in YAML"))?;
-
-    let services_map = services
-        .as_mapping()
-        .ok_or_else(|| anyhow::anyhow!("`services:` is not a YAML mapping"))?;
-
-    let service_value = services_map
-        .get(&Value::String(service_name.to_string()))
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Service `{}` not found in docker-compose for project `{}`",
-                service_name,
-                project_name
-            )
-        })?;
-
-    let mut root_map = Mapping::new();
-    let mut svc_map = Mapping::new();
-    svc_map.insert(
-        Value::String(service_name.to_string()),
-        service_value.clone(),
-    );
-    root_map.insert(Value::String("services".into()), Value::Mapping(svc_map));
-
-    let pretty = serde_yaml::to_string(&Value::Mapping(root_map))
-        .map_err(|e| anyhow::anyhow!("Failed to pretty-print YAML: {}", e))?;
-
-    println!("{}", pretty);
-    println!();
+    if !status.success() {
+        anyhow::bail!("mirage-patch exited with status: {}", status);
+    }
 
     Ok(())
 }
