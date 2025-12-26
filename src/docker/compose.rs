@@ -1,11 +1,11 @@
 use crossterm::style::Stylize;
-use std::{collections::BTreeMap, process::Stdio};
+use std::{collections::BTreeMap, ops::Deref, process::Stdio};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::Command,
 };
 
-use crate::{Project, TargetSelector};
+use crate::{Project, ProjectName, TargetSelector};
 
 pub async fn compose_target_cmd(
     target: &TargetSelector,
@@ -17,15 +17,12 @@ pub async fn compose_target_cmd(
             for (name, project) in projects {
                 println!("[{}]", name.to_string().cyan());
 
-                let mut cmd_args = vec![
-                    "--file",
-                    &project.docker_compose,
-                    "--project-name",
-                    name,
-                ];
-                cmd_args.extend_from_slice(args);
+                let compose_file = &project.docker_compose;
+                let project_name = &project.name;
 
-                if let Err(e) = run_docker_compose(&cmd_args).await {
+                if let Err(e) =
+                    compose_cmd(compose_file, project_name, &args).await
+                {
                     println!("Project '{}' failed: {}", name, e)
                 }
 
@@ -34,30 +31,54 @@ pub async fn compose_target_cmd(
         }
 
         TargetSelector::Project(proj) => {
-            let compose_file = &projects[&proj.name].docker_compose;
-            let mut cmd_args =
-                vec!["--file", compose_file, "--project-name", &proj.name];
-            cmd_args.extend_from_slice(args);
+            let project = &projects[&proj.name];
 
-            if let Err(e) = run_docker_compose(&cmd_args).await {
+            let compose_file = &project.docker_compose;
+            let project_name = &project.name;
+
+            if let Err(e) = compose_cmd(compose_file, project_name, &args).await
+            {
                 println!("Project '{}' failed: {}", proj.name, e)
             }
         }
 
         TargetSelector::Service(img) => {
-            let compose_file = &projects[&img.project].docker_compose;
-            let mut cmd_args =
-                vec!["--file", compose_file, "--project-name", &img.project];
-            cmd_args.extend_from_slice(args);
-            cmd_args.push(&img.service);
+            let project = &projects[&img.project];
 
-            if let Err(e) = run_docker_compose(&cmd_args).await {
-                println!("Project '{}' failed: {}", img.project, e)
+            let compose_file = &project.docker_compose;
+            let project_name = &project.name;
+
+            let mut cmd_args = vec![img.service.as_str()];
+            cmd_args.extend(args);
+
+            if let Err(e) =
+                compose_cmd(compose_file, project_name, &cmd_args).await
+            {
+                println!(
+                    "Service '{}.{}' failed: {}",
+                    img.project, img.service, e
+                )
             }
         }
     }
 
     Ok(())
+}
+
+pub async fn compose_cmd(
+    compose_file: &str,
+    project_name: &ProjectName,
+    args: &[&str],
+) -> anyhow::Result<()> {
+    let mut cmd_args = vec![
+        "--file",
+        compose_file,
+        "--project-name",
+        project_name.deref(),
+    ];
+    cmd_args.extend_from_slice(args);
+
+    run_docker_compose(&cmd_args).await
 }
 
 pub async fn run_docker_compose(cmd_args: &[&str]) -> anyhow::Result<()> {

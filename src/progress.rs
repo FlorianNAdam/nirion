@@ -61,8 +61,6 @@ async fn create_status(
             spinner.get().yellow().to_string()
         };
 
-        let name = &project_status.name;
-
         let prefix = format!("{icon} {name}");
 
         let num_running = project_status.running();
@@ -112,7 +110,6 @@ pub async fn run_command_with_progress(
     for name in &selected {
         let project = &projects[name];
         let proc = DockerMonitoredProcess::new(
-            name.clone(),
             project.clone(),
             refresh_interval,
             args,

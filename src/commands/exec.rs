@@ -1,5 +1,8 @@
 use clap::{Parser, ValueHint};
-use std::{collections::BTreeMap, path::Path, process::Command as ProcCommand};
+use std::{
+    collections::BTreeMap, ops::Deref, path::Path,
+    process::Command as ProcCommand,
+};
 
 use crate::{clap_parse_service_selector, Project, ServiceSelector};
 
@@ -91,7 +94,7 @@ pub async fn handle_exec(
         "--file".to_string(),
         project.docker_compose.clone(),
         "--project-name".to_string(),
-        project_name.clone(),
+        project.name.deref().to_string(),
         "exec".to_string(),
     ];
     cmd_args.extend(common_args);

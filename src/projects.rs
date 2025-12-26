@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt::Display, ops::Deref};
 
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +21,31 @@ pub enum TargetSelector {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProjectName(pub String);
+
+impl Display for ProjectName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self.0, f)
+    }
+}
+
+impl Into<String> for ProjectName {
+    fn into(self) -> String {
+        self.0
+    }
+}
+
+impl Deref for ProjectName {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
+    pub name: ProjectName,
     #[serde(rename = "docker-compose")]
     pub docker_compose: String,
     pub services: BTreeMap<String, Service>,

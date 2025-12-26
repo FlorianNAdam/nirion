@@ -155,9 +155,12 @@ async fn fancy_ps(
 
         TargetSelector::Service(sel) => {
             if let Some(project) = projects.get(&sel.project) {
-                let status =
-                    query_project_status(&project.docker_compose, &sel.project)
-                        .await?;
+                let project_name = &project.name;
+                let status = query_project_status(
+                    &project.docker_compose,
+                    &project_name,
+                )
+                .await?;
 
                 if let Some(svc) = status.services.get(&sel.service) {
                     rows.push(print_header(&sel.project));
@@ -179,6 +182,7 @@ async fn print_project_status(
 
     rows.push(print_header(project_name));
 
+    let project_name = &project.name;
     let status =
         query_project_status(&project.docker_compose, project_name).await?;
 

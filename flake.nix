@@ -70,7 +70,7 @@
 
           shellHook = ''
             export NIRION_LOCK_FILE='/home/florian/my-nixos/modules/arion/nirion.lock'
-            export NIRION_PROJECT_FILE='/nix/store/sbnzfv95s8y14lsixfm43cka5si3zwg8-projects.json'
+            export NIRION_PROJECT_FILE='/nix/store/1513da4nvk6sk9578ccnk7wzjfkkrr3k-projects.json'
           '';
         };
       }
@@ -269,9 +269,11 @@
                 projectName: project:
                 let
                   images = nirionConfig.out.images_v2.${projectName} or { };
+                  arionProjectConfig = arionConfig.projects.${projectName};
                 in
                 {
-                  docker-compose = arionConfig.projects.${projectName}.settings.out.dockerComposeYaml;
+                  name = arionProjectConfig.settings.project.name;
+                  docker-compose = arionProjectConfig.settings.out.dockerComposeYaml;
                   services = lib.mapAttrs (serviceName: service: {
                     image = images.${serviceName} or null;
                     healthcheck = service.service.healthcheck or null;

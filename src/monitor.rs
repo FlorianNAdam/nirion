@@ -134,8 +134,7 @@ pub async fn create_monitors(
 
     for name in selected {
         if let Some(project) = projects.get(&name) {
-            let monitor =
-                DockerProjectMonitor::new(&name, project, refresh_interval);
+            let monitor = DockerProjectMonitor::new(project, refresh_interval);
             monitors.insert(name, monitor);
         }
     }

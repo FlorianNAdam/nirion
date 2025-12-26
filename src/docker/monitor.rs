@@ -1,30 +1,26 @@
-use std::{collections::BTreeMap, ffi::OsStr, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap, ffi::OsStr, ops::Deref, sync::Arc, time::Duration,
+};
 use tokio::{process::Command, sync::RwLock, task::JoinHandle};
 
 use crate::{
     docker::{query_project_status, ProjectStatus},
-    Project,
+    Project, ProjectName,
 };
 
 pub struct DockerProjectMonitor {
-    pub project_name: String,
-    pub compose_file: String,
+    project_name: ProjectName,
+    compose_file: String,
     project_status: Arc<RwLock<ProjectStatus>>,
     refresh_handle: Option<JoinHandle<()>>,
 }
 
 impl DockerProjectMonitor {
-    pub fn new(
-        project_name: impl Into<String>,
-        project: &Project,
-        refresh_interval: Duration,
-    ) -> Self {
-        let name: String = project_name.into();
+    pub fn new(project: &Project, refresh_interval: Duration) -> Self {
         let mut monitor = Self {
-            project_name: name.clone(),
+            project_name: project.name.clone(),
             compose_file: project.docker_compose.clone(),
             project_status: Arc::new(RwLock::new(ProjectStatus {
-                name: name.clone(),
                 services: BTreeMap::new(),
             })),
             refresh_handle: None,
@@ -32,7 +28,7 @@ impl DockerProjectMonitor {
 
         let handle = {
             let project_status = monitor.project_status.clone();
-            let project_name = name;
+            let project_name = project.name.clone();
             let compose_file = monitor.compose_file.clone();
             tokio::spawn(project_refresh_thread(
                 project_status,
@@ -64,7 +60,7 @@ impl DockerProjectMonitor {
 async fn project_refresh_thread(
     project_status: Arc<RwLock<ProjectStatus>>,
     compose_file: String,
-    project_name: String,
+    project_name: ProjectName,
     interval: Duration,
 ) {
     loop {
@@ -91,19 +87,15 @@ pub struct DockerMonitoredProcess {
 
 impl DockerMonitoredProcess {
     pub async fn new(
-        project_name: impl Into<String>,
         project: Project,
         refresh_interval: Duration,
         args: impl IntoIterator<Item = impl AsRef<OsStr>>,
     ) -> Self {
-        let name = project_name.into();
-        let monitor =
-            DockerProjectMonitor::new(&name, &project, refresh_interval);
+        let monitor = DockerProjectMonitor::new(&project, refresh_interval);
 
         let finished = Arc::new(RwLock::new(false));
 
         let _ = {
-            let project_name = name.clone();
             let compose_file = project.docker_compose.clone();
             let args: Vec<_> = args
                 .into_iter()
@@ -117,7 +109,7 @@ impl DockerMonitoredProcess {
                     .arg("-f")
                     .arg(compose_file)
                     .arg("--project-name")
-                    .arg(project_name)
+                    .arg(project.name.deref())
                     .args(args)
                     .output()
                     .await;

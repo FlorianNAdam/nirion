@@ -1,19 +1,21 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, ops::Deref};
 
 use anyhow::Context;
 use serde::Deserialize;
 use tokio::process::Command;
 
+use crate::ProjectName;
+
 pub async fn query_project_status(
     compose_file: &str,
-    project_name: &str,
+    project_name: &ProjectName,
 ) -> anyhow::Result<ProjectStatus> {
     let output = Command::new("docker")
         .arg("compose")
         .arg("-f")
         .arg(compose_file)
         .arg("--project-name")
-        .arg(project_name)
+        .arg(project_name.deref())
         .arg("ps")
         .arg("--format")
         .arg("json")
@@ -27,7 +29,7 @@ pub async fn query_project_status(
         "[]".to_string()
     };
 
-    ProjectStatus::from_json(project_name, &json)
+    ProjectStatus::from_json(&json)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,7 +77,6 @@ pub struct ExternalPort {
 
 #[derive(Debug, Clone)]
 pub struct ProjectStatus {
-    pub name: String,
     pub services: BTreeMap<String, ServiceStatus>,
 }
 
@@ -113,9 +114,8 @@ struct ContainerInfo {
 }
 
 impl ProjectStatus {
-    pub fn from_json(project_name: &str, json: &str) -> anyhow::Result<Self> {
+    pub fn from_json(json: &str) -> anyhow::Result<Self> {
         let mut project = ProjectStatus {
-            name: project_name.to_string(),
             services: BTreeMap::new(),
         };
 
