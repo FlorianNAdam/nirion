@@ -7,7 +7,7 @@ use std::{collections::BTreeMap, fs};
 
 use crate::{Project, TargetSelector};
 
-/// Print the docker compose file as JSON
+/// Print the docker compose file as yaml
 #[derive(Parser, Debug, Clone)]
 pub struct CatArgs {
     /// Target selector: *, project, or project.service
