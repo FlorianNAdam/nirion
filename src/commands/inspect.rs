@@ -25,9 +25,9 @@ pub struct InspectArgs {
     #[arg(short, long, default_value = "json")]
     format: String,
 
-    /// The inspect format
+    /// Print json without pretty printing
     #[arg(short, long)]
-    pretty: bool,
+    raw: bool,
 }
 
 #[derive(Clone, Debug, ValueEnum, PartialEq, Eq)]
@@ -49,12 +49,12 @@ pub async fn handle_inspect(
                 projects,
                 locked_images,
                 &args.format,
-                args.pretty,
+                args.raw,
             )
             .await?
         }
         InspectTarget::Container => {
-            inspect_container(&args.target, projects, &args.format, args.pretty)
+            inspect_container(&args.target, projects, &args.format, args.raw)
                 .await?
         }
     }
@@ -67,7 +67,7 @@ pub async fn inspect_image(
     projects: &BTreeMap<String, Project>,
     locked_images: &BTreeMap<String, String>,
     format: &str,
-    pretty: bool,
+    raw: bool,
 ) -> Result<()> {
     let project = &projects[&target.project];
 
@@ -113,7 +113,7 @@ pub async fn inspect_image(
 
     let output = str::from_utf8(&output.stdout)?.to_string();
 
-    if pretty {
+    if !raw {
         pretty_print_json(&output);
     } else {
         println!("{output}");
@@ -126,7 +126,7 @@ pub async fn inspect_container(
     target: &ServiceSelector,
     projects: &BTreeMap<String, Project>,
     format: &str,
-    pretty: bool,
+    raw: bool,
 ) -> Result<()> {
     let project = &projects[&target.project];
 
@@ -157,7 +157,7 @@ pub async fn inspect_container(
 
     let output = str::from_utf8(&output.stdout)?.to_string();
 
-    if pretty {
+    if !raw {
         pretty_print_json(&output);
     } else {
         println!("{output}");
@@ -169,12 +169,12 @@ pub async fn inspect_container(
 fn pretty_print_json(string: &str) {
     fn inner(string: &str) -> anyhow::Result<String> {
         let json = serde_json::from_str::<Value>(&string)?;
-        let pretty = serde_json::to_string_pretty(&json)?;
-        Ok(pretty)
+        let raw = serde_json::to_string_pretty(&json)?;
+        Ok(raw)
     }
 
     match inner(string) {
-        Ok(pretty) => println!("{pretty}"),
+        Ok(raw) => println!("{raw}"),
         Err(_) => println!("{string}"),
     }
 }
