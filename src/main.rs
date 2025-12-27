@@ -1,6 +1,8 @@
 use crate::commands::{handle_command, Commands};
 use anyhow::Context;
 use clap::{CommandFactory, Parser};
+use clap_complete::{ArgValueCompleter, CompletionCandidate};
+use crossterm::style::Stylize;
 use std::sync::OnceLock;
 use std::{collections::BTreeMap, fs, path::PathBuf};
 use tokio::process::Command;
@@ -19,6 +21,16 @@ mod util;
 
 pub static PROJECTS: OnceLock<BTreeMap<String, Project>> = OnceLock::new();
 
+impl TargetSelector {
+    fn clap_parse(s: &str) -> Result<Self, String> {
+        clap_parse_selector(s)
+    }
+
+    fn clap_completer() -> ArgValueCompleter {
+        ArgValueCompleter::new(clap_target_selector_completer)
+    }
+}
+
 fn clap_parse_selector(s: &str) -> Result<TargetSelector, String> {
     parse_selector(
         s,
@@ -29,6 +41,52 @@ fn clap_parse_selector(s: &str) -> Result<TargetSelector, String> {
     .map_err(|e| e.to_string())
 }
 
+pub fn clap_target_selector_completer(
+    current: &std::ffi::OsStr,
+) -> Vec<CompletionCandidate> {
+    let core_cli = CoreCli::parse();
+
+    let projects = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current()
+            .block_on(core_cli.files.get_projects())
+    })
+    .unwrap_or_default();
+    let mut completions = vec![];
+
+    let Some(current) = current.to_str() else {
+        return completions;
+    };
+
+    if "*".starts_with(current) {
+        completions.push(CompletionCandidate::new("*"));
+    }
+
+    for (project_name, project) in projects.iter() {
+        if let Some(pos) = current.find('.') {
+            let (proj_prefix, svc_prefix) = current.split_at(pos);
+            let svc_prefix = &svc_prefix[1..];
+
+            if project_name.starts_with(proj_prefix) {
+                for service_name in project.services.keys() {
+                    if service_name.starts_with(svc_prefix) {
+                        completions.push(CompletionCandidate::new(format!(
+                            "{}.{}",
+                            proj_prefix, service_name
+                        )));
+                    }
+                }
+            }
+        } else {
+            if project_name.starts_with(current) {
+                completions
+                    .push(CompletionCandidate::new(project_name.clone()));
+            }
+        }
+    }
+
+    completions
+}
+
 fn clap_parse_service_selector(s: &str) -> Result<ServiceSelector, String> {
     parse_service_selector(
         s,
@@ -37,6 +95,43 @@ fn clap_parse_service_selector(s: &str) -> Result<ServiceSelector, String> {
             .expect("PROJECTS not initialized"),
     )
     .map_err(|e| e.to_string())
+}
+
+pub fn clap_service_selector_completer(
+    current: &std::ffi::OsStr,
+) -> Vec<CompletionCandidate> {
+    let mut completions = vec![];
+
+    let Some(current) = current.to_str() else {
+        return completions;
+    };
+
+    let projects: &BTreeMap<String, Project> = match PROJECTS.get() {
+        Some(p) => p,
+        None => return completions,
+    };
+
+    let (proj_prefix, svc_prefix) = if let Some(pos) = current.find('.') {
+        let (p, s) = current.split_at(pos);
+        (p, &s[1..])
+    } else {
+        (current, "")
+    };
+
+    for (project_name, project) in projects.iter() {
+        if project_name.starts_with(proj_prefix) {
+            for service_name in project.services.keys() {
+                if service_name.starts_with(svc_prefix) {
+                    completions.push(CompletionCandidate::new(format!(
+                        "{}.{}",
+                        project_name, service_name
+                    )));
+                }
+            }
+        }
+    }
+
+    completions
 }
 
 #[derive(Parser, Debug)]
@@ -87,6 +182,75 @@ struct FileCli {
     raw_nix_target: Option<String>,
 }
 
+impl FileCli {
+    async fn get_lock_file(&self) -> anyhow::Result<PathBuf> {
+        if let Some(file) = &self.lock_file {
+            Ok(file.clone())
+        } else {
+            anyhow::bail!(
+                "{}\n\n{}",
+                "No lock file specified".red(),
+                Cli::command().render_help().ansi()
+            )
+        }
+    }
+
+    async fn get_locked_images(
+        &self,
+    ) -> anyhow::Result<BTreeMap<String, String>> {
+        let lock_file = self.get_lock_file().await?;
+
+        let locked_images: BTreeMap<String, String> = if lock_file.exists() {
+            let lock_file_data = fs::read_to_string(&lock_file)
+                .with_context(|| anyhow::anyhow!("Failed to read lock file"))?;
+            serde_json::from_str(&lock_file_data)
+                .with_context(|| anyhow::anyhow!("Failed to parse lock file"))?
+        } else {
+            BTreeMap::new()
+        };
+
+        Ok(locked_images)
+    }
+
+    async fn get_project_file(&self) -> anyhow::Result<PathBuf> {
+        if self.nix_eval {
+            let nix_eval_target = self
+                .nix_target
+                .as_ref()
+                .map(&String::as_str)
+                .map(get_nix_target)
+                .or_else(|| {
+                    self.raw_nix_target
+                        .as_ref()
+                        .map(|t| t.to_string())
+                })
+                .ok_or_else(|| anyhow::anyhow!("No nix target specified"))?;
+            build_nix_project_file(&nix_eval_target).await
+        } else if let Some(project_file) = &self.project_file {
+            Ok(project_file.clone())
+        } else {
+            anyhow::bail!(
+                "{}\n\n{}",
+                "No project file specified".red(),
+                Cli::command().render_help().ansi()
+            )
+        }
+    }
+
+    async fn get_projects(&self) -> anyhow::Result<BTreeMap<String, Project>> {
+        let project_file = self.get_project_file().await?;
+
+        let project_data = fs::read_to_string(&project_file)
+            .with_context(|| anyhow::anyhow!("Failed to read projects file"))?;
+        let projects: BTreeMap<String, Project> =
+            serde_json::from_str(&project_data).with_context(|| {
+                anyhow::anyhow!("Failed to parse projects file")
+            })?;
+
+        Ok(projects)
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "nirion")]
 struct Cli {
@@ -97,7 +261,7 @@ struct Cli {
     command: Commands,
 }
 
-pub fn get_nix_target(target: String) -> String {
+pub fn get_nix_target(target: &str) -> String {
     format!(
         "{}.{}",
         target,
@@ -130,53 +294,17 @@ pub async fn build_nix_project_file(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    clap_complete::CompleteEnv::with_factory(|| Cli::command()).complete();
+
     let core_cli = CoreCli::parse();
 
-    let Some(lock_file) = core_cli.files.lock_file else {
-        eprintln!("No lock file specified\n");
-        Cli::command().print_help()?;
-        std::process::exit(0)
-    };
+    let lock_file = core_cli.files.get_lock_file().await?;
+    let locked_images = core_cli
+        .files
+        .get_locked_images()
+        .await?;
 
-    let locked_images: BTreeMap<String, String> = if lock_file.exists() {
-        let lock_file_data = fs::read_to_string(&lock_file)
-            .with_context(|| anyhow::anyhow!("Failed to read lock file"))?;
-        serde_json::from_str(&lock_file_data)
-            .with_context(|| anyhow::anyhow!("Failed to parse lock file"))?
-    } else {
-        BTreeMap::new()
-    };
-
-    let project_file = {
-        if core_cli.files.nix_eval {
-            let nix_eval_target = core_cli
-                .files
-                .nix_target
-                .map(get_nix_target)
-                .or_else(|| {
-                    core_cli
-                        .files
-                        .raw_nix_target
-                        .as_ref()
-                        .map(|t| t.to_string())
-                })
-                .ok_or_else(|| anyhow::anyhow!("No nix target specified"))?;
-            build_nix_project_file(&nix_eval_target).await?
-        } else if let Some(project_file) = core_cli.files.project_file {
-            project_file
-        } else {
-            eprintln!("No project file specified\n");
-            Cli::command().print_help()?;
-            std::process::exit(0)
-        }
-    };
-
-    let project_data = fs::read_to_string(&project_file)
-        .with_context(|| anyhow::anyhow!("Failed to read projects file"))?;
-    let projects: BTreeMap<String, Project> =
-        serde_json::from_str(&project_data).with_context(|| {
-            anyhow::anyhow!("Failed to parse projects file")
-        })?;
+    let projects = core_cli.files.get_projects().await?;
 
     PROJECTS
         .set(projects)
