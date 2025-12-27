@@ -48,8 +48,8 @@ pub async fn compose_target_cmd(
             let compose_file = &project.docker_compose;
             let project_name = &project.name;
 
-            let mut cmd_args = vec![img.service.as_str()];
-            cmd_args.extend(args);
+            let mut cmd_args = args.to_vec();
+            cmd_args.push(&img.service);
 
             if let Err(e) =
                 compose_cmd(compose_file, project_name, &cmd_args).await
