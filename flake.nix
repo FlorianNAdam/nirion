@@ -139,6 +139,20 @@
                   --set NIRION_LOCK_FILE "${nirionConfig.lockFileOutput}" \
                   --set NIRION_PROJECT_FILE "${nirionConfig.out.projectsFile}" \
                   ${nixTarget}
+
+                patch() {
+                  local f="$1"
+                  [ -f "$f" ] || return 0
+
+                  sed -i \
+                    's|/nix/store/[^[:space:]]*/bin/nirion|'"$out"'/bin/nirion|g' \
+                    "$f"
+                }
+
+                # Fish completion
+                mkdir -p $out/share/fish/vendor_completions.d
+                COMPLETE=fish $out/bin/nirion > $out/share/fish/vendor_completions.d/nirion.fish
+                patch $out/share/fish/vendor_completions.d/nirion.fish
               '';
             };
         in
