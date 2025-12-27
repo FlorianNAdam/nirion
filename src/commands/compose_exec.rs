@@ -1,16 +1,18 @@
 use clap::Parser;
 use std::{collections::BTreeMap, path::Path};
 
-use crate::{
-    clap_parse_selector, docker::compose_target_cmd, Project, TargetSelector,
-};
+use crate::{docker::compose_target_cmd, Project, TargetSelector};
 
 /// Run a docker-compose command for a project or service
 #[derive(Parser, Debug, Clone)]
 pub struct ComposeExecArgs {
     /// Target selector: *, project, or project.service
-    #[arg(value_parser = clap_parse_selector)]
-    target: TargetSelector,
+    #[arg(
+        default_value = "*",
+        value_parser = TargetSelector::clap_parse,
+        add = TargetSelector::clap_completer()
+    )]
+    pub target: TargetSelector,
 
     /// Command to execute in container
     cmd: Vec<String>,

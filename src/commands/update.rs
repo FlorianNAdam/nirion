@@ -8,7 +8,11 @@ use crate::{get_images, lock::update_images, Project, TargetSelector};
 #[derive(Parser, Debug, Clone)]
 pub struct UpdateArgs {
     /// Target selector: *, project, or project.service
-    #[arg(default_value = "*", value_parser = crate::clap_parse_selector)]
+    #[arg(
+        default_value = "*",
+        value_parser = TargetSelector::clap_parse,
+        add = TargetSelector::clap_completer()
+    )]
     pub target: TargetSelector,
 
     /// Number of concurrent digest fetches

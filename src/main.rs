@@ -23,25 +23,21 @@ pub static PROJECTS: OnceLock<BTreeMap<String, Project>> = OnceLock::new();
 
 impl TargetSelector {
     fn clap_parse(s: &str) -> Result<Self, String> {
-        clap_parse_selector(s)
+        parse_selector(
+            s,
+            PROJECTS
+                .get()
+                .expect("PROJECTS not initialized"),
+        )
+        .map_err(|e| e.to_string())
     }
 
     fn clap_completer() -> ArgValueCompleter {
-        ArgValueCompleter::new(clap_target_selector_completer)
+        ArgValueCompleter::new(target_selector_completer)
     }
 }
 
-fn clap_parse_selector(s: &str) -> Result<TargetSelector, String> {
-    parse_selector(
-        s,
-        PROJECTS
-            .get()
-            .expect("PROJECTS not initialized"),
-    )
-    .map_err(|e| e.to_string())
-}
-
-pub fn clap_target_selector_completer(
+pub fn target_selector_completer(
     current: &std::ffi::OsStr,
 ) -> Vec<CompletionCandidate> {
     let core_cli = CoreCli::parse();
@@ -87,17 +83,23 @@ pub fn clap_target_selector_completer(
     completions
 }
 
-fn clap_parse_service_selector(s: &str) -> Result<ServiceSelector, String> {
-    parse_service_selector(
-        s,
-        PROJECTS
-            .get()
-            .expect("PROJECTS not initialized"),
-    )
-    .map_err(|e| e.to_string())
+impl ServiceSelector {
+    fn clap_parse(s: &str) -> Result<Self, String> {
+        parse_service_selector(
+            s,
+            PROJECTS
+                .get()
+                .expect("PROJECTS not initialized"),
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    fn clap_completer() -> ArgValueCompleter {
+        ArgValueCompleter::new(service_selector_completer)
+    }
 }
 
-pub fn clap_service_selector_completer(
+pub fn service_selector_completer(
     current: &std::ffi::OsStr,
 ) -> Vec<CompletionCandidate> {
     let mut completions = vec![];

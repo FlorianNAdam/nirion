@@ -8,7 +8,11 @@ use crate::{docker::compose_target_cmd, Project, TargetSelector};
 #[derive(Parser, Debug, Clone)]
 pub struct VolumesArgs {
     /// Target selector: *, project, or project.service
-    #[arg(default_value = "*", value_parser = crate::clap_parse_selector)]
+    #[arg(
+        default_value = "*",
+        value_parser = TargetSelector::clap_parse,
+        add = TargetSelector::clap_completer()
+    )]
     pub target: TargetSelector,
 
     /// Output format (table, json, Go template)

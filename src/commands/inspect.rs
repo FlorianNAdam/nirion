@@ -5,19 +5,20 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use tokio::process::Command;
 
-use crate::{
-    clap_parse_service_selector, docker::query_project_status, Project,
-    ServiceSelector,
-};
+use crate::{docker::query_project_status, Project, ServiceSelector};
 
 /// Patch service files using mirage-patch
 #[derive(Parser, Debug, Clone)]
 pub struct InspectArgs {
     /// Service selector: project.service
-    #[arg(value_parser = clap_parse_service_selector)]
+    #[arg(
+        default_value = "*",
+        value_parser = ServiceSelector::clap_parse,
+        add = ServiceSelector::clap_completer()
+    )]
     target: ServiceSelector,
 
-    /// What to patch
+    /// What to inspect
     #[arg(short, long, value_enum, default_value = "container")]
     inspect_target: InspectTarget,
 

@@ -7,14 +7,18 @@ use std::process::Stdio;
 use std::{collections::BTreeMap, fs};
 use tokio::process::Command;
 
-use crate::{clap_parse_selector, Project, TargetSelector};
+use crate::{Project, TargetSelector};
 
 /// Patch service files using mirage-patch
 #[derive(Parser, Debug, Clone)]
 pub struct PatchArgs {
-    /// Service selector: project.service
-    #[arg(value_parser = clap_parse_selector)]
-    target: TargetSelector,
+    /// Target selector: *, project, or project.service
+    #[arg(
+        default_value = "*",
+        value_parser = TargetSelector::clap_parse,
+        add = TargetSelector::clap_completer()
+    )]
+    pub target: TargetSelector,
 
     /// What to patch
     #[arg(short, long, value_enum, default_value = "compose")]

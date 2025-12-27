@@ -4,13 +4,17 @@ use std::{
     process::Command as ProcCommand,
 };
 
-use crate::{clap_parse_service_selector, Project, ServiceSelector};
+use crate::{Project, ServiceSelector};
 
 /// Execute a command in a running service container
 #[derive(Parser, Debug, Clone)]
 pub struct ExecArgs {
     /// Service selector: project.service
-    #[arg(value_parser = clap_parse_service_selector)]
+    #[arg(
+        default_value = "*",
+        value_parser = ServiceSelector::clap_parse,
+        add = ServiceSelector::clap_completer()
+    )]
     target: ServiceSelector,
 
     /// Detached mode: run in background

@@ -1,15 +1,17 @@
 use clap::Parser;
 use std::{collections::BTreeMap, path::Path};
 
-use crate::{
-    clap_parse_selector, docker::compose_target_cmd, Project, TargetSelector,
-};
+use crate::{docker::compose_target_cmd, Project, TargetSelector};
 
 /// View output from service containers
 #[derive(Parser, Debug, Clone)]
 pub struct LogsArgs {
     /// Target selector: *, project, or project.service
-    #[arg(default_value = "*", value_parser = clap_parse_selector)]
+    #[arg(
+        default_value = "*",
+        value_parser = TargetSelector::clap_parse,
+        add = TargetSelector::clap_completer()
+    )]
     pub target: TargetSelector,
 
     /// Follow log output

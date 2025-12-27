@@ -12,7 +12,11 @@ use crate::{Project, TargetSelector};
 #[derive(Parser, Debug, Clone)]
 pub struct DownArgs {
     /// Target selector: *, project, or project.service
-    #[arg(default_value = "*", value_parser = crate::clap_parse_selector)]
+    #[arg(
+        default_value = "*",
+        value_parser = TargetSelector::clap_parse,
+        add = TargetSelector::clap_completer()
+    )]
     pub target: TargetSelector,
 
     /// Disable real-time monitoring of container status after stopping containers
