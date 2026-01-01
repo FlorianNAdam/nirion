@@ -10,7 +10,7 @@ use std::{
 };
 use tokio::sync::Mutex;
 
-use crate::docker::fetch_digest;
+use crate::docker::inspect;
 
 pub async fn update_images(
     images: BTreeMap<String, String>,
@@ -165,7 +165,7 @@ async fn process_image(
             drop(cache); // Release lock before async operation
 
             pb.set_message(format!("Fetching digest for {}", image));
-            let digest = fetch_digest(image).await?;
+            let digest = inspect(image).await?.digest;
 
             let mut cache = digest_cache.lock().await;
             cache.insert(image.to_string(), digest.clone());
