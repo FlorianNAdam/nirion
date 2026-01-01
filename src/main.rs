@@ -47,6 +47,7 @@ pub fn target_selector_completer(
             .block_on(core_cli.files.get_projects())
     })
     .unwrap_or_default();
+
     let mut completions = vec![];
 
     let Some(current) = current.to_str() else {
@@ -102,15 +103,18 @@ impl ServiceSelector {
 pub fn service_selector_completer(
     current: &std::ffi::OsStr,
 ) -> Vec<CompletionCandidate> {
+    let core_cli = CoreCli::parse();
+
+    let projects = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current()
+            .block_on(core_cli.files.get_projects())
+    })
+    .unwrap_or_default();
+
     let mut completions = vec![];
 
     let Some(current) = current.to_str() else {
         return completions;
-    };
-
-    let projects: &BTreeMap<String, Project> = match PROJECTS.get() {
-        Some(p) => p,
-        None => return completions,
     };
 
     let (proj_prefix, svc_prefix) = if let Some(pos) = current.find('.') {
