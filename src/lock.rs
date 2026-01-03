@@ -43,9 +43,9 @@ pub async fn update_images(
 
     overall_pb.set_message("Starting...");
 
-    let digest_cache: Arc<Mutex<HashMap<String, String>>> =
+    let digest_cache: Arc<Mutex<HashMap<String, (String, Option<String>)>>> =
         Arc::new(Mutex::new(HashMap::new()));
-    let new_digests: Arc<Mutex<BTreeMap<String, String>>> =
+    let new_digests: Arc<Mutex<BTreeMap<String, (String, Option<String>)>>> =
         Arc::new(Mutex::new(BTreeMap::new()));
     let locked_images = Arc::new(locked_images.clone());
 
@@ -118,24 +118,36 @@ pub async fn update_images(
 
     println!("\nDigest changes:");
     for (service, new_digest) in &new_digests {
+        let version_string = if let Some(version) = new_digest.1.as_ref() {
+            format!(" ({})", version)
+        } else {
+            String::new()
+        };
+
         match locked_images.get(service) {
             Some(old_digest) => {
                 println!(
-                    "  ~ {}:\n      old: {}\n      new: {}",
+                    "  ~ {}{}:\n      old: {}\n      new: {}",
+                    version_string,
                     service.to_string().cyan(),
                     old_digest,
-                    new_digest
+                    new_digest.0
                 );
             }
             None => {
                 println!(
                     "  + {}:\n      new: {}",
                     service.to_string().green(),
-                    new_digest
+                    new_digest.0
                 );
             }
         }
     }
+
+    let new_digests = new_digests
+        .into_iter()
+        .map(|(k, v)| (k, v.0))
+        .collect::<BTreeMap<String, String>>();
 
     println!("\nUpdating lock file...");
     let mut new_locked_images = locked_images.as_ref().clone();
@@ -151,9 +163,9 @@ pub async fn update_images(
 async fn process_image(
     service: &str,
     image: &str,
-    digest_cache: &Arc<Mutex<HashMap<String, String>>>,
+    digest_cache: &Arc<Mutex<HashMap<String, (String, Option<String>)>>>,
     locked_images: &Arc<BTreeMap<String, String>>,
-    new_digests: &Arc<Mutex<BTreeMap<String, String>>>,
+    new_digests: &Arc<Mutex<BTreeMap<String, (String, Option<String>)>>>,
     pb: ProgressBar,
 ) -> anyhow::Result<()> {
     let digest = {
@@ -165,7 +177,15 @@ async fn process_image(
             drop(cache); // Release lock before async operation
 
             pb.set_message(format!("Fetching digest for {}", image));
-            let digest = inspect(image).await?.digest;
+            let result = inspect(image).await?;
+            let digest = (
+                result.digest,
+                result
+                    .labels
+                    .unwrap_or_default()
+                    .get("org.opencontainers.image.version")
+                    .map(&String::to_string),
+            );
 
             let mut cache = digest_cache.lock().await;
             cache.insert(image.to_string(), digest.clone());
@@ -176,7 +196,7 @@ async fn process_image(
     let mut new_digests = new_digests.lock().await;
 
     if let Some(old_digest) = locked_images.get(service) {
-        if old_digest != &digest {
+        if old_digest != &digest.0 {
             pb.set_message(format!("✓ {}: Updated", service));
             new_digests.insert(service.to_string(), digest);
         } else {

@@ -5,18 +5,21 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use tokio::process::Command;
 
-use crate::{docker::query_project_status, Project, ServiceSelector};
+use crate::{
+    docker::query_project_status, Project, ProjectSelector, ServiceSelector,
+    TargetSelector,
+};
 
 /// Patch service files using mirage-patch
 #[derive(Parser, Debug, Clone)]
 pub struct InspectArgs {
-    /// Service selector: project.service
+    /// Target selector: *, project, or project.service
     #[arg(
         default_value = "*",
-        value_parser = ServiceSelector::clap_parse,
-        add = ServiceSelector::clap_completer()
+        value_parser = TargetSelector::clap_parse,
+        add = TargetSelector::clap_completer()
     )]
-    target: ServiceSelector,
+    pub target: TargetSelector,
 
     /// What to inspect
     #[arg(short, long, value_enum, default_value = "container")]
@@ -43,10 +46,27 @@ pub async fn handle_inspect(
     locked_images: &BTreeMap<String, String>,
     _lock_file: &Path,
 ) -> Result<()> {
-    match args.inspect_target {
-        InspectTarget::Image => {
-            inspect_image(
-                &args.target,
+    match &args.target {
+        TargetSelector::All => {
+            for project_name in projects.keys() {
+                let project_selector = ProjectSelector {
+                    name: project_name.to_string(),
+                };
+                inspect_project(
+                    &project_selector,
+                    &args.inspect_target,
+                    projects,
+                    locked_images,
+                    &args.format,
+                    args.raw,
+                )
+                .await?
+            }
+        }
+        TargetSelector::Project(proj) => {
+            inspect_project(
+                &proj,
+                &args.inspect_target,
                 projects,
                 locked_images,
                 &args.format,
@@ -54,16 +74,74 @@ pub async fn handle_inspect(
             )
             .await?
         }
-        InspectTarget::Container => {
-            inspect_container(&args.target, projects, &args.format, args.raw)
-                .await?
+        TargetSelector::Service(img) => {
+            inspect_service(
+                &img,
+                &args.inspect_target,
+                projects,
+                locked_images,
+                &args.format,
+                args.raw,
+            )
+            .await?
         }
+    }
+    Ok(())
+}
+
+async fn inspect_project(
+    target: &ProjectSelector,
+    inspect_target: &InspectTarget,
+    projects: &BTreeMap<String, Project>,
+    locked_images: &BTreeMap<String, String>,
+    format: &str,
+    raw: bool,
+) -> anyhow::Result<()> {
+    for service in projects[&target.name].services.keys() {
+        let service_selector = ServiceSelector {
+            project: target.name.to_string(),
+            service: service.to_string(),
+        };
+        if let Err(e) = inspect_service(
+            &service_selector,
+            inspect_target,
+            projects,
+            locked_images,
+            format,
+            raw,
+        )
+        .await
+        {
+            eprintln!(
+                "Failed to inspect service {}.{}:{}",
+                target.name, service, e
+            );
+        };
     }
 
     Ok(())
 }
 
-pub async fn inspect_image(
+async fn inspect_service(
+    target: &ServiceSelector,
+    inspect_target: &InspectTarget,
+    projects: &BTreeMap<String, Project>,
+    locked_images: &BTreeMap<String, String>,
+    format: &str,
+    raw: bool,
+) -> anyhow::Result<()> {
+    match inspect_target {
+        InspectTarget::Image => {
+            inspect_image(target, projects, locked_images, format, raw).await?
+        }
+        InspectTarget::Container => {
+            inspect_container(&target, projects, &format, raw).await?
+        }
+    }
+    Ok(())
+}
+
+async fn inspect_image(
     target: &ServiceSelector,
     projects: &BTreeMap<String, Project>,
     locked_images: &BTreeMap<String, String>,
@@ -123,7 +201,7 @@ pub async fn inspect_image(
     Ok(())
 }
 
-pub async fn inspect_container(
+async fn inspect_container(
     target: &ServiceSelector,
     projects: &BTreeMap<String, Project>,
     format: &str,
