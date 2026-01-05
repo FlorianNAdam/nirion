@@ -21,10 +21,6 @@ pub struct ExecArgs {
     #[arg(short = 'd', long)]
     detach: bool,
 
-    /// Execute command in dry run mode
-    #[arg(long)]
-    dry_run: bool,
-
     /// Disable pseudo-TTY allocation
     #[arg(short = 'T', long)]
     no_tty: bool,
@@ -105,23 +101,16 @@ pub async fn handle_exec(
     cmd_args.push(service_name.clone());
     cmd_args.extend(args.cmd.clone());
 
-    if !args.dry_run {
-        let status = ProcCommand::new("docker")
-            .arg("compose")
-            .args(&cmd_args)
-            .status()?;
+    let status = ProcCommand::new("docker")
+        .arg("compose")
+        .args(&cmd_args)
+        .status()?;
 
-        if status.success() {
-            println!(
-                "Command executed successfully in {}.{}",
-                project_name, service_name
-            );
-        } else {
-            println!(
-                "Command failed in {}.{} with status {}",
-                project_name, service_name, status
-            );
-        }
+    if !status.success() {
+        eprintln!(
+            "Command failed in {}.{} with status {}",
+            project_name, service_name, status
+        );
     }
 
     Ok(())
