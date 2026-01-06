@@ -118,17 +118,16 @@ pub async fn update_images(
 
     println!("\nDigest changes:");
     for (service, new_digest) in &new_digests {
-        let version_string = if let Some(version) = new_digest.1.as_ref() {
-            format!(" ({})", version)
-        } else {
-            String::new()
-        };
+        // let version_string = if let Some(version) = new_digest.1.as_ref() {
+        //     format!(" ({})", version)
+        // } else {
+        //     String::new()
+        // };
 
         match locked_images.get(service) {
             Some(old_digest) => {
                 println!(
-                    "  ~ {}{}:\n      old: {}\n      new: {}",
-                    version_string,
+                    "  ~ {}:\n      old: {}\n      new: {}",
                     service.to_string().cyan(),
                     old_digest,
                     new_digest.0
