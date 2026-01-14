@@ -163,13 +163,11 @@ async fn inspect_image(
 
     let identifier = format!("{}.{}", target.project, target.service);
 
-    let digest = locked_images
-        .get(&identifier)
-        .ok_or_else(|| {
-            anyhow::anyhow!("Image missing from lock file {}", &target.service)
-        })?;
-
-    let image_name = format!("{}@{}", base_image, digest);
+    let image_name = if let Some(digest) = locked_images.get(&identifier) {
+        format!("{}@{}", base_image, digest)
+    } else {
+        base_image.to_string()
+    };
 
     let output = Command::new("docker")
         .arg("image")
