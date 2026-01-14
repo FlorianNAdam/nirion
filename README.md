@@ -1,7 +1,7 @@
 # Nirion
 
 **Nirion** is a wrapper around [arion](https://docs.hercules-ci.com/arion/) for simpler Nix-based home lab Docker setups and management.  
-It streamlines container management, Nix evaluation, and service patching for reproducible and maintainable workflows.
+It streamlines container management, Nix evaluation, and service patching for reproducible and maintainable workflows. By adding a lock-file mechanism, it makes deployments even more deterministic and reproducible.
 
 ---
 
