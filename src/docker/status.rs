@@ -154,6 +154,7 @@ impl ProjectStatus {
                 .ports
                 .unwrap_or_default()
                 .split(",")
+                .map(|s| s.trim())
                 .filter(|s| !s.is_empty())
                 .map(|port_str| {
                     let (port_str, proto) = port_str
