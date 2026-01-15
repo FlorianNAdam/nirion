@@ -34,10 +34,6 @@ pub struct StopArgs {
     /// Use legacy restart method instead of the current implementation
     #[arg(short, long)]
     pub legacy: bool,
-
-    /// Skip health checks when determining if containers are ready
-    #[arg(short, long)]
-    pub skip_healthcheck: bool,
 }
 
 pub async fn handle_stop(
@@ -54,7 +50,7 @@ pub async fn handle_stop(
             args.no_monitor,
             args.quiet,
             args.refresh,
-            !args.skip_healthcheck,
+            false,
         )
         .await?;
     } else {
