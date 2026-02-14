@@ -1,9 +1,8 @@
 use clap::Parser;
+use nirion_lib::projects::Projects;
 use std::{collections::BTreeMap, path::Path};
 
-use crate::{
-    docker::compose_target_cmd, ClapSelector, Project, TargetSelector,
-};
+use crate::{docker::compose_target_cmd, ClapSelector, TargetSelector};
 
 /// Display the running processes of a service container
 #[derive(Parser, Debug, Clone)]
@@ -19,7 +18,7 @@ pub struct TopArgs {
 
 pub async fn handle_top(
     args: &TopArgs,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
     _locked_images: &BTreeMap<String, String>,
     _lock_file: &Path,
 ) -> anyhow::Result<()> {

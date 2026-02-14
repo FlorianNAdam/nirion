@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use nirion_lib::projects::{Project, TargetSelector};
+use nirion_lib::projects::{Projects, TargetSelector};
 use std::collections::BTreeMap;
 use std::path::Path;
 use tokio::time::Duration;
@@ -43,7 +43,7 @@ pub struct DownArgs {
 
 pub async fn handle_down(
     args: &DownArgs,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
     _locked_images: &BTreeMap<String, String>,
     _lock_file: &Path,
 ) -> Result<()> {

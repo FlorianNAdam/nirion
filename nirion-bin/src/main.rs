@@ -4,7 +4,7 @@ use clap::{CommandFactory, Parser};
 use clap_complete::{ArgValueCompleter, CompletionCandidate};
 use crossterm::style::Stylize;
 use nirion_lib::projects::{
-    parse_selector, parse_service_selector, Project, ServiceSelector,
+    parse_selector, parse_service_selector, Project, Projects, ServiceSelector,
     TargetSelector,
 };
 use std::sync::OnceLock;
@@ -17,7 +17,7 @@ mod lock;
 mod monitor;
 mod progress;
 
-pub static PROJECTS: OnceLock<BTreeMap<String, Project>> = OnceLock::new();
+pub static PROJECTS: OnceLock<Projects> = OnceLock::new();
 
 pub trait ClapSelector {
     fn clap_parse(s: &str) -> Result<Self, String>
@@ -81,8 +81,7 @@ pub fn target_selector_completer(
             }
         } else {
             if project_name.starts_with(current) {
-                completions
-                    .push(CompletionCandidate::new(project_name.clone()));
+                completions.push(CompletionCandidate::new(project_name));
             }
         }
     }
@@ -249,13 +248,13 @@ impl FileCli {
         }
     }
 
-    async fn get_projects(&self) -> anyhow::Result<BTreeMap<String, Project>> {
+    async fn get_projects(&self) -> anyhow::Result<Projects> {
         let project_file = self.get_project_file().await?;
 
         let project_data = fs::read_to_string(&project_file)
             .with_context(|| anyhow::anyhow!("Failed to read projects file"))?;
-        let projects: BTreeMap<String, Project> =
-            serde_json::from_str(&project_data).with_context(|| {
+        let projects: Projects = serde_json::from_str(&project_data)
+            .with_context(|| {
                 anyhow::anyhow!("Failed to parse projects file")
             })?;
 

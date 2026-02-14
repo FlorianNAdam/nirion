@@ -1,9 +1,10 @@
 use clap::Parser;
+use nirion_lib::projects::Projects;
 use std::{collections::BTreeMap, path::Path, time::Duration};
 
 use crate::{
     monitor::{create_monitors, monitor},
-    ClapSelector, Project, TargetSelector,
+    ClapSelector, TargetSelector,
 };
 
 #[derive(Parser, Debug, Clone)]
@@ -23,7 +24,7 @@ pub struct MonitorArgs {
 
 pub async fn handle_monitor(
     args: &MonitorArgs,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
     _locked_images: &BTreeMap<String, String>,
     _lock_file: &Path,
 ) -> anyhow::Result<()> {

@@ -1,7 +1,8 @@
 use clap::Parser;
+use nirion_lib::projects::Projects;
 use std::{collections::BTreeMap, path::Path};
 
-use crate::{ClapSelector, Project, TargetSelector};
+use crate::{ClapSelector, TargetSelector};
 
 /// List projects or services
 #[derive(Parser, Debug, Clone)]
@@ -17,14 +18,14 @@ pub struct ListArgs {
 
 pub async fn handle_list(
     args: &ListArgs,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
     _locked_images: &BTreeMap<String, String>,
     _lock_file: &Path,
 ) -> anyhow::Result<()> {
     match &args.target {
         TargetSelector::All => {
             println!("Projects:");
-            for project_name in projects.keys() {
+            for (project_name, _) in projects.iter() {
                 println!("- {}", project_name);
             }
         }

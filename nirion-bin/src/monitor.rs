@@ -1,11 +1,12 @@
 use crate::docker::{DockerProjectMonitor, ProjectStatus};
-use crate::{Project, TargetSelector};
+use crate::TargetSelector;
 use crossterm::terminal::Clear;
 use crossterm::{
     cursor::{self, MoveUp},
     execute,
     style::{Color, Stylize},
 };
+use nirion_lib::projects::Projects;
 use nirion_tui_lib::status::{Status, StatusEntry};
 use std::collections::BTreeMap;
 use std::io::stdout;
@@ -46,7 +47,7 @@ fn create_segments(status: &ProjectStatus, num_services: usize) -> Vec<Color> {
 
 pub async fn create_status(
     monitors: &BTreeMap<String, DockerProjectMonitor>,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
 ) -> anyhow::Result<Status> {
     let mut entries = Vec::new();
 
@@ -86,7 +87,7 @@ pub async fn create_status(
 
 pub async fn monitor(
     monitors: &BTreeMap<String, DockerProjectMonitor>,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
 ) -> anyhow::Result<()> {
     let mut stdout = stdout();
     execute!(stdout, cursor::Hide)?;
@@ -121,11 +122,14 @@ pub async fn monitor(
 
 pub async fn create_monitors(
     target: &TargetSelector,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
     refresh_interval: Duration,
 ) -> BTreeMap<String, DockerProjectMonitor> {
     let selected: Vec<String> = match target {
-        TargetSelector::All => projects.keys().cloned().collect(),
+        TargetSelector::All => projects
+            .iter()
+            .map(|(n, _)| n.to_string())
+            .collect(),
         TargetSelector::Project(p) => vec![p.name.clone()],
         TargetSelector::Service(s) => vec![s.project.clone()],
     };

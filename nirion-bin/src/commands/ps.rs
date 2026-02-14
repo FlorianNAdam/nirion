@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use crossterm::style::Stylize;
+use nirion_lib::projects::Projects;
 use nirion_tui_lib::table::print_table;
 use std::{
     collections::{BTreeMap, HashSet},
@@ -70,7 +71,7 @@ pub struct PsArgs {
 
 pub async fn handle_ps(
     args: &PsArgs,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
     locked_images: &BTreeMap<String, String>,
     lock_file: &Path,
 ) -> Result<()> {
@@ -83,7 +84,7 @@ pub async fn handle_ps(
 
 async fn legacy_ps(
     args: &PsArgs,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
     _locked_images: &BTreeMap<String, String>,
     _lock_file: &Path,
 ) -> Result<()> {
@@ -138,15 +139,12 @@ async fn legacy_ps(
     compose_target_cmd(&args.target, projects, &cmd_slices).await
 }
 
-async fn fancy_ps(
-    args: &PsArgs,
-    projects: &BTreeMap<String, Project>,
-) -> Result<()> {
+async fn fancy_ps(args: &PsArgs, projects: &Projects) -> Result<()> {
     let mut rows = vec![];
 
     match &args.target {
         TargetSelector::All => {
-            for (project_name, project) in projects {
+            for (project_name, project) in projects.iter() {
                 rows.extend(print_project_status(project_name, project).await?);
             }
         }

@@ -1,3 +1,4 @@
+use nirion_lib::projects::Projects;
 use paste::paste;
 use std::{collections::BTreeMap, path::Path};
 
@@ -25,7 +26,7 @@ macro_rules! define_commands {
 
             pub async fn handle_command(
                 command: &Commands,
-                projects: &BTreeMap<String, crate::Project>,
+                projects: &Projects,
                 locked_images: &BTreeMap<String, String>,
                 lock_file: &Path,
             ) -> anyhow::Result<()> {

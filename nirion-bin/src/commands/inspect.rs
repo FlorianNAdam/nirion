@@ -1,12 +1,14 @@
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
-use nirion_lib::projects::{ProjectSelector, ServiceSelector, TargetSelector};
+use nirion_lib::projects::{
+    ProjectSelector, Projects, ServiceSelector, TargetSelector,
+};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
 use tokio::process::Command;
 
-use crate::{docker::query_project_status, ClapSelector, Project};
+use crate::{docker::query_project_status, ClapSelector};
 
 /// Patch service files using mirage-patch
 #[derive(Parser, Debug, Clone)]
@@ -40,13 +42,13 @@ enum InspectTarget {
 
 pub async fn handle_inspect(
     args: &InspectArgs,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
     locked_images: &BTreeMap<String, String>,
     _lock_file: &Path,
 ) -> Result<()> {
     match &args.target {
         TargetSelector::All => {
-            for project_name in projects.keys() {
+            for (project_name, _) in projects.iter() {
                 let project_selector = ProjectSelector {
                     name: project_name.to_string(),
                 };
@@ -90,7 +92,7 @@ pub async fn handle_inspect(
 async fn inspect_project(
     target: &ProjectSelector,
     inspect_target: &InspectTarget,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
     locked_images: &BTreeMap<String, String>,
     format: &str,
     raw: bool,
@@ -123,7 +125,7 @@ async fn inspect_project(
 async fn inspect_service(
     target: &ServiceSelector,
     inspect_target: &InspectTarget,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
     locked_images: &BTreeMap<String, String>,
     format: &str,
     raw: bool,
@@ -141,7 +143,7 @@ async fn inspect_service(
 
 async fn inspect_image(
     target: &ServiceSelector,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
     locked_images: &BTreeMap<String, String>,
     format: &str,
     raw: bool,
@@ -199,11 +201,11 @@ async fn inspect_image(
 
 async fn inspect_container(
     target: &ServiceSelector,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
     format: &str,
     raw: bool,
 ) -> Result<()> {
-    let project = &projects[&target.project];
+    let project = &projects.get(&target.project).unwrap();
 
     let project_status =
         query_project_status(&project.docker_compose, &project.name).await?;

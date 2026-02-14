@@ -3,6 +3,7 @@ use crossterm::{
     execute,
     style::{Color, Stylize},
 };
+use nirion_lib::projects::Projects;
 use nirion_tui_lib::{
     spinner::Spinner,
     status::{Status, StatusEntry},
@@ -12,7 +13,7 @@ use std::io::{stdout, Write};
 use tokio::time::Duration;
 
 use crate::docker::{DockerMonitoredProcess, ProjectStatus, ServiceState};
-use crate::{Project, TargetSelector};
+use crate::TargetSelector;
 
 fn create_segments(status: &ProjectStatus, num_services: usize) -> Vec<Color> {
     let total = num_services.max(status.total());
@@ -49,7 +50,7 @@ fn create_segments(status: &ProjectStatus, num_services: usize) -> Vec<Color> {
 async fn create_status(
     spinner: &Spinner,
     map: &BTreeMap<String, DockerMonitoredProcess>,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
 ) -> anyhow::Result<Status> {
     let mut entries = Vec::new();
 
@@ -85,7 +86,7 @@ async fn create_status(
 async fn print_progress(
     map: &BTreeMap<String, DockerMonitoredProcess>,
     spinner: &Spinner,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
 ) -> anyhow::Result<()> {
     let status = create_status(spinner, map, projects).await?;
     status.print()?;
@@ -94,7 +95,7 @@ async fn print_progress(
 
 pub async fn run_command_with_progress(
     target: &TargetSelector,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
     args: &[&str],
     no_monitor: bool,
     quiet: bool,
@@ -102,7 +103,10 @@ pub async fn run_command_with_progress(
     wait_for_healthchecks: bool,
 ) -> anyhow::Result<()> {
     let selected: Vec<String> = match target {
-        TargetSelector::All => projects.keys().cloned().collect(),
+        TargetSelector::All => projects
+            .iter()
+            .map(|(n, _)| n.to_string())
+            .collect(),
         TargetSelector::Project(p) => vec![p.name.clone()],
         TargetSelector::Service(img) => vec![img.project.clone()],
     };
@@ -174,13 +178,13 @@ pub async fn run_command_with_progress(
 
 pub fn healthchecks_finished(
     target: &TargetSelector,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
     statuses: &BTreeMap<String, ProjectStatus>,
 ) -> bool {
     let project_names: Vec<&str> = match target {
         TargetSelector::All => projects
-            .keys()
-            .map(String::as_str)
+            .iter()
+            .map(|(n, _)| n)
             .collect(),
         TargetSelector::Project(p) => vec![p.name.as_str()],
         TargetSelector::Service(s) => vec![s.project.as_str()],

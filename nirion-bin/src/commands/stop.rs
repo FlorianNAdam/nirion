@@ -1,12 +1,13 @@
 use anyhow::Result;
 use clap::Parser;
+use nirion_lib::projects::Projects;
 use std::collections::BTreeMap;
 use std::path::Path;
 use tokio::time::Duration;
 
 use crate::docker::compose_target_cmd;
 use crate::progress::run_command_with_progress;
-use crate::{ClapSelector, Project, TargetSelector};
+use crate::{ClapSelector, TargetSelector};
 
 /// Stop service containers
 #[derive(Parser, Debug, Clone)]
@@ -38,7 +39,7 @@ pub struct StopArgs {
 
 pub async fn handle_stop(
     args: &StopArgs,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
     _locked_images: &BTreeMap<String, String>,
     _lock_file: &Path,
 ) -> Result<()> {

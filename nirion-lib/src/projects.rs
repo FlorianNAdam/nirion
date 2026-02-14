@@ -1,6 +1,59 @@
-use std::{collections::BTreeMap, fmt::Display, ops::Deref};
+use std::{
+    collections::BTreeMap,
+    fmt::Display,
+    ops::{Deref, Index},
+};
 
 use serde::{Deserialize, Serialize};
+
+#[derive(Default)]
+pub struct Projects {
+    projects: BTreeMap<String, Project>,
+}
+
+impl<'de> Deserialize<'de> for Projects {
+    fn deserialize<D>(deserializer: D) -> Result<Projects, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let projects = BTreeMap::<String, Project>::deserialize(deserializer)?;
+
+        Ok(Self { projects })
+    }
+}
+
+impl Serialize for Projects {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.projects.serialize(serializer)
+    }
+}
+
+impl Projects {
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &Project)> {
+        self.projects
+            .iter()
+            .map(|(s, p)| (s.as_str(), p))
+    }
+
+    pub fn contains_key(&self, key: &str) -> bool {
+        self.projects.contains_key(key)
+    }
+
+    pub fn get(&self, key: &str) -> Option<&Project> {
+        self.projects.get(key)
+    }
+}
+
+impl Index<&str> for Projects {
+    type Output = Project;
+
+    fn index(&self, index: &str) -> &Self::Output {
+        &self.projects[index]
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ProjectSelector {
@@ -60,7 +113,7 @@ pub struct Service {
 
 pub fn parse_selector(
     s: &str,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
 ) -> anyhow::Result<TargetSelector> {
     let s = s.trim();
     if s == "*" {
@@ -105,7 +158,7 @@ pub fn parse_selector(
 
 pub fn parse_service_selector(
     s: &str,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
 ) -> anyhow::Result<ServiceSelector> {
     let selector = parse_selector(s, projects)?;
     match selector {
@@ -119,12 +172,12 @@ pub fn parse_service_selector(
 
 pub fn get_images(
     target: &TargetSelector,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
 ) -> BTreeMap<String, String> {
     let mut images = BTreeMap::new();
     match target {
         TargetSelector::All => {
-            for (project_name, project) in projects {
+            for (project_name, project) in projects.iter() {
                 for (service_name, service) in project.services.iter() {
                     let identifier = format!("{project_name}.{service_name}");
                     if let Some(image) = &service.image {
@@ -134,7 +187,7 @@ pub fn get_images(
             }
         }
         TargetSelector::Project(proj) => {
-            let project = &projects[&proj.name];
+            let project = &projects.get(&proj.name).unwrap();
             for (service_name, service) in project.services.iter() {
                 let identifier = format!("{}.{}", proj.name, service_name);
                 if let Some(image) = &service.image {
@@ -143,7 +196,7 @@ pub fn get_images(
             }
         }
         TargetSelector::Service(img) => {
-            let project = &projects[&img.project];
+            let project = &projects.get(&img.project).unwrap();
             let service = &project.services[&img.service];
             let identifier = format!("{}.{}", img.project, img.service);
             if let Some(image) = &service.image {

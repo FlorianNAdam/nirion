@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
+use nirion_lib::projects::Projects;
 use serde::Deserialize;
 use serde_yml as serde_yaml;
 use std::path::Path;
@@ -7,7 +8,7 @@ use std::process::Stdio;
 use std::{collections::BTreeMap, fs};
 use tokio::process::Command;
 
-use crate::{ClapSelector, Project, TargetSelector};
+use crate::{ClapSelector, TargetSelector};
 
 /// Patch service files using mirage-patch
 #[derive(Parser, Debug, Clone)]
@@ -33,7 +34,7 @@ enum PatchTarget {
 
 pub async fn handle_patch(
     args: &PatchArgs,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
     _locked_images: &BTreeMap<String, String>,
     _lock_file: &Path,
 ) -> Result<()> {

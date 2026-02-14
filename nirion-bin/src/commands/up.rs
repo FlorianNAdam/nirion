@@ -1,12 +1,13 @@
 use anyhow::Result;
 use clap::Parser;
+use nirion_lib::projects::Projects;
 use std::collections::BTreeMap;
 use std::path::Path;
 use tokio::time::Duration;
 
 use crate::docker::compose_target_cmd;
 use crate::progress::run_command_with_progress;
-use crate::{ClapSelector, Project, TargetSelector};
+use crate::{ClapSelector, TargetSelector};
 
 /// Create and start service containers
 #[derive(Parser, Debug, Clone)]
@@ -46,7 +47,7 @@ pub struct UpArgs {
 
 pub async fn handle_up(
     args: &UpArgs,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
     _locked_images: &BTreeMap<String, String>,
     _lock_file: &Path,
 ) -> Result<()> {

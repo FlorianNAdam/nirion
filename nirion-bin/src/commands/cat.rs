@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use nirion_lib::projects::{Project, TargetSelector};
+use nirion_lib::projects::{Project, Projects, TargetSelector};
 use serde_yml as serde_yaml;
 use serde_yml::{Mapping, Value};
 use std::path::Path;
@@ -22,13 +22,13 @@ pub struct CatArgs {
 
 pub async fn handle_cat(
     args: &CatArgs,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
     _locked_images: &BTreeMap<String, String>,
     _lock_file: &Path,
 ) -> Result<()> {
     match &args.target {
         TargetSelector::All => {
-            for (project_name, project) in projects {
+            for (project_name, project) in projects.iter() {
                 println!("Project {}:", project_name);
                 print_full_yaml(project_name, project)?;
             }

@@ -1,21 +1,21 @@
 use crossterm::style::Stylize;
-use nirion_lib::projects::ProjectName;
-use std::{collections::BTreeMap, ops::Deref, process::Stdio};
+use nirion_lib::projects::{ProjectName, Projects};
+use std::{ops::Deref, process::Stdio};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::Command,
 };
 
-use crate::{Project, TargetSelector};
+use crate::TargetSelector;
 
 pub async fn compose_target_cmd(
     target: &TargetSelector,
-    projects: &BTreeMap<String, Project>,
+    projects: &Projects,
     args: &[&str],
 ) -> anyhow::Result<()> {
     match target {
         TargetSelector::All => {
-            for (name, project) in projects {
+            for (name, project) in projects.iter() {
                 println!("[{}]", name.to_string().cyan());
 
                 let compose_file = &project.docker_compose;
