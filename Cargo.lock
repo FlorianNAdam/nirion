@@ -1367,6 +1367,7 @@ dependencies = [
  "humantime",
  "indicatif",
  "nirion-oci-lib",
+ "nirion-tui-lib",
  "oci-registry-client",
  "once_cell",
  "paste",
@@ -1389,6 +1390,15 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+]
+
+[[package]]
+name = "nirion-tui-lib"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "console",
+ "crossterm",
 ]
 
 [[package]]

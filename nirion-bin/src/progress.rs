@@ -3,13 +3,15 @@ use crossterm::{
     execute,
     style::{Color, Stylize},
 };
+use nirion_tui_lib::{
+    spinner::Spinner,
+    status::{Status, StatusEntry},
+};
 use std::collections::BTreeMap;
 use std::io::{stdout, Write};
 use tokio::time::Duration;
 
 use crate::docker::{DockerMonitoredProcess, ProjectStatus, ServiceState};
-use crate::spinner::Spinner;
-use crate::status::{Status, StatusEntry};
 use crate::{Project, TargetSelector};
 
 fn create_segments(status: &ProjectStatus, num_services: usize) -> Vec<Color> {

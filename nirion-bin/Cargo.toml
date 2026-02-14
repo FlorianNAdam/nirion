@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 nirion-oci-lib = {version= "0.1.0", path="../nirion-oci-lib"}
+nirion-tui-lib = {version= "0.1.0", path="../nirion-tui-lib"}
 anyhow = { version = "1.0.100", features = ["backtrace"] }
 clap = { version = "4.5.53", features = ["derive", "env"] }
 clap_complete = { version = "4.5.62", features = ["unstable-dynamic"] }

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use crossterm::style::Stylize;
+use nirion_tui_lib::table::print_table;
 use std::{
     collections::{BTreeMap, HashSet},
     path::Path,
@@ -8,7 +9,6 @@ use std::{
 
 use crate::{
     docker::{compose_target_cmd, query_project_status},
-    util::print_table,
     Project, TargetSelector,
 };
 

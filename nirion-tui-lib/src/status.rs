@@ -5,7 +5,7 @@ use crossterm::{
 };
 use std::io::stdout;
 
-use crate::util::{ansi_len, lpad_ansi};
+use crate::ansi::{ansi_len, lpad_ansi};
 
 pub struct Status {
     pub entries: Vec<StatusEntry>,

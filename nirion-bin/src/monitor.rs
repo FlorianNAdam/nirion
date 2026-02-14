@@ -1,5 +1,4 @@
 use crate::docker::{DockerProjectMonitor, ProjectStatus};
-use crate::status::{Status, StatusEntry};
 use crate::{Project, TargetSelector};
 use crossterm::terminal::Clear;
 use crossterm::{
@@ -7,6 +6,7 @@ use crossterm::{
     execute,
     style::{Color, Stylize},
 };
+use nirion_tui_lib::status::{Status, StatusEntry};
 use std::collections::BTreeMap;
 use std::io::stdout;
 use std::io::Write;
