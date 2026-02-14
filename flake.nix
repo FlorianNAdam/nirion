@@ -41,10 +41,7 @@
           ];
 
           postInstall = ''
-            wrapProgram $out/bin/nirion \
-              --prefix PATH : ${pkgs.skopeo}/bin
-
-             # Bash completion
+            # Bash completion
             mkdir -p $out/share/bash-completion/completions
             COMPLETE=bash $out/bin/nirion > $out/share/bash-completion/completions/nirion
 
@@ -77,13 +74,7 @@
 
           packages = with pkgs; [
             rust-analyzer
-            skopeo
           ];
-
-          shellHook = ''
-            export NIRION_LOCK_FILE='/home/florian/my-nixos/modules/arion/nirion.lock'
-            export NIRION_PROJECT_FILE='/nix/store/1513da4nvk6sk9578ccnk7wzjfkkrr3k-projects.json'
-          '';
         };
       }
     )

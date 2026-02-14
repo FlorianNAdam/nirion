@@ -3,7 +3,8 @@
 - [x] lock
 - [x] update
 - [ ] arion
-- [ ] compose
+- [x] compose
+- [ ] pull
  
 # Arion
 - [x] cat
@@ -13,8 +14,8 @@
 - [x] up
 - [x] down
 - [x] restart
-- [ ] start
-- [ ] stop
+- [x] start
+- [x] stop
 - [ ] kill
 - [x] exec
 - [x] log

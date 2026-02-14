@@ -1,7 +1,8 @@
+# rust
 /target
-/.devenv
-/.direnv
-/result
+
+# nix
+.direnv
 
 # secret
 .envrc.private

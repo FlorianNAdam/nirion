@@ -10,7 +10,8 @@ use std::{
 };
 use tokio::sync::Mutex;
 
-use crate::docker::inspect;
+use nirion_oci_lib::oci_client::Client;
+use nirion_oci_lib::{get_version_and_digest, oci_client::Reference};
 
 pub async fn update_images(
     images: BTreeMap<String, String>,
@@ -162,33 +163,32 @@ pub async fn update_images(
 async fn process_image(
     service: &str,
     image: &str,
-    digest_cache: &Arc<Mutex<HashMap<String, (String, Option<String>)>>>,
+    cache: &Arc<Mutex<HashMap<String, (String, Option<String>)>>>,
     locked_images: &Arc<BTreeMap<String, String>>,
     new_digests: &Arc<Mutex<BTreeMap<String, (String, Option<String>)>>>,
     pb: ProgressBar,
 ) -> anyhow::Result<()> {
     let digest = {
-        let cache = digest_cache.lock().await;
-        if let Some(digest) = cache.get(image) {
+        let locked_cache = cache.lock().await;
+        if let Some(digest) = locked_cache.get(image) {
             pb.set_message(format!("Cache hit for {}", image));
             digest.clone()
         } else {
-            drop(cache); // Release lock before async operation
+            drop(locked_cache); // Release lock before async operation
 
             pb.set_message(format!("Fetching digest for {}", image));
-            let result = inspect(image).await?;
-            let digest = (
-                result.digest,
-                result
-                    .labels
-                    .unwrap_or_default()
-                    .get("org.opencontainers.image.version")
-                    .map(&String::to_string),
-            );
 
-            let mut cache = digest_cache.lock().await;
-            cache.insert(image.to_string(), digest.clone());
-            digest
+            let reference = Reference::try_from(image)?;
+
+            let client = Client::default();
+            let (version, digest) =
+                get_version_and_digest(&client, &reference).await?;
+
+            let result = (digest, version);
+
+            let mut cache = cache.lock().await;
+            cache.insert(image.to_string(), result.clone());
+            result
         }
     };
 
