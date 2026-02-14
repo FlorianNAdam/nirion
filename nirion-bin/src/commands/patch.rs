@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
+use nirion_lib::lock::LockedImages;
 use nirion_lib::projects::Projects;
 use serde::Deserialize;
 use serde_yml as serde_yaml;
@@ -35,7 +36,7 @@ enum PatchTarget {
 pub async fn handle_patch(
     args: &PatchArgs,
     projects: &Projects,
-    _locked_images: &BTreeMap<String, String>,
+    _locked_images: &LockedImages,
     _lock_file: &Path,
 ) -> Result<()> {
     match &args.target {

@@ -1,10 +1,10 @@
 use anyhow::Result;
 use clap::Parser;
 use crossterm::style::Stylize;
-use nirion_lib::projects::Projects;
+use nirion_lib::{lock::LockedImages, projects::Projects};
 use nirion_tui_lib::table::print_table;
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::HashSet,
     path::Path,
 };
 
@@ -72,7 +72,7 @@ pub struct PsArgs {
 pub async fn handle_ps(
     args: &PsArgs,
     projects: &Projects,
-    locked_images: &BTreeMap<String, String>,
+    locked_images: &LockedImages,
     lock_file: &Path,
 ) -> Result<()> {
     if args.legacy {
@@ -85,7 +85,7 @@ pub async fn handle_ps(
 async fn legacy_ps(
     args: &PsArgs,
     projects: &Projects,
-    _locked_images: &BTreeMap<String, String>,
+    _locked_images: &LockedImages,
     _lock_file: &Path,
 ) -> Result<()> {
     let mut cmd_args: Vec<String> = vec!["ps".into()];

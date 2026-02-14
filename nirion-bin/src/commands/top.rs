@@ -1,6 +1,6 @@
 use clap::Parser;
-use nirion_lib::projects::Projects;
-use std::{collections::BTreeMap, path::Path};
+use nirion_lib::{lock::LockedImages, projects::Projects};
+use std::path::Path;
 
 use crate::{docker::compose_target_cmd, ClapSelector, TargetSelector};
 
@@ -19,7 +19,7 @@ pub struct TopArgs {
 pub async fn handle_top(
     args: &TopArgs,
     projects: &Projects,
-    _locked_images: &BTreeMap<String, String>,
+    _locked_images: &LockedImages,
     _lock_file: &Path,
 ) -> anyhow::Result<()> {
     // docker compose top has no flags: just ["top"]

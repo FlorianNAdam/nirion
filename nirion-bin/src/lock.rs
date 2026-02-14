@@ -1,5 +1,6 @@
 use crossterm::{cursor, execute, style::Stylize};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use nirion_lib::lock::LockedImages;
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
@@ -15,7 +16,7 @@ use nirion_oci_lib::{get_version_and_digest, oci_client::Reference};
 
 pub async fn update_images(
     images: BTreeMap<String, String>,
-    locked_images: &BTreeMap<String, String>,
+    locked_images: &LockedImages,
     lock_file: &Path,
     jobs: usize,
 ) -> anyhow::Result<()> {
@@ -164,7 +165,7 @@ async fn process_image(
     service: &str,
     image: &str,
     cache: &Arc<Mutex<HashMap<String, (String, Option<String>)>>>,
-    locked_images: &Arc<BTreeMap<String, String>>,
+    locked_images: &Arc<LockedImages>,
     new_digests: &Arc<Mutex<BTreeMap<String, (String, Option<String>)>>>,
     pb: ProgressBar,
 ) -> anyhow::Result<()> {

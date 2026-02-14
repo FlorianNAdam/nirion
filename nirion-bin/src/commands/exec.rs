@@ -1,7 +1,7 @@
 use clap::{Parser, ValueHint};
-use nirion_lib::projects::Projects;
+use nirion_lib::{lock::LockedImages, projects::Projects};
 use std::{
-    collections::BTreeMap, ops::Deref, path::Path,
+    ops::Deref, path::Path,
     process::Command as ProcCommand,
 };
 
@@ -53,7 +53,7 @@ pub struct ExecArgs {
 pub async fn handle_exec(
     args: &ExecArgs,
     projects: &Projects,
-    _locked_images: &BTreeMap<String, String>,
+    _locked_images: &LockedImages,
     _lock_file: &Path,
 ) -> anyhow::Result<()> {
     if args.cmd.is_empty() {

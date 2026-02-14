@@ -3,12 +3,13 @@ use anyhow::Context;
 use clap::{CommandFactory, Parser};
 use clap_complete::{ArgValueCompleter, CompletionCandidate};
 use crossterm::style::Stylize;
+use nirion_lib::lock::LockedImages;
 use nirion_lib::projects::{
     parse_selector, parse_service_selector, Project, Projects, ServiceSelector,
     TargetSelector,
 };
 use std::sync::OnceLock;
-use std::{collections::BTreeMap, fs, path::PathBuf};
+use std::{fs, path::PathBuf};
 use tokio::process::Command;
 
 mod commands;
@@ -206,18 +207,16 @@ impl FileCli {
         }
     }
 
-    async fn get_locked_images(
-        &self,
-    ) -> anyhow::Result<BTreeMap<String, String>> {
+    async fn get_locked_images(&self) -> anyhow::Result<LockedImages> {
         let lock_file = self.get_lock_file().await?;
 
-        let locked_images: BTreeMap<String, String> = if lock_file.exists() {
+        let locked_images: LockedImages = if lock_file.exists() {
             let lock_file_data = fs::read_to_string(&lock_file)
                 .with_context(|| anyhow::anyhow!("Failed to read lock file"))?;
             serde_json::from_str(&lock_file_data)
                 .with_context(|| anyhow::anyhow!("Failed to parse lock file"))?
         } else {
-            BTreeMap::new()
+            LockedImages::default()
         };
 
         Ok(locked_images)

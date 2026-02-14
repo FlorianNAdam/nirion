@@ -1,6 +1,9 @@
 use clap::Parser;
-use nirion_lib::projects::{Projects, TargetSelector};
-use std::{collections::BTreeMap, path::Path};
+use nirion_lib::{
+    lock::LockedImages,
+    projects::{Projects, TargetSelector},
+};
+use std::path::Path;
 
 use crate::{docker::compose_target_cmd, ClapSelector};
 
@@ -47,7 +50,7 @@ pub struct LogsArgs {
 pub async fn handle_logs(
     args: &LogsArgs,
     projects: &Projects,
-    _locked_images: &BTreeMap<String, String>,
+    _locked_images: &LockedImages,
     _lock_file: &Path,
 ) -> anyhow::Result<()> {
     let mut cmd = vec!["logs".into()];

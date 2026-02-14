@@ -1,10 +1,11 @@
 use anyhow::Result;
 use clap::Parser;
+use nirion_lib::lock::LockedImages;
 use nirion_lib::projects::{Project, Projects, TargetSelector};
 use serde_yml as serde_yaml;
 use serde_yml::{Mapping, Value};
+use std::fs;
 use std::path::Path;
-use std::{collections::BTreeMap, fs};
 
 use crate::ClapSelector;
 
@@ -23,7 +24,7 @@ pub struct CatArgs {
 pub async fn handle_cat(
     args: &CatArgs,
     projects: &Projects,
-    _locked_images: &BTreeMap<String, String>,
+    _locked_images: &LockedImages,
     _lock_file: &Path,
 ) -> Result<()> {
     match &args.target {

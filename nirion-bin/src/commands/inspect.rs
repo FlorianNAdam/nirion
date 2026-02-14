@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
-use nirion_lib::projects::{
-    ProjectSelector, Projects, ServiceSelector, TargetSelector,
+use nirion_lib::{
+    lock::LockedImages,
+    projects::{ProjectSelector, Projects, ServiceSelector, TargetSelector},
 };
 use serde_json::Value;
-use std::collections::BTreeMap;
 use std::path::Path;
 use tokio::process::Command;
 
@@ -43,7 +43,7 @@ enum InspectTarget {
 pub async fn handle_inspect(
     args: &InspectArgs,
     projects: &Projects,
-    locked_images: &BTreeMap<String, String>,
+    locked_images: &LockedImages,
     _lock_file: &Path,
 ) -> Result<()> {
     match &args.target {
@@ -93,7 +93,7 @@ async fn inspect_project(
     target: &ProjectSelector,
     inspect_target: &InspectTarget,
     projects: &Projects,
-    locked_images: &BTreeMap<String, String>,
+    locked_images: &LockedImages,
     format: &str,
     raw: bool,
 ) -> anyhow::Result<()> {
@@ -126,7 +126,7 @@ async fn inspect_service(
     target: &ServiceSelector,
     inspect_target: &InspectTarget,
     projects: &Projects,
-    locked_images: &BTreeMap<String, String>,
+    locked_images: &LockedImages,
     format: &str,
     raw: bool,
 ) -> anyhow::Result<()> {
@@ -144,7 +144,7 @@ async fn inspect_service(
 async fn inspect_image(
     target: &ServiceSelector,
     projects: &Projects,
-    locked_images: &BTreeMap<String, String>,
+    locked_images: &LockedImages,
     format: &str,
     raw: bool,
 ) -> Result<()> {

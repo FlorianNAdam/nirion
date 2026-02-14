@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
+use nirion_lib::lock::LockedImages;
 use nirion_lib::projects::Projects;
-use std::collections::BTreeMap;
 use std::path::Path;
 use tokio::time::Duration;
 
@@ -48,7 +48,7 @@ pub struct RestartArgs {
 pub async fn handle_restart(
     args: &RestartArgs,
     projects: &Projects,
-    _locked_images: &BTreeMap<String, String>,
+    _locked_images: &LockedImages,
     _lock_file: &Path,
 ) -> Result<()> {
     if !args.legacy && !matches!(args.target, TargetSelector::Service(_)) {

@@ -6,7 +6,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Projects {
     projects: BTreeMap<String, Project>,
 }

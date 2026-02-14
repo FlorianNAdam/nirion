@@ -1,6 +1,6 @@
 use clap::Parser;
-use nirion_lib::projects::Projects;
-use std::{collections::BTreeMap, path::Path};
+use nirion_lib::{lock::LockedImages, projects::Projects};
+use std::path::Path;
 
 use crate::{ClapSelector, TargetSelector};
 
@@ -19,7 +19,7 @@ pub struct ListArgs {
 pub async fn handle_list(
     args: &ListArgs,
     projects: &Projects,
-    _locked_images: &BTreeMap<String, String>,
+    _locked_images: &LockedImages,
     _lock_file: &Path,
 ) -> anyhow::Result<()> {
     match &args.target {

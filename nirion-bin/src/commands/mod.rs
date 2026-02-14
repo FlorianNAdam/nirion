@@ -1,6 +1,7 @@
+use nirion_lib::lock::LockedImages;
 use nirion_lib::projects::Projects;
 use paste::paste;
-use std::{collections::BTreeMap, path::Path};
+use std::path::Path;
 
 use clap::Subcommand;
 
@@ -27,7 +28,7 @@ macro_rules! define_commands {
             pub async fn handle_command(
                 command: &Commands,
                 projects: &Projects,
-                locked_images: &BTreeMap<String, String>,
+                locked_images: &LockedImages,
                 lock_file: &Path,
             ) -> anyhow::Result<()> {
                 match command {

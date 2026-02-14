@@ -1,7 +1,10 @@
-use std::{collections::BTreeMap, path::Path};
+use std::path::Path;
 
 use clap::Parser;
-use nirion_lib::projects::{get_images, Projects, TargetSelector};
+use nirion_lib::{
+    lock::LockedImages,
+    projects::{get_images, Projects, TargetSelector},
+};
 
 use crate::{lock::update_images, ClapSelector};
 
@@ -24,7 +27,7 @@ pub struct LockArgs {
 pub async fn handle_lock(
     args: &LockArgs,
     projects: &Projects,
-    locked_images: &BTreeMap<String, String>,
+    locked_images: &LockedImages,
     lock_file: &Path,
 ) -> anyhow::Result<()> {
     let mut images = get_images(&args.target, projects);

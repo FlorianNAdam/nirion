@@ -1,6 +1,9 @@
 use clap::Parser;
-use nirion_lib::projects::{Projects, TargetSelector};
-use std::{collections::BTreeMap, path::Path};
+use nirion_lib::{
+    lock::LockedImages,
+    projects::{Projects, TargetSelector},
+};
+use std::path::Path;
 
 use crate::{docker::compose_target_cmd, ClapSelector};
 
@@ -22,7 +25,7 @@ pub struct ComposeExecArgs {
 pub async fn handle_compose_exec(
     args: &ComposeExecArgs,
     projects: &Projects,
-    _locked_images: &BTreeMap<String, String>,
+    _locked_images: &LockedImages,
     _lock_file: &Path,
 ) -> anyhow::Result<()> {
     let cmd_slices: Vec<&str> = args
