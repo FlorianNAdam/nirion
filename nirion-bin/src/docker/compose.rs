@@ -1,11 +1,12 @@
 use crossterm::style::Stylize;
+use nirion_lib::projects::ProjectName;
 use std::{collections::BTreeMap, ops::Deref, process::Stdio};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::Command,
 };
 
-use crate::{Project, ProjectName, TargetSelector};
+use crate::{Project, TargetSelector};
 
 pub async fn compose_target_cmd(
     target: &TargetSelector,

@@ -6,7 +6,7 @@ use tokio::time::Duration;
 
 use crate::docker::compose_target_cmd;
 use crate::progress::run_command_with_progress;
-use crate::{Project, TargetSelector};
+use crate::{ClapSelector, Project, TargetSelector};
 
 /// Start service containers
 #[derive(Parser, Debug, Clone)]

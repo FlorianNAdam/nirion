@@ -4,7 +4,7 @@ use std::{
     process::Command as ProcCommand,
 };
 
-use crate::{Project, ServiceSelector};
+use crate::{ClapSelector, Project, ServiceSelector};
 
 /// Execute a command in a running service container
 #[derive(Parser, Debug, Clone)]

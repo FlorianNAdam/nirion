@@ -9,7 +9,7 @@ use std::{
 
 use crate::{
     docker::{compose_target_cmd, query_project_status},
-    Project, TargetSelector,
+    ClapSelector, Project, TargetSelector,
 };
 
 //

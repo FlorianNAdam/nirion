@@ -8,6 +8,7 @@ name = "nirion"
 path = "src/main.rs"
 
 [dependencies]
+nirion-lib = { version = "0.1.0", path = "../nirion-lib" }
 nirion-oci-lib = {version= "0.1.0", path="../nirion-oci-lib"}
 nirion-tui-lib = {version= "0.1.0", path="../nirion-tui-lib"}
 anyhow = { version = "1.0.100", features = ["backtrace"] }

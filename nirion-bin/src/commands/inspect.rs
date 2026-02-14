@@ -1,14 +1,12 @@
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
+use nirion_lib::projects::{ProjectSelector, ServiceSelector, TargetSelector};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
 use tokio::process::Command;
 
-use crate::{
-    docker::query_project_status, Project, ProjectSelector, ServiceSelector,
-    TargetSelector,
-};
+use crate::{docker::query_project_status, ClapSelector, Project};
 
 /// Patch service files using mirage-patch
 #[derive(Parser, Debug, Clone)]

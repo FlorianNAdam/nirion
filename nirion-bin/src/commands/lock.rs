@@ -1,8 +1,9 @@
 use std::{collections::BTreeMap, path::Path};
 
 use clap::Parser;
+use nirion_lib::projects::{get_images, Project, TargetSelector};
 
-use crate::{get_images, lock::update_images, Project, TargetSelector};
+use crate::{lock::update_images, ClapSelector};
 
 /// Create missing lock file entries
 #[derive(Parser, Debug, Clone)]

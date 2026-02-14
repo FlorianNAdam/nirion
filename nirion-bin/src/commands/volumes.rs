@@ -2,7 +2,9 @@ use anyhow::Result;
 use clap::Parser;
 use std::{collections::BTreeMap, path::Path};
 
-use crate::{docker::compose_target_cmd, Project, TargetSelector};
+use crate::{
+    docker::compose_target_cmd, ClapSelector, Project, TargetSelector,
+};
 
 /// List volumes
 #[derive(Parser, Debug, Clone)]

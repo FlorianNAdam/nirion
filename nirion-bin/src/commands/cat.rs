@@ -1,11 +1,12 @@
 use anyhow::Result;
 use clap::Parser;
+use nirion_lib::projects::{Project, TargetSelector};
 use serde_yml as serde_yaml;
 use serde_yml::{Mapping, Value};
 use std::path::Path;
 use std::{collections::BTreeMap, fs};
 
-use crate::{Project, TargetSelector};
+use crate::ClapSelector;
 
 /// Print the docker compose file as yaml
 #[derive(Parser, Debug, Clone)]

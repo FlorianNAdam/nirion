@@ -1,12 +1,13 @@
 use anyhow::Result;
 use clap::Parser;
+use nirion_lib::projects::{Project, TargetSelector};
 use std::collections::BTreeMap;
 use std::path::Path;
 use tokio::time::Duration;
 
 use crate::docker::compose_target_cmd;
 use crate::progress::run_command_with_progress;
-use crate::{Project, TargetSelector};
+use crate::ClapSelector;
 
 /// Stop and remove service containers, networks
 #[derive(Parser, Debug, Clone)]

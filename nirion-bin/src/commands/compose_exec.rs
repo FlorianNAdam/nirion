@@ -1,7 +1,8 @@
 use clap::Parser;
+use nirion_lib::projects::{Project, TargetSelector};
 use std::{collections::BTreeMap, path::Path};
 
-use crate::{docker::compose_target_cmd, Project, TargetSelector};
+use crate::{docker::compose_target_cmd, ClapSelector};
 
 /// Run a docker-compose command for a project or service
 #[derive(Parser, Debug, Clone)]

@@ -1,3 +1,4 @@
+use nirion_lib::projects::ProjectName;
 use std::{
     collections::BTreeMap, ffi::OsStr, ops::Deref, sync::Arc, time::Duration,
 };
@@ -5,7 +6,7 @@ use tokio::{process::Command, sync::RwLock, task::JoinHandle};
 
 use crate::{
     docker::{query_project_status, ProjectStatus},
-    Project, ProjectName,
+    Project,
 };
 
 pub struct DockerProjectMonitor {

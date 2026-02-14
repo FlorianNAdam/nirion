@@ -1,7 +1,7 @@
 use clap::Parser;
 use std::{collections::BTreeMap, path::Path};
 
-use crate::{Project, TargetSelector};
+use crate::{ClapSelector, Project, TargetSelector};
 
 /// List projects or services
 #[derive(Parser, Debug, Clone)]

@@ -3,22 +3,31 @@ use anyhow::Context;
 use clap::{CommandFactory, Parser};
 use clap_complete::{ArgValueCompleter, CompletionCandidate};
 use crossterm::style::Stylize;
+use nirion_lib::projects::{
+    parse_selector, parse_service_selector, Project, ServiceSelector,
+    TargetSelector,
+};
 use std::sync::OnceLock;
 use std::{collections::BTreeMap, fs, path::PathBuf};
 use tokio::process::Command;
-
-pub use crate::projects::*;
 
 mod commands;
 mod docker;
 mod lock;
 mod monitor;
 mod progress;
-mod projects;
 
 pub static PROJECTS: OnceLock<BTreeMap<String, Project>> = OnceLock::new();
 
-impl TargetSelector {
+pub trait ClapSelector {
+    fn clap_parse(s: &str) -> Result<Self, String>
+    where
+        Self: Sized;
+
+    fn clap_completer() -> ArgValueCompleter;
+}
+
+impl ClapSelector for TargetSelector {
     fn clap_parse(s: &str) -> Result<Self, String> {
         parse_selector(
             s,
@@ -81,7 +90,7 @@ pub fn target_selector_completer(
     completions
 }
 
-impl ServiceSelector {
+impl ClapSelector for ServiceSelector {
     fn clap_parse(s: &str) -> Result<Self, String> {
         parse_service_selector(
             s,

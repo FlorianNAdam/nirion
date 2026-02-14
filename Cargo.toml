@@ -1,4 +1,4 @@
 [workspace]
-members = ["nirion-bin", "nirion-oci-lib", "nirion-tui-lib"]
+members = ["nirion-bin", "nirion-lib", "nirion-oci-lib", "nirion-tui-lib"]
 default-members = ["nirion-bin"]
 resolver = "2"

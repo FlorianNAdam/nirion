@@ -1,10 +1,9 @@
 use std::{collections::BTreeMap, ops::Deref};
 
 use anyhow::Context;
+use nirion_lib::projects::ProjectName;
 use serde::Deserialize;
 use tokio::process::Command;
-
-use crate::ProjectName;
 
 pub async fn query_project_status(
     compose_file: &str,

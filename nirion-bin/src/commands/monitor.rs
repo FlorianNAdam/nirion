@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, path::Path, time::Duration};
 
 use crate::{
     monitor::{create_monitors, monitor},
-    Project, TargetSelector,
+    ClapSelector, Project, TargetSelector,
 };
 
 #[derive(Parser, Debug, Clone)]

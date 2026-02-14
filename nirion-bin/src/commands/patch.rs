@@ -7,7 +7,7 @@ use std::process::Stdio;
 use std::{collections::BTreeMap, fs};
 use tokio::process::Command;
 
-use crate::{Project, TargetSelector};
+use crate::{ClapSelector, Project, TargetSelector};
 
 /// Patch service files using mirage-patch
 #[derive(Parser, Debug, Clone)]

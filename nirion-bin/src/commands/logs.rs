@@ -1,7 +1,8 @@
 use clap::Parser;
+use nirion_lib::projects::{Project, TargetSelector};
 use std::{collections::BTreeMap, path::Path};
 
-use crate::{docker::compose_target_cmd, Project, TargetSelector};
+use crate::{docker::compose_target_cmd, ClapSelector};
 
 /// View output from service containers
 #[derive(Parser, Debug, Clone)]
