@@ -128,29 +128,32 @@ pub async fn update_images(
         return Ok(());
     }
 
-    println!("\nDigest changes:");
+    println!("\nChanges:");
     for (service, new_digest) in &new_digests {
-        // let version_string = if let Some(version) = new_digest.1.as_ref() {
-        //     format!(" ({})", version)
-        // } else {
-        //     String::new()
-        // };
-
         match locked_images.get(service) {
             Some(old_digest) => {
-                println!(
-                    "  ~ {}:\n      old: {}\n      new: {}",
-                    service.to_string().cyan(),
-                    old_digest.digest,
-                    new_digest.digest
-                );
+                println!("  ~ {}:", service.to_string().cyan());
+                if let Some(version) = &new_digest.version {
+                    let old_version = old_digest
+                        .version
+                        .as_ref()
+                        .map(|s| s.as_str())
+                        .unwrap_or("none");
+
+                    println!(
+                        "      new version: {} -> {}",
+                        old_version, version
+                    );
+                }
+                println!("      old digest: {}", old_digest.digest);
+                println!("      new digest: {}", new_digest.digest);
             }
             None => {
-                println!(
-                    "  + {}:\n      new: {}",
-                    service.to_string().green(),
-                    new_digest.digest
-                );
+                println!("  + {}:", service.to_string().green());
+                if let Some(version) = &new_digest.version {
+                    println!("      new version: {}", version);
+                }
+                println!("      new digest: {}", new_digest.digest);
             }
         }
     }
