@@ -130,7 +130,7 @@
                     "--set NIRION_LOCK_FILE ${nirionConfig.lockFileOutput}"
                     "--set NIRION_PROJECT_FILE ${nirionConfig.out.projectsFile}"
                   ]
-                  ++ lib.optional (nirionConfig.authFile != null) "--set NIRION_AUTH_FILE ${nirion.authFile}";
+                  ++ lib.optional (nirionConfig.authFile != null) "--set NIRION_AUTH_FILE ${nirionConfig.authFile}";
                 in
                 ''
                   mkdir -p $out/bin
