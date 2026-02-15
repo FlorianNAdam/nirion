@@ -4,7 +4,7 @@ use oci_client::{Client, Reference};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     const DOCKER_IMAGES: &[&str] = &[
-        "ghcr.io/atuinsh/atuin:latest",
+        // "ghcr.io/atuinsh/atuin:latest",
         "postgres:14",
         "ghcr.io/goauthentik/server:2025.10.2",
         "ghcr.io/goauthentik/server:latest",
@@ -46,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::default();
     client
         .store_auth_if_needed(
-            "docker.io",
+            "index.docker.io",
             &oci_client::secrets::RegistryAuth::Basic(
                 std::env::var("DOCKER_USER")?,
                 std::env::var("DOCKER_TOKEN")?,

@@ -1,3 +1,4 @@
+use nirion_lib::auth::AuthConfig;
 use nirion_lib::lock::LockedImages;
 use nirion_lib::projects::Projects;
 use paste::paste;
@@ -30,11 +31,12 @@ macro_rules! define_commands {
                 projects: &Projects,
                 locked_images: &LockedImages,
                 lock_file: &Path,
+                auth: &AuthConfig
             ) -> anyhow::Result<()> {
                 match command {
                     $(
                         Commands::[<$modname:camel>] { args } =>
-                            [<handle_ $modname>](args, projects, locked_images, lock_file).await?,
+                            [<handle_ $modname>](args, projects, locked_images, lock_file, auth).await?,
                     )*
                 }
                 Ok(())

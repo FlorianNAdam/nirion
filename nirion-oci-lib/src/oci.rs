@@ -5,6 +5,12 @@ use oci_client::{
     Client, Reference,
 };
 
+pub fn resolve_registry(registry: String) -> String {
+    Reference::with_tag(registry, "dummy".to_string(), "dummy".to_string())
+        .resolve_registry()
+        .to_string()
+}
+
 pub fn get_version_from_config(config: &ConfigFile) -> Option<String> {
     let config = config.config.as_ref()?;
     let labels = config.labels.as_ref()?;

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use nirion_lib::{lock::LockedImages, projects::Projects};
+use nirion_lib::{auth::AuthConfig, lock::LockedImages, projects::Projects};
 use std::path::Path;
 
 use crate::{docker::compose_target_cmd, ClapSelector, TargetSelector};
@@ -30,6 +30,7 @@ pub async fn handle_volumes(
     projects: &Projects,
     _locked_images: &LockedImages,
     _lock_file: &Path,
+    _auth: &AuthConfig,
 ) -> Result<()> {
     let mut cmd: Vec<String> =
         vec!["volumes".into(), "--format".into(), args.format.clone()];

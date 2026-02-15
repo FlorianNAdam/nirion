@@ -1,9 +1,6 @@
 use clap::{Parser, ValueHint};
-use nirion_lib::{lock::LockedImages, projects::Projects};
-use std::{
-    ops::Deref, path::Path,
-    process::Command as ProcCommand,
-};
+use nirion_lib::{auth::AuthConfig, lock::LockedImages, projects::Projects};
+use std::{ops::Deref, path::Path, process::Command as ProcCommand};
 
 use crate::{ClapSelector, ServiceSelector};
 
@@ -55,6 +52,7 @@ pub async fn handle_exec(
     projects: &Projects,
     _locked_images: &LockedImages,
     _lock_file: &Path,
+    _auth: &AuthConfig,
 ) -> anyhow::Result<()> {
     if args.cmd.is_empty() {
         anyhow::bail!("No command specified for exec");

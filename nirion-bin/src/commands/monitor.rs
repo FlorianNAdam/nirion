@@ -1,5 +1,5 @@
 use clap::Parser;
-use nirion_lib::{lock::LockedImages, projects::Projects};
+use nirion_lib::{auth::AuthConfig, lock::LockedImages, projects::Projects};
 use std::{path::Path, time::Duration};
 
 use crate::{
@@ -27,6 +27,7 @@ pub async fn handle_monitor(
     projects: &Projects,
     _locked_images: &LockedImages,
     _lock_file: &Path,
+    _auth: &AuthConfig,
 ) -> anyhow::Result<()> {
     let monitors = create_monitors(&args.target, projects, args.refresh).await;
     monitor(&monitors, projects).await?;

@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
+use nirion_lib::auth::AuthConfig;
 use nirion_lib::lock::LockedImages;
 use nirion_lib::projects::Projects;
 use serde::Deserialize;
@@ -38,6 +39,7 @@ pub async fn handle_patch(
     projects: &Projects,
     _locked_images: &LockedImages,
     _lock_file: &Path,
+    _auth: &AuthConfig,
 ) -> Result<()> {
     match &args.target {
         TargetSelector::All => {

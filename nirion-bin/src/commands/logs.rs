@@ -1,5 +1,6 @@
 use clap::Parser;
 use nirion_lib::{
+    auth::AuthConfig,
     lock::LockedImages,
     projects::{Projects, TargetSelector},
 };
@@ -52,6 +53,7 @@ pub async fn handle_logs(
     projects: &Projects,
     _locked_images: &LockedImages,
     _lock_file: &Path,
+    _auth: &AuthConfig,
 ) -> anyhow::Result<()> {
     let mut cmd = vec!["logs".into()];
 

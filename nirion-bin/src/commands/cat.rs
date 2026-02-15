@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use nirion_lib::auth::AuthConfig;
 use nirion_lib::lock::LockedImages;
 use nirion_lib::projects::{Project, Projects, TargetSelector};
 use serde_yml as serde_yaml;
@@ -26,6 +27,7 @@ pub async fn handle_cat(
     projects: &Projects,
     _locked_images: &LockedImages,
     _lock_file: &Path,
+    _auth: &AuthConfig,
 ) -> Result<()> {
     match &args.target {
         TargetSelector::All => {

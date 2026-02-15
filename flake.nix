@@ -255,7 +255,14 @@
                     imageRef
                   else
                     let
-                      digest = lockFile.${name} or null;
+                      digest =
+                        if builtins.hasAttr name lockFile then
+                          let
+                            entry = lockFile.${name};
+                          in
+                          if builtins.isString entry then entry else entry.digest
+                        else
+                          null;
                     in
                     if digest != null then
                       "${imageRef}@${digest}"

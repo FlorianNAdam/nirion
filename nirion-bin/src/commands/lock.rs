@@ -2,6 +2,7 @@ use std::path::Path;
 
 use clap::Parser;
 use nirion_lib::{
+    auth::AuthConfig,
     lock::LockedImages,
     projects::{get_images, Projects, TargetSelector},
 };
@@ -29,9 +30,10 @@ pub async fn handle_lock(
     projects: &Projects,
     locked_images: &LockedImages,
     lock_file: &Path,
+    auth: &AuthConfig,
 ) -> anyhow::Result<()> {
     let mut images = get_images(&args.target, projects);
     images.retain(|name, _| !locked_images.contains_key(name));
 
-    update_images(images, locked_images, lock_file, args.jobs).await
+    update_images(auth, images, locked_images, lock_file, args.jobs).await
 }

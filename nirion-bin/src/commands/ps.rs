@@ -1,12 +1,9 @@
 use anyhow::Result;
 use clap::Parser;
 use crossterm::style::Stylize;
-use nirion_lib::{lock::LockedImages, projects::Projects};
+use nirion_lib::{auth::AuthConfig, lock::LockedImages, projects::Projects};
 use nirion_tui_lib::table::print_table;
-use std::{
-    collections::HashSet,
-    path::Path,
-};
+use std::{collections::HashSet, path::Path};
 
 use crate::{
     docker::{compose_target_cmd, query_project_status},
@@ -72,22 +69,18 @@ pub struct PsArgs {
 pub async fn handle_ps(
     args: &PsArgs,
     projects: &Projects,
-    locked_images: &LockedImages,
-    lock_file: &Path,
+    _locked_images: &LockedImages,
+    _lock_file: &Path,
+    _auth: &AuthConfig,
 ) -> Result<()> {
     if args.legacy {
-        legacy_ps(args, projects, locked_images, lock_file).await
+        legacy_ps(args, projects).await
     } else {
         fancy_ps(args, projects).await
     }
 }
 
-async fn legacy_ps(
-    args: &PsArgs,
-    projects: &Projects,
-    _locked_images: &LockedImages,
-    _lock_file: &Path,
-) -> Result<()> {
+async fn legacy_ps(args: &PsArgs, projects: &Projects) -> Result<()> {
     let mut cmd_args: Vec<String> = vec!["ps".into()];
 
     if args.all {

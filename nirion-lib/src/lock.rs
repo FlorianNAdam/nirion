@@ -1,21 +1,45 @@
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+pub use nirion_oci_lib::version::VersionedImage;
 
 #[derive(Default, Clone)]
 pub struct LockedImages {
-    locked_images: BTreeMap<String, String>,
+    locked_images: BTreeMap<String, VersionedImage>,
 }
 
 impl<'de> Deserialize<'de> for LockedImages {
-    fn deserialize<D>(deserializer: D) -> Result<LockedImages, D::Error>
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        let locked_images =
-            BTreeMap::<String, String>::deserialize(deserializer)?;
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Full(BTreeMap<String, VersionedImage>),
+            DigestOnly(BTreeMap<String, String>),
+        }
 
-        Ok(Self { locked_images })
+        match Repr::deserialize(deserializer)? {
+            Repr::Full(map) => Ok(Self { locked_images: map }),
+            Repr::DigestOnly(map) => {
+                let locked_images = map
+                    .into_iter()
+                    .map(|(k, digest)| {
+                        (
+                            k,
+                            VersionedImage {
+                                image: "<unknown>".to_string(),
+                                version: None,
+                                digest,
+                            },
+                        )
+                    })
+                    .collect();
+
+                Ok(Self { locked_images })
+            }
+        }
     }
 }
 
@@ -29,23 +53,21 @@ impl Serialize for LockedImages {
 }
 
 impl LockedImages {
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &VersionedImage)> {
         self.locked_images
             .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .map(|(k, v)| (k.as_str(), v))
     }
 
     pub fn contains_key(&self, key: &str) -> bool {
         self.locked_images.contains_key(key)
     }
 
-    pub fn get(&self, key: &str) -> Option<&str> {
-        self.locked_images
-            .get(key)
-            .map(|v| v.as_str())
+    pub fn get(&self, key: &str) -> Option<&VersionedImage> {
+        self.locked_images.get(key)
     }
 
-    pub fn extend<T: IntoIterator<Item = (String, String)>>(
+    pub fn extend<T: IntoIterator<Item = (String, VersionedImage)>>(
         &mut self,
         iter: T,
     ) {

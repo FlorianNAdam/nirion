@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use nirion_lib::{
+    auth::AuthConfig,
     lock::LockedImages,
     projects::{ProjectSelector, Projects, ServiceSelector, TargetSelector},
 };
@@ -45,6 +46,7 @@ pub async fn handle_inspect(
     projects: &Projects,
     locked_images: &LockedImages,
     _lock_file: &Path,
+    _auth: &AuthConfig,
 ) -> Result<()> {
     match &args.target {
         TargetSelector::All => {
@@ -164,7 +166,7 @@ async fn inspect_image(
     let identifier = format!("{}.{}", target.project, target.service);
 
     let image_name = if let Some(digest) = locked_images.get(&identifier) {
-        format!("{}@{}", base_image, digest)
+        format!("{}@{}", base_image, digest.digest)
     } else {
         base_image.to_string()
     };

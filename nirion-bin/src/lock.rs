@@ -1,6 +1,9 @@
 use crossterm::{cursor, execute, style::Stylize};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use nirion_lib::lock::LockedImages;
+use nirion_lib::{
+    auth::AuthConfig,
+    lock::{LockedImages, VersionedImage},
+};
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
@@ -11,10 +14,13 @@ use std::{
 };
 use tokio::sync::Mutex;
 
-use nirion_oci_lib::oci_client::Client;
-use nirion_oci_lib::{get_version_and_digest, oci_client::Reference};
+use nirion_oci_lib::{
+    get_versioned_image,
+    oci_client::{Client, Reference},
+};
 
 pub async fn update_images(
+    auth: &AuthConfig,
     images: BTreeMap<String, String>,
     locked_images: &LockedImages,
     lock_file: &Path,
@@ -45,16 +51,19 @@ pub async fn update_images(
 
     overall_pb.set_message("Starting...");
 
-    let digest_cache: Arc<Mutex<HashMap<String, (String, Option<String>)>>> =
+    let digest_cache: Arc<Mutex<HashMap<String, VersionedImage>>> =
         Arc::new(Mutex::new(HashMap::new()));
-    let new_digests: Arc<Mutex<BTreeMap<String, (String, Option<String>)>>> =
+    let new_digests: Arc<Mutex<BTreeMap<String, VersionedImage>>> =
         Arc::new(Mutex::new(BTreeMap::new()));
     let locked_images = Arc::new(locked_images.clone());
+
+    let client = Arc::new(auth.get_client().await);
 
     let semaphore = Arc::new(tokio::sync::Semaphore::new(jobs));
     let mut tasks = Vec::new();
 
     for (service, image) in images {
+        let client = Arc::clone(&client);
         let semaphore = Arc::clone(&semaphore);
         let digest_cache = Arc::clone(&digest_cache);
         let new_digests = Arc::clone(&new_digests);
@@ -76,6 +85,7 @@ pub async fn update_images(
             pb.set_message(format!("Checking {}", image));
 
             let result = process_image(
+                &client,
                 &service,
                 &image,
                 &digest_cache,
@@ -131,24 +141,19 @@ pub async fn update_images(
                 println!(
                     "  ~ {}:\n      old: {}\n      new: {}",
                     service.to_string().cyan(),
-                    old_digest,
-                    new_digest.0
+                    old_digest.digest,
+                    new_digest.digest
                 );
             }
             None => {
                 println!(
                     "  + {}:\n      new: {}",
                     service.to_string().green(),
-                    new_digest.0
+                    new_digest.digest
                 );
             }
         }
     }
-
-    let new_digests = new_digests
-        .into_iter()
-        .map(|(k, v)| (k, v.0))
-        .collect::<BTreeMap<String, String>>();
 
     println!("\nUpdating lock file...");
     let mut new_locked_images = locked_images.as_ref().clone();
@@ -162,14 +167,15 @@ pub async fn update_images(
 }
 
 async fn process_image(
+    client: &Client,
     service: &str,
     image: &str,
-    cache: &Arc<Mutex<HashMap<String, (String, Option<String>)>>>,
+    cache: &Arc<Mutex<HashMap<String, VersionedImage>>>,
     locked_images: &Arc<LockedImages>,
-    new_digests: &Arc<Mutex<BTreeMap<String, (String, Option<String>)>>>,
+    new_digests: &Arc<Mutex<BTreeMap<String, VersionedImage>>>,
     pb: ProgressBar,
 ) -> anyhow::Result<()> {
-    let digest = {
+    let versioned_image = {
         let locked_cache = cache.lock().await;
         if let Some(digest) = locked_cache.get(image) {
             pb.set_message(format!("Cache hit for {}", image));
@@ -181,30 +187,29 @@ async fn process_image(
 
             let reference = Reference::try_from(image)?;
 
-            let client = Client::default();
-            let (version, digest) =
-                get_version_and_digest(&client, &reference).await?;
-
-            let result = (digest, version);
+            let versioned_image =
+                get_versioned_image(&client, &reference).await?;
 
             let mut cache = cache.lock().await;
-            cache.insert(image.to_string(), result.clone());
-            result
+            cache.insert(image.to_string(), versioned_image.clone());
+            versioned_image
         }
     };
 
     let mut new_digests = new_digests.lock().await;
 
-    if let Some(old_digest) = locked_images.get(service) {
-        if old_digest != &digest.0 {
+    if let Some(old_versioned_image) = locked_images.get(service) {
+        if &old_versioned_image.digest != &versioned_image.digest
+            || old_versioned_image.version != versioned_image.version
+        {
             pb.set_message(format!("✓ {}: Updated", service));
-            new_digests.insert(service.to_string(), digest);
+            new_digests.insert(service.to_string(), versioned_image);
         } else {
             pb.set_message(format!("✓ {}: Up-to-date", service));
         }
     } else {
         pb.set_message(format!("✓ {}: New image", service));
-        new_digests.insert(service.to_string(), digest);
+        new_digests.insert(service.to_string(), versioned_image);
     }
 
     pb.finish_and_clear();

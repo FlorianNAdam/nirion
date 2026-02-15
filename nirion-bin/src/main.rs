@@ -3,6 +3,7 @@ use anyhow::Context;
 use clap::{CommandFactory, Parser};
 use clap_complete::{ArgValueCompleter, CompletionCandidate};
 use crossterm::style::Stylize;
+use nirion_lib::auth::AuthConfig;
 use nirion_lib::lock::LockedImages;
 use nirion_lib::projects::{
     parse_selector, parse_service_selector, Project, Projects, ServiceSelector,
@@ -267,8 +268,28 @@ struct Cli {
     #[command(flatten)]
     files: FileCli,
 
+    #[arg(long, env = "NIRION_AUTH_FILE", hide_env_values = true)]
+    auth_file: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Commands,
+}
+
+impl Cli {
+    async fn get_auth(&self) -> anyhow::Result<AuthConfig> {
+        if let Some(auth_file) = &self.auth_file {
+            let auth_data = fs::read_to_string(auth_file)
+                .with_context(|| anyhow::anyhow!("Failed to read auth file"))?;
+            let auth: AuthConfig = serde_json::from_str(&auth_data)
+                .with_context(|| {
+                    anyhow::anyhow!("Failed to parse auth file")
+                })?;
+
+            Ok(auth)
+        } else {
+            Ok(AuthConfig::default())
+        }
+    }
 }
 
 pub fn get_nix_target(target: &str) -> String {
@@ -329,7 +350,10 @@ async fn main() -> anyhow::Result<()> {
         .get()
         .ok_or_else(|| anyhow::anyhow!("PROJECTS not initialized"))?;
 
-    handle_command(&cli.command, &projects, &locked_images, &lock_file).await?;
+    let auth = cli.get_auth().await?;
+
+    handle_command(&cli.command, &projects, &locked_images, &lock_file, &auth)
+        .await?;
 
     Ok(())
 }

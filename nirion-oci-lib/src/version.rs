@@ -1,4 +1,12 @@
 use semver::Version as SemverVersion;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct VersionedImage {
+    pub image: String,
+    pub version: Option<String>,
+    pub digest: String,
+}
 
 fn version_prefix(tag: &str) -> &str {
     tag.split('-').next().unwrap_or(tag)

@@ -1,5 +1,6 @@
 use clap::Parser;
 use nirion_lib::{
+    auth::AuthConfig,
     lock::LockedImages,
     projects::{Projects, TargetSelector},
 };
@@ -27,6 +28,7 @@ pub async fn handle_compose_exec(
     projects: &Projects,
     _locked_images: &LockedImages,
     _lock_file: &Path,
+    _auth: &AuthConfig,
 ) -> anyhow::Result<()> {
     let cmd_slices: Vec<&str> = args
         .cmd

@@ -5,7 +5,7 @@ use oci_client::{
 use crate::{
     docker_hub::get_alias_dockerhub_tags,
     oci::{get_alias_oci_tags, get_version_from_config},
-    version::canonical_version_tag,
+    version::{canonical_version_tag, VersionedImage},
 };
 
 pub async fn get_alias_tags(
@@ -57,4 +57,16 @@ pub async fn get_version(
 ) -> anyhow::Result<Option<String>> {
     let (version, _) = get_version_and_digest(client, image).await?;
     Ok(version)
+}
+
+pub async fn get_versioned_image(
+    client: &Client,
+    image: &Reference,
+) -> anyhow::Result<VersionedImage> {
+    let (version, digest) = get_version_and_digest(client, image).await?;
+    Ok(VersionedImage {
+        image: image.to_string(),
+        version,
+        digest,
+    })
 }

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use nirion_lib::auth::AuthConfig;
 use nirion_lib::lock::LockedImages;
 use nirion_lib::projects::Projects;
 use std::path::Path;
@@ -46,6 +47,7 @@ pub async fn handle_start(
     projects: &Projects,
     _locked_images: &LockedImages,
     _lock_file: &Path,
+    _auth: &AuthConfig,
 ) -> Result<()> {
     if !args.legacy && !matches!(args.target, TargetSelector::Service(_)) {
         run_command_with_progress(
