@@ -124,27 +124,34 @@
 
               buildInputs = [ pkgs.makeWrapper ];
 
-              installPhase = ''
-                mkdir -p $out/bin
-                makeWrapper ${nirionPkg}/bin/nirion $out/bin/nirion \
-                  --set NIRION_LOCK_FILE "${nirionConfig.lockFileOutput}" \
-                  --set NIRION_PROJECT_FILE "${nirionConfig.out.projectsFile}" \
-                  ${nixTarget}
+              installPhase =
+                let
+                  wrapperFlags = [
+                    "--set NIRION_LOCK_FILE ${nirionConfig.lockFileOutput}"
+                    "--set NIRION_PROJECT_FILE ${nirionConfig.out.projectsFile}"
+                  ]
+                  ++ lib.optional (nirionConfig.authFile != null) "--set NIRION_AUTH_FILE ${nirion.authFile}";
+                in
+                ''
+                  mkdir -p $out/bin
+                  makeWrapper ${nirionPkg}/bin/nirion $out/bin/nirion \
+                    ${lib.concatStringsSep " " wrapperFlags} \
+                    ${nixTarget}
 
-                patch() {
-                  local f="$1"
-                  [ -f "$f" ] || return 0
+                  patch() {
+                    local f="$1"
+                    [ -f "$f" ] || return 0
 
-                  sed -i \
-                    's|/nix/store/[^[:space:]]*/bin/nirion|'"$out"'/bin/nirion|g' \
-                    "$f"
-                }
+                    sed -i \
+                      's|/nix/store/[^[:space:]]*/bin/nirion|'"$out"'/bin/nirion|g' \
+                      "$f"
+                  }
 
-                # Fish completion
-                mkdir -p $out/share/fish/vendor_completions.d
-                COMPLETE=fish $out/bin/nirion > $out/share/fish/vendor_completions.d/nirion.fish
-                patch $out/share/fish/vendor_completions.d/nirion.fish
-              '';
+                  # Fish completion
+                  mkdir -p $out/share/fish/vendor_completions.d
+                  COMPLETE=fish $out/bin/nirion > $out/share/fish/vendor_completions.d/nirion.fish
+                  patch $out/share/fish/vendor_completions.d/nirion.fish
+                '';
             };
         in
         {
@@ -188,6 +195,13 @@
                     default = null;
                   };
                 };
+              };
+
+              # Auth
+              authFile = lib.mkOption {
+                type = lib.types.nullOr lib.types.path;
+                default = null;
+                description = "Optional path to file with oci registry auth configs";
               };
 
               # Arion
@@ -234,6 +248,16 @@
             environment.systemPackages = [
               nirion
             ];
+
+            environment.etc."nirion/projects.json".text = builtins.toJSON nirionConfig.out.projects;
+
+            environment.variables = {
+              NIRION_LOCK_FILE = "${nirionConfig.lockFileOutput}";
+              NIRION_PROJECT_FILE = "${nirionConfig.out.projectsFile}";
+            }
+            // lib.optionalAttrs (nirionConfig.authFile != null) {
+              NIRION_AUTH_FILE = "${nirionConfig.authFile}";
+            };
 
             virtualisation.nirion = {
               out.locked_images =
@@ -306,12 +330,7 @@
                 }
               ) nirionConfig.projects;
 
-              out.projectsFile =
-                let
-                  json = builtins.toJSON nirionConfig.out.projects;
-                  file = pkgs.writeText "projects.json" "${json}";
-                in
-                "${file}";
+              out.projectsFile = "/etc/nirion/projects.json";
             };
 
             virtualisation.arion.projects =
