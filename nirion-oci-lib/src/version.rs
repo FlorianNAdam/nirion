@@ -1,7 +1,7 @@
 use semver::Version as SemverVersion;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct VersionedImage {
     pub image: String,
     pub version: Option<String>,

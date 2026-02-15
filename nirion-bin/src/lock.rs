@@ -199,9 +199,7 @@ async fn process_image(
     let mut new_digests = new_digests.lock().await;
 
     if let Some(old_versioned_image) = locked_images.get(service) {
-        if &old_versioned_image.digest != &versioned_image.digest
-            || old_versioned_image.version != versioned_image.version
-        {
+        if *old_versioned_image != versioned_image {
             pb.set_message(format!("✓ {}: Updated", service));
             new_digests.insert(service.to_string(), versioned_image);
         } else {
