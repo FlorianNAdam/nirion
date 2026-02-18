@@ -5,6 +5,8 @@ use oci_client::{
     Client, Reference,
 };
 
+use crate::version::NON_VERSION_TAGS;
+
 pub fn resolve_registry(registry: String) -> String {
     Reference::with_tag(registry, "dummy".to_string(), "dummy".to_string())
         .resolve_registry()
@@ -16,6 +18,7 @@ pub fn get_version_from_config(config: &ConfigFile) -> Option<String> {
     let labels = config.labels.as_ref()?;
     labels
         .get("org.opencontainers.image.version")
+        .filter(|version| !NON_VERSION_TAGS.contains(&version.as_str()))
         .cloned()
 }
 

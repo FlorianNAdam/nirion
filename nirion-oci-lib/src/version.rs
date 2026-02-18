@@ -1,6 +1,24 @@
 use semver::Version as SemverVersion;
 use serde::{Deserialize, Serialize};
 
+pub static NON_VERSION_TAGS: &[&str] = &[
+    "latest",
+    "stable",
+    "nightly",
+    "beta",
+    "edge",
+    "dev",
+    "main",
+    "master",
+    "current",
+    "next",
+    "snapshot",
+    "preview",
+    "experimental",
+    "production",
+    "mainline",
+];
+
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct VersionedImage {
     pub image: String,
@@ -35,8 +53,7 @@ fn version_depth(tag: &str) -> usize {
 }
 
 fn canonical_version_score(tag: &str) -> i32 {
-    let floating = ["latest", "stable", "mainline"];
-    if floating.contains(&tag) {
+    if NON_VERSION_TAGS.contains(&tag) {
         return -1000;
     }
 
@@ -64,6 +81,7 @@ fn canonical_version_score(tag: &str) -> i32 {
 
 pub fn canonical_version_tag(tags: &[String]) -> Option<String> {
     tags.iter()
+        .filter(|version| !NON_VERSION_TAGS.contains(&version.as_str()))
         .max_by_key(|t| canonical_version_score(t))
         .cloned()
 }
