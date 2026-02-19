@@ -5,7 +5,7 @@ use oci_client::{
     Client, Reference,
 };
 
-use crate::version::{clean_tag, NON_VERSION_TAGS};
+use crate::version::{canonical_version_score, clean_tag, NON_VERSION_TAGS};
 
 pub fn resolve_registry(registry: String) -> String {
     Reference::with_tag(registry, "dummy".to_string(), "dummy".to_string())
@@ -71,7 +71,7 @@ pub async fn list_all_tags(
     client: &Client,
     image: &Reference,
 ) -> anyhow::Result<Vec<String>> {
-    let page_size = 100; // reasonable default
+    let page_size = 1000; // reasonable default
     let mut all_tags = Vec::new();
     let mut last: Option<String> = None;
 
@@ -129,4 +129,38 @@ pub fn get_digest_from_manifest(
             Ok(descriptor.digest.clone())
         }
     }
+}
+
+pub async fn get_version_from_oci_tags(
+    client: &Client,
+    image: &Reference,
+    digest: &str,
+) -> anyhow::Result<Option<String>> {
+    let tags = list_all_tags(&client, image).await?;
+
+    let mut tags = tags
+        .into_iter()
+        .filter(|version| !NON_VERSION_TAGS.contains(&version.as_str()))
+        .collect::<Vec<_>>();
+
+    tags.sort_by_cached_key(|tag| {
+        let clean_tag = clean_tag(tag);
+        canonical_version_score(clean_tag)
+    });
+
+    for tag in tags.into_iter().rev() {
+        let tag_reference = Reference::with_tag(
+            image.registry().to_string(),
+            image.repository().to_string(),
+            tag.clone(),
+        );
+
+        let tag_digest = pull_platform_digest(&client, &tag_reference).await?;
+        if tag_digest == digest {
+            let clean_tag = clean_tag(&tag).to_string();
+            return Ok(Some(clean_tag));
+        }
+    }
+
+    Ok(None)
 }

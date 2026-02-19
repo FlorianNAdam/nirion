@@ -111,7 +111,7 @@ fn version_depth(tag: &str) -> usize {
         .count()
 }
 
-fn canonical_version_score(tag: &str) -> i32 {
+pub fn canonical_version_score(tag: &str) -> i32 {
     if NON_VERSION_TAGS.contains(&tag) {
         return -1000;
     }
