@@ -78,7 +78,7 @@ pub fn strip_any_tag_suffix<'a>(s: &'a str, suffixes: &[&str]) -> &'a str {
         .unwrap_or(s)
 }
 
-#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct VersionedImage {
     pub image: String,
     pub version: Option<String>,

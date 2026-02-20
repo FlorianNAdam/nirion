@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 pub use nirion_oci_lib::version::VersionedImage;
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, PartialEq)]
 pub struct LockedImages {
     locked_images: BTreeMap<String, VersionedImage>,
 }
@@ -59,6 +59,10 @@ impl LockedImages {
             .map(|(k, v)| (k.as_str(), v))
     }
 
+    pub fn insert(&mut self, key: String, image: VersionedImage) {
+        self.locked_images.insert(key, image);
+    }
+
     pub fn contains_key(&self, key: &str) -> bool {
         self.locked_images.contains_key(key)
     }
@@ -73,4 +77,58 @@ impl LockedImages {
     ) {
         self.locked_images.extend(iter);
     }
+
+    pub fn diff(&self, other: &LockedImages) -> Vec<DiffEntry> {
+        let mut diffs = Vec::new();
+
+        for (service, new_image) in &other.locked_images {
+            match self.locked_images.get(service) {
+                None => {
+                    diffs.push(DiffEntry::Added {
+                        service: service.to_string(),
+                        new: new_image.clone(),
+                    });
+                }
+                Some(old_image) if old_image != new_image => {
+                    diffs.push(DiffEntry::Updated {
+                        service: service.to_string(),
+                        old: old_image.clone(),
+                        new: new_image.clone(),
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        for (service, old_image) in &self.locked_images {
+            if !other
+                .locked_images
+                .contains_key(service)
+            {
+                diffs.push(DiffEntry::Removed {
+                    service: service.to_string(),
+                    old: old_image.clone(),
+                });
+            }
+        }
+
+        diffs
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiffEntry {
+    Added {
+        service: String,
+        new: VersionedImage,
+    },
+    Removed {
+        service: String,
+        old: VersionedImage,
+    },
+    Updated {
+        service: String,
+        old: VersionedImage,
+        new: VersionedImage,
+    },
 }
