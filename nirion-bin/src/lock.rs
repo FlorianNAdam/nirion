@@ -16,7 +16,7 @@ use std::{
 use tokio::sync::RwLock;
 
 use nirion_oci_lib::{
-    get_versioned_image,
+    get_updated_versioned_image, get_versioned_image,
     oci_client::{Client, Reference},
 };
 
@@ -67,6 +67,8 @@ pub async fn update_images(
         let overall_pb = overall_pb.clone();
         let multi_progress = multi_progress.clone();
 
+        let current_versioned_image = locked_images.get(&service).cloned();
+
         futures.push(async move {
             let _permit = semaphore.acquire().await.unwrap();
 
@@ -80,8 +82,13 @@ pub async fn update_images(
             pb.enable_steady_tick(Duration::from_millis(100));
             pb.set_message(format!("Checking {}", image));
 
-            let versioned_image =
-                get_cached_image(&client, &image, &digest_cache).await?;
+            let versioned_image = if let Some(current) = current_versioned_image
+            {
+                get_cached_updated_image(&client, &current, &digest_cache)
+                    .await?
+            } else {
+                get_cached_image(&client, &image, &digest_cache).await?
+            };
 
             pb.finish_and_clear();
 
@@ -171,6 +178,31 @@ async fn get_cached_image(
 
     let reference = Reference::try_from(image)?;
     let versioned_image = get_versioned_image(&client, &reference).await?;
+
+    {
+        let mut locked_cache = cache.write().await;
+        locked_cache.insert(image.to_string(), versioned_image.clone());
+    }
+
+    Ok(versioned_image)
+}
+
+async fn get_cached_updated_image(
+    client: &Client,
+    versioned_image: &VersionedImage,
+    cache: &Arc<RwLock<HashMap<String, VersionedImage>>>,
+) -> anyhow::Result<VersionedImage> {
+    let image = versioned_image.image.as_str();
+
+    if let Some(existing) = {
+        let locked_cache = cache.read().await;
+        locked_cache.get(image).cloned()
+    } {
+        return Ok(existing);
+    }
+
+    let versioned_image =
+        get_updated_versioned_image(&client, &versioned_image).await?;
 
     {
         let mut locked_cache = cache.write().await;
