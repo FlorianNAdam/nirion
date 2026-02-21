@@ -54,7 +54,7 @@ pub async fn update_images(
 
     let digest_cache: Arc<RwLock<HashMap<String, VersionedImage>>> =
         Arc::new(RwLock::new(HashMap::new()));
-    let client = Arc::new(auth.get_client().await);
+    let client = Arc::new(auth.get_oci_client().await);
 
     let semaphore = Arc::new(tokio::sync::Semaphore::new(jobs));
 

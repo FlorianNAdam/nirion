@@ -1,14 +1,13 @@
 use std::collections::HashMap;
 
 use nirion_oci_lib::{
-    oci::resolve_registry,
-    oci_client::{secrets::RegistryAuth, Client},
+    auth::RegistryAuth, oci::resolve_registry, oci_client::Client,
 };
 use serde::Deserialize;
 
 #[derive(Default, Clone, Debug)]
 pub struct AuthConfig {
-    pub sources: HashMap<String, RegistryAuthConfig>,
+    pub sources: HashMap<String, RegistryAuth>,
 }
 
 impl<'de> Deserialize<'de> for AuthConfig {
@@ -17,7 +16,7 @@ impl<'de> Deserialize<'de> for AuthConfig {
         D: serde::Deserializer<'de>,
     {
         let sources =
-            HashMap::<String, RegistryAuthConfig>::deserialize(deserializer)?;
+            HashMap::<String, RegistryAuth>::deserialize(deserializer)?;
 
         let resolved_sources = sources
             .into_iter()
@@ -31,39 +30,19 @@ impl<'de> Deserialize<'de> for AuthConfig {
 }
 
 impl AuthConfig {
-    pub async fn get_client(&self) -> Client {
+    pub async fn get_oci_client(&self) -> Client {
         let client = Client::default();
 
         for (registry, auth) in self.sources.iter() {
             client
-                .store_auth_if_needed(&registry, &auth.to_auth())
+                .store_auth_if_needed(&registry, &auth.to_oci_auth())
                 .await;
         }
 
         client
     }
 
-    pub fn add_auth(&mut self, registry: String, auth: RegistryAuthConfig) {
+    pub fn add_auth(&mut self, registry: String, auth: RegistryAuth) {
         self.sources.insert(registry, auth);
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum RegistryAuthConfig {
-    Anonymous,
-    Basic { username: String, password: String },
-    Bearer { token: String },
-}
-
-impl RegistryAuthConfig {
-    pub fn to_auth(&self) -> RegistryAuth {
-        match self {
-            Self::Anonymous => RegistryAuth::Anonymous,
-            Self::Basic { username, password } => {
-                RegistryAuth::Basic(username.to_string(), password.to_string())
-            }
-            Self::Bearer { token } => RegistryAuth::Bearer(token.to_string()),
-        }
     }
 }
