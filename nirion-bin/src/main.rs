@@ -296,7 +296,14 @@ pub fn get_nix_target(target: &str) -> String {
     format!(
         "{}.{}",
         target,
-        ["config", "virtualisation", "nirion", "out", "projectsFile"].join(".")
+        [
+            "config",
+            "virtualisation",
+            "nirion",
+            "out",
+            "projectsFileStatic"
+        ]
+        .join(".")
     )
 }
 

@@ -235,6 +235,11 @@
                   readOnly = true;
                   internal = true;
                 };
+                projectsFileStatic = lib.mkOption {
+                  type = lib.types.str;
+                  readOnly = true;
+                  internal = true;
+                };
                 projectsFile = lib.mkOption {
                   type = lib.types.str;
                   readOnly = true;
@@ -331,6 +336,11 @@
               ) nirionConfig.projects;
 
               out.projectsFile = "/etc/nirion/projects.json";
+              out.projectsFileStatic =
+                let
+                  json = pkgs.writeText "projects.json" (builtins.toJSON nirionConfig.out.projects);
+                in
+                "${json}";
             };
 
             virtualisation.arion.projects =
