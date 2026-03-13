@@ -82,13 +82,14 @@ pub async fn update_images(
             pb.enable_steady_tick(Duration::from_millis(100));
             pb.set_message(format!("Checking {}", image));
 
-            let versioned_image = if let Some(current) = current_versioned_image
-            {
-                get_cached_updated_image(&client, &current, &digest_cache)
-                    .await?
-            } else {
-                get_cached_image(&client, &image, &digest_cache).await?
-            };
+            let versioned_image =
+                if let Some(mut current) = current_versioned_image {
+                    current.image = image;
+                    get_cached_updated_image(&client, &current, &digest_cache)
+                        .await?
+                } else {
+                    get_cached_image(&client, &image, &digest_cache).await?
+                };
 
             pb.finish_and_clear();
 
