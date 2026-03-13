@@ -95,64 +95,78 @@
 
           arionConfig = config.virtualisation.arion;
 
-          nirion =
+          nirionNixTarget =
             let
               nixEvalOption = config.virtualisation.nirion.nixEval;
-
               setCount =
                 (if nixEvalOption.target != null then 1 else 0)
                 + (if nixEvalOption.rawTarget != null then 1 else 0)
                 + (if nixEvalOption.nixos.config != null || nixEvalOption.nixos.host != null then 1 else 0);
-
-              nixTarget =
-                if setCount <= 1 then
-                  if nixEvalOption.target != null then
-                    "--set NIX_TARGET ${nixEvalOption.target}"
-                  else if nixEvalOption.rawTarget != null then
-                    "--set RAW_NIX_TARGET ${nixEvalOption.rawTarget}"
-                  else if nixEvalOption.nixos.config != null || nixEvalOption.nixos.host != null then
-                    "--set NIX_TARGET ${nixEvalOption.nixos.config}#nixosConfigurations.${nixEvalOption.nixos.host}"
-                  else
-                    ""
-                else
-                  throw "Only one of nixEval.target, nixEval.rawTarget, or nixEval.nixos may be set";
             in
-            pkgs.stdenv.mkDerivation {
-              name = "nirion";
+            if setCount <= 1 then
+              if nixEvalOption.target != null then
+                {
+                  name = "NIRION_NIX_TARGET";
+                  value = "${nixEvalOption.target}";
+                }
+              else if nixEvalOption.rawTarget != null then
+                {
+                  name = "NIRION_RAW_NIX_TARGET";
+                  value = "${nixEvalOption.rawTarget}";
+                }
+              else if nixEvalOption.nixos.config != null || nixEvalOption.nixos.host != null then
+                {
+                  name = "NIRION_NIX_TARGET";
+                  value = "${nixEvalOption.nixos.config}#nixosConfigurations.${nixEvalOption.nixos.host}";
+                }
+              else
+                null
+            else
+              throw "Only one of nixEval.target, nixEval.rawTarget, or nixEval.nixos may be set";
 
-              src = "${nirionPkg}";
+          nirionEnvVars = {
+            NIRION_LOCK_FILE = nirionConfig.lockFileOutput;
+            NIRION_PROJECT_FILE = nirionConfig.out.projectsFile;
+          }
+          // lib.optionalAttrs (nirionConfig.authFile != null) {
+            NIRION_AUTH_FILE = nirionConfig.authFile;
+          }
+          // lib.optionalAttrs (nirionNixTarget != null) {
+            ${nirionNixTarget.name} = nirionNixTarget.value;
+          };
 
-              buildInputs = [ pkgs.makeWrapper ];
+          nirion = pkgs.stdenv.mkDerivation {
+            name = "nirion";
 
-              installPhase =
-                let
-                  wrapperFlags = [
-                    "--set NIRION_LOCK_FILE ${nirionConfig.lockFileOutput}"
-                    "--set NIRION_PROJECT_FILE ${nirionConfig.out.projectsFile}"
-                  ]
-                  ++ lib.optional (nirionConfig.authFile != null) "--set NIRION_AUTH_FILE ${nirionConfig.authFile}";
-                in
-                ''
-                  mkdir -p $out/bin
-                  makeWrapper ${nirionPkg}/bin/nirion $out/bin/nirion \
-                    ${lib.concatStringsSep " " wrapperFlags} \
-                    ${nixTarget}
+            src = "${nirionPkg}";
 
-                  patch() {
-                    local f="$1"
-                    [ -f "$f" ] || return 0
+            buildInputs = [ pkgs.makeWrapper ];
 
-                    sed -i \
-                      's|/nix/store/[^[:space:]]*/bin/nirion|'"$out"'/bin/nirion|g' \
-                      "$f"
-                  }
+            installPhase =
+              let
+                wrapperFlags = lib.concatStringsSep " " (
+                  lib.mapAttrsToList (name: value: "--set-default ${name} ${value}") nirionEnvVars
+                );
+              in
+              ''
+                mkdir -p $out/bin
+                makeWrapper ${nirionPkg}/bin/nirion $out/bin/nirion ${wrapperFlags}
 
-                  # Fish completion
-                  mkdir -p $out/share/fish/vendor_completions.d
-                  COMPLETE=fish $out/bin/nirion > $out/share/fish/vendor_completions.d/nirion.fish
-                  patch $out/share/fish/vendor_completions.d/nirion.fish
-                '';
-            };
+                patch() {
+                  local f="$1"
+                  [ -f "$f" ] || return 0
+
+                  sed -i \
+                    's|/nix/store/[^[:space:]]*/bin/nirion|'"$out"'/bin/nirion|g' \
+                    "$f"
+                }
+
+                # Fish completion
+                mkdir -p $out/share/fish/vendor_completions.d
+                COMPLETE=fish $out/bin/nirion > $out/share/fish/vendor_completions.d/nirion.fish
+                patch $out/share/fish/vendor_completions.d/nirion.fish
+              '';
+          };
         in
         {
           imports = [
@@ -256,13 +270,7 @@
 
             environment.etc."nirion/projects.json".text = builtins.toJSON nirionConfig.out.projects;
 
-            environment.variables = {
-              NIRION_LOCK_FILE = "${nirionConfig.lockFileOutput}";
-              NIRION_PROJECT_FILE = "${nirionConfig.out.projectsFile}";
-            }
-            // lib.optionalAttrs (nirionConfig.authFile != null) {
-              NIRION_AUTH_FILE = "${nirionConfig.authFile}";
-            };
+            environment.variables = nirionEnvVars;
 
             virtualisation.nirion = {
               out.locked_images =

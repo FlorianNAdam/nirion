@@ -179,7 +179,7 @@ struct FileCli {
     /// A nix target to evaluate
     #[arg(
         long,
-        env = "NIX_TARGET",
+        env = "NIRION_NIX_TARGET",
         hide_env_values = true,
         conflicts_with = "raw_nix_target"
     )]
@@ -188,7 +188,7 @@ struct FileCli {
     /// A raw nix target to evaluate
     #[arg(
         long,
-        env = "RAW_NIX_TARGET",
+        env = "NIRION_RAW_NIX_TARGET",
         hide_env_values = true,
         conflicts_with = "nix_target"
     )]
