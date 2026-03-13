@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, ops::Deref};
 
 use anyhow::Context;
+use crossterm::style::{Color, Stylize};
 use nirion_lib::projects::ProjectName;
 use serde::Deserialize;
 use tokio::process::Command;
@@ -16,6 +17,7 @@ pub async fn query_project_status(
         .arg("--project-name")
         .arg(project_name.deref())
         .arg("ps")
+        .arg("-a")
         .arg("--format")
         .arg("json")
         .output()
@@ -33,12 +35,20 @@ pub async fn query_project_status(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServiceState {
-    Healthy,
-    Running,
-    Starting,
-    Exited,
-    Unhealthy,
-    Unknown,
+    // Life Cycle
+    Created,    // Container exists but not started
+    Starting,   // In the process of starting up
+    Running,    // Actively running
+    Paused,     // Temporarily suspended
+    Restarting, // Automatically restarting
+    // Exited
+    Succeeded, // exited with code 0
+    Failed,    // exited with non-zero code
+    // Health checks
+    Healthy,   // Passed health checks
+    Unhealthy, // Failed health checks
+    //
+    Unknown, // Docker cannot determine state
 }
 
 #[allow(unused)]
@@ -213,58 +223,162 @@ impl ProjectStatus {
         Ok(project)
     }
 
-    pub fn total(&self) -> usize {
-        self.services.len()
-    }
-
-    pub fn healthy(&self) -> usize {
-        self.services
-            .values()
-            .filter(|s| s.state == ServiceState::Healthy)
-            .count()
-    }
-
-    pub fn unhealthy(&self) -> usize {
-        self.services
-            .values()
-            .filter(|s| s.state == ServiceState::Unhealthy)
-            .count()
-    }
-
-    pub fn running(&self) -> usize {
+    pub fn progressing(&self) -> usize {
         self.services
             .values()
             .filter(|s| {
-                matches!(s.state, ServiceState::Running | ServiceState::Healthy)
+                use crate::docker::ServiceState::*;
+                matches!(
+                    s.state,
+                    Healthy
+                        | Succeeded
+                        | Running
+                        | Paused
+                        | Starting
+                        | Restarting
+                )
             })
             .count()
     }
 
-    pub fn exited(&self) -> usize {
-        self.services
-            .values()
-            .filter(|s| s.state == ServiceState::Exited)
-            .count()
+    pub fn segments(&self) -> Vec<Color> {
+        fn order(state: &ServiceState) -> usize {
+            let order = [
+                // Good states
+                ServiceState::Healthy,
+                ServiceState::Succeeded,
+                // Neutral / transitional states
+                ServiceState::Running,
+                ServiceState::Paused,
+                ServiceState::Starting,
+                ServiceState::Restarting,
+                // Bad states
+                ServiceState::Failed,
+                ServiceState::Unhealthy,
+                // Remaining / unknown
+                ServiceState::Created,
+                ServiceState::Unknown,
+            ];
+            order
+                .iter()
+                .position(|s| s == state)
+                .unwrap_or_default()
+        }
+
+        let mut services: Vec<&ServiceStatus> =
+            self.services.values().collect();
+
+        services.sort_by_key(|s| order(&s.state));
+
+        services
+            .into_iter()
+            .map(|s| s.state.color())
+            .collect()
     }
 
-    pub fn starting(&self) -> usize {
-        self.services
+    pub fn project_state(&self) -> ProjectState {
+        if self.services.is_empty() {
+            return ProjectState::Empty;
+        }
+
+        use ServiceState::*;
+
+        let states: Vec<&ServiceState> = self
+            .services
             .values()
-            .filter(|s| s.state == ServiceState::Starting)
-            .count()
+            .map(|s| &s.state)
+            .collect();
+
+        if states
+            .iter()
+            .all(|s| matches!(s, Healthy | Succeeded))
+        {
+            ProjectState::Healthy
+        } else if states
+            .iter()
+            .any(|s| matches!(s, Failed | Unhealthy))
+        {
+            ProjectState::Degraded
+        } else if states
+            .iter()
+            .any(|s| matches!(s, Starting | Restarting))
+            && states
+                .iter()
+                .all(|s| !matches!(s, Failed | Unhealthy))
+        {
+            ProjectState::Starting
+        } else if states
+            .iter()
+            .all(|s| matches!(s, Healthy | Succeeded | Running | Paused))
+        {
+            ProjectState::Running
+        } else {
+            ProjectState::Unknown
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectState {
+    Empty,    // No services
+    Healthy,  // All services are Healthy or Succeeded
+    Running,  // All services are Healthy/Succeeded/Running/Paused
+    Starting, // At least one service Starting/Restarting, none failed/unhealthy
+    Degraded, // At least one service Failed or Unhealthy
+    Unknown,  // Cannot determine / Docker Unknown
+}
+
+impl ProjectState {
+    pub fn icon(&self) -> String {
+        use ProjectState::*;
+
+        match self {
+            Empty => "-".grey().to_string(),
+            Healthy => "✓".green().to_string(),
+            Running => "✓".yellow().to_string(),
+            Starting => "↗".cyan().to_string(),
+            Degraded => "✗".red().to_string(),
+            Unknown => "?".grey().to_string(),
+        }
     }
 }
 
 impl ServiceState {
     fn from_container(c: &ContainerInfo) -> Self {
-        match (c.state.as_str(), c.health.as_deref(), c.exit_code) {
-            ("running", Some("healthy"), _) => ServiceState::Healthy,
-            ("running", Some("unhealthy"), _) => ServiceState::Unhealthy,
-            ("running", _, _) => ServiceState::Running,
-            ("created" | "restarting", _, _) => ServiceState::Starting,
-            ("exited", _, Some(0)) => ServiceState::Exited,
-            ("exited", _, _) => ServiceState::Exited,
+        match c.state.as_str() {
+            "created" => ServiceState::Created,
+            "running" => match c.health.as_deref() {
+                Some("healthy") => ServiceState::Healthy,
+                Some("unhealthy") => ServiceState::Unhealthy,
+                _ => ServiceState::Running,
+            },
+            "paused" => ServiceState::Paused,
+            "restarting" => ServiceState::Restarting,
+            "exited" => match c.exit_code {
+                Some(0) => ServiceState::Succeeded,
+                Some(_) => ServiceState::Failed,
+                None => ServiceState::Failed,
+            },
             _ => ServiceState::Unknown,
+        }
+    }
+
+    pub fn color(&self) -> Color {
+        match self {
+            // Lifecycle
+            ServiceState::Created => Color::Grey,
+            ServiceState::Starting => Color::DarkGrey,
+            ServiceState::Running => Color::Yellow,
+            ServiceState::Paused => Color::Blue,
+            ServiceState::Restarting => Color::DarkGrey,
+            // Exited
+            ServiceState::Succeeded => Color::Cyan,
+            ServiceState::Failed => Color::Magenta,
+            // Health
+            ServiceState::Healthy => Color::Green,
+            ServiceState::Unhealthy => Color::Red,
+            // Fallback
+            ServiceState::Unknown => Color::Grey,
         }
     }
 }

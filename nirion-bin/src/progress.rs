@@ -15,38 +15,6 @@ use tokio::time::Duration;
 use crate::docker::{DockerMonitoredProcess, ProjectStatus, ServiceState};
 use crate::TargetSelector;
 
-fn create_segments(status: &ProjectStatus, num_services: usize) -> Vec<Color> {
-    let total = num_services.max(status.total());
-
-    let healthy = status.healthy();
-    let running = status.running() - status.healthy();
-    let starting = status.starting();
-    let exited = status.exited();
-    let unhealthy = status.unhealthy();
-
-    let mut segments = Vec::new();
-    for _ in 0..healthy {
-        segments.push(Color::Green);
-    }
-    for _ in 0..running {
-        segments.push(Color::Yellow);
-    }
-    for _ in 0..starting {
-        segments.push(Color::Cyan);
-    }
-    for _ in 0..unhealthy {
-        segments.push(Color::Red);
-    }
-    for _ in 0..exited {
-        segments.push(Color::DarkGrey);
-    }
-    for _ in segments.len()..total {
-        segments.push(Color::Grey);
-    }
-
-    segments
-}
-
 async fn create_status(
     spinner: &Spinner,
     map: &BTreeMap<String, DockerMonitoredProcess>,
@@ -59,18 +27,23 @@ async fn create_status(
         let project = &projects[name];
 
         let icon = if proc.finished().await {
-            "✓".green().to_string()
+            let project_state = project_status.project_state();
+            project_state.icon()
         } else {
             spinner.get().yellow().to_string()
         };
 
         let prefix = format!("{icon} {name}");
 
-        let num_running = project_status.running();
+        let progressing = project_status.progressing();
         let num_services = project.services.len();
-        let segments = create_segments(&project_status, num_services);
+        let mut segments = project_status.segments();
 
-        let suffix = format!("({num_running}/{num_services})  ");
+        for _ in 0..(num_services.saturating_sub(segments.len())) {
+            segments.push(Color::Grey);
+        }
+
+        let suffix = format!("({progressing}/{num_services})    ");
 
         let entry = StatusEntry {
             prefix,
@@ -80,7 +53,7 @@ async fn create_status(
         entries.push(entry);
     }
 
-    return Ok(Status { entries });
+    Ok(Status { entries })
 }
 
 async fn print_progress(

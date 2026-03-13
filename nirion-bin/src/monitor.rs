@@ -1,10 +1,10 @@
-use crate::docker::{DockerProjectMonitor, ProjectStatus};
+use crate::docker::DockerProjectMonitor;
 use crate::TargetSelector;
 use crossterm::terminal::Clear;
 use crossterm::{
     cursor::{self, MoveUp},
     execute,
-    style::{Color, Stylize},
+    style::Color,
 };
 use nirion_lib::projects::Projects;
 use nirion_tui_lib::status::{Status, StatusEntry};
@@ -12,38 +12,6 @@ use std::collections::BTreeMap;
 use std::io::stdout;
 use std::io::Write;
 use tokio::time::{sleep, Duration};
-
-fn create_segments(status: &ProjectStatus, num_services: usize) -> Vec<Color> {
-    let total = num_services.max(status.total());
-
-    let healthy = status.healthy();
-    let running = status.running() - healthy;
-    let starting = status.starting();
-    let exited = status.exited();
-    let unhealthy = status.unhealthy();
-
-    let mut segments = Vec::new();
-    for _ in 0..healthy {
-        segments.push(Color::Green);
-    }
-    for _ in 0..running {
-        segments.push(Color::Yellow);
-    }
-    for _ in 0..starting {
-        segments.push(Color::Cyan);
-    }
-    for _ in 0..unhealthy {
-        segments.push(Color::Red);
-    }
-    for _ in 0..exited {
-        segments.push(Color::DarkGrey);
-    }
-    for _ in segments.len()..total {
-        segments.push(Color::Grey);
-    }
-
-    segments
-}
 
 pub async fn create_status(
     monitors: &BTreeMap<String, DockerProjectMonitor>,
@@ -55,25 +23,20 @@ pub async fn create_status(
         let project_status = monitor.project_status().await;
         let project = &projects[name];
 
-        let running = project_status.running();
-        let total = project_status.total();
-        let healthy = project_status.healthy();
-
-        let icon = if running == total && total > 0 && healthy == total {
-            "✓".green().to_string()
-        } else if running == total {
-            "✓".yellow().to_string()
-        } else if running > 0 {
-            "↗".cyan().to_string()
-        } else {
-            "✗".red().to_string()
-        };
+        let state = project_status.project_state();
+        let icon = state.icon();
 
         let prefix = format!("{icon} {name}");
 
+        let progressing = project_status.progressing();
         let num_services = project.services.len();
-        let segments = create_segments(&project_status, num_services);
-        let suffix = format!("({running}/{num_services})");
+        let mut segments = project_status.segments();
+
+        for _ in 0..(num_services.saturating_sub(segments.len())) {
+            segments.push(Color::Grey);
+        }
+
+        let suffix = format!("({progressing}/{num_services})    ");
 
         entries.push(StatusEntry {
             prefix,
