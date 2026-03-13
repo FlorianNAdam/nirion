@@ -289,32 +289,25 @@ impl ProjectStatus {
             .map(|s| &s.state)
             .collect();
 
-        if states
-            .iter()
-            .all(|s| matches!(s, Healthy | Succeeded))
-        {
-            ProjectState::Healthy
-        } else if states
-            .iter()
-            .any(|s| matches!(s, Failed | Unhealthy))
-        {
-            ProjectState::Degraded
-        } else if states
-            .iter()
-            .any(|s| matches!(s, Starting | Restarting))
-            && states
-                .iter()
-                .all(|s| !matches!(s, Failed | Unhealthy))
-        {
-            ProjectState::Starting
-        } else if states
-            .iter()
-            .all(|s| matches!(s, Healthy | Succeeded | Running | Paused))
-        {
-            ProjectState::Running
-        } else {
-            ProjectState::Unknown
+        macro_rules! project_states {
+            ($states:expr, { $($predicate:ident [$pat:pat] => $result:expr),* $(,)? }) => {(|| {
+                $({project_states!(@inner $predicate, $states, $pat, $result)})*
+                ProjectState::Unknown
+            })()};
+            (@inner $predicate:ident, $states:expr, $pat:pat,$result:expr) => {
+                if $states.iter().all(|s| matches!(s, $pat)) {
+                    return $result;
+                }
+            };
         }
+
+        project_states!(states, {
+            all [Healthy | Succeeded] => ProjectState::Healthy,
+            any [Failed | Unhealthy] => ProjectState::Degraded,
+            any [Starting | Restarting] => ProjectState::Starting,
+            all [Healthy | Succeeded | Running] => ProjectState::Running,
+            all [Healthy | Succeeded | Running | Paused] => ProjectState::Paused,
+        })
     }
 }
 
@@ -322,7 +315,8 @@ impl ProjectStatus {
 pub enum ProjectState {
     Empty,    // No services
     Healthy,  // All services are Healthy or Succeeded
-    Running,  // All services are Healthy/Succeeded/Running/Paused
+    Running,  // All services are Healthy/Succeeded/Running
+    Paused,   // All services are Healthy/Succeeded/Running/Paused
     Starting, // At least one service Starting/Restarting, none failed/unhealthy
     Degraded, // At least one service Failed or Unhealthy
     Unknown,  // Cannot determine / Docker Unknown
@@ -336,6 +330,7 @@ impl ProjectState {
             Empty => "-".grey().to_string(),
             Healthy => "✓".green().to_string(),
             Running => "✓".yellow().to_string(),
+            Paused => "=".blue().to_string(),
             Starting => "↗".cyan().to_string(),
             Degraded => "✗".red().to_string(),
             Unknown => "?".grey().to_string(),
