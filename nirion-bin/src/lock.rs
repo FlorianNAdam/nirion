@@ -84,7 +84,8 @@ pub async fn update_images(
 
             let versioned_image =
                 if let Some(mut current) = current_versioned_image {
-                    current.image = image;
+                    let reference = Reference::try_from(image)?;
+                    current.image = reference.to_string();
                     get_cached_updated_image(&client, &current, &digest_cache)
                         .await?
                 } else {
