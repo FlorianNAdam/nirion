@@ -442,7 +442,7 @@
                     };
                     print "Connected";
                     print $s "GET ${path} HTTP/1.0\r\n";
-                    print $s "Host: ${host}\r\n";
+                    print $s "Host: ${host}:${builtins.toString port}\r\n";
                     print $s "Connection: close\r\n";
                     print $s "\r\n";
                     $/ = undef;
