@@ -225,6 +225,13 @@
                 description = "Arion project configuration with lockfile support";
               };
 
+              # Sops
+              enableSops = lib.mkOption {
+                type = lib.types.bool;
+                default = config ? sops;
+                description = "Enable the sops integration";
+              };
+
               # Internal
               images = lib.mkOption {
                 type = lib.types.attrsOf lib.types.str;
@@ -416,6 +423,36 @@
                   };
                 }
               ) nirionConfig.projects;
+
+            sops.templates = lib.mkIf nirionConfig.enableSops (
+              lib.attrsets.mapAttrs' (
+                projectName: projectConfig:
+                let
+                  arionProjectConfig = arionConfig.projects.${projectName};
+                  serviceName = arionProjectConfig.serviceName;
+                  templateName = "nirion/${serviceName}/docker-compose.yaml";
+                  dockerComposeText = arionProjectConfig.settings.out.dockerComposeYamlText;
+                in
+                lib.nameValuePair templateName {
+                  content = dockerComposeText;
+                }
+              ) nirionConfig.projects
+            );
+
+            systemd.services = lib.mkIf nirionConfig.enableSops (
+              lib.attrsets.mapAttrs' (
+                projectName: projectConfig:
+                let
+                  arionProjectConfig = arionConfig.projects.${projectName};
+                  serviceName = arionProjectConfig.serviceName;
+                  templateName = "nirion/${serviceName}/docker-compose.yaml";
+                  templatePath = config.sops.templates.${templateName}.path;
+                in
+                lib.nameValuePair serviceName {
+                  environment.ARION_PREBUILT = lib.mkOverride 60 "${templatePath}";
+                }
+              ) nirionConfig.projects
+            );
 
             lib.nirion = {
               mkPerlHealthcheck =
