@@ -95,6 +95,11 @@
 
           arionConfig = config.virtualisation.arion;
 
+          sopsTemplateName =
+            projectName: "nirion/${arionConfig.projects.${projectName}.serviceName}/docker-compose.yaml";
+
+          sopsTemplatePath = projectName: config.sops.templates.${sopsTemplateName projectName}.path;
+
           nirionNixTarget =
             let
               nixEvalOption = config.virtualisation.nirion.nixEval;
@@ -338,10 +343,15 @@
                 let
                   images = nirionConfig.out.images_v2.${projectName} or { };
                   arionProjectConfig = arionConfig.projects.${projectName};
+                  dockerCompose =
+                    if nirionConfig.enableSops then
+                      sopsTemplatePath projectName
+                    else
+                      arionProjectConfig.settings.out.dockerComposeYaml;
                 in
                 {
                   name = arionProjectConfig.settings.project.name;
-                  docker-compose = arionProjectConfig.settings.out.dockerComposeYaml;
+                  docker-compose = dockerCompose;
                   services = lib.mapAttrs (serviceName: service: {
                     image = images.${serviceName} or null;
                     healthcheck = service.service.healthcheck or null;
@@ -429,8 +439,7 @@
                 projectName: projectConfig:
                 let
                   arionProjectConfig = arionConfig.projects.${projectName};
-                  serviceName = arionProjectConfig.serviceName;
-                  templateName = "nirion/${serviceName}/docker-compose.yaml";
+                  templateName = sopsTemplateName projectName;
                   dockerComposeText = arionProjectConfig.settings.out.dockerComposeYamlText;
                 in
                 lib.nameValuePair templateName {
@@ -445,8 +454,7 @@
                 let
                   arionProjectConfig = arionConfig.projects.${projectName};
                   serviceName = arionProjectConfig.serviceName;
-                  templateName = "nirion/${serviceName}/docker-compose.yaml";
-                  templatePath = config.sops.templates.${templateName}.path;
+                  templatePath = sopsTemplatePath projectName;
                 in
                 lib.nameValuePair serviceName {
                   environment.ARION_PREBUILT = lib.mkOverride 60 "${templatePath}";
