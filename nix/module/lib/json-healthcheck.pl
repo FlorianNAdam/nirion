@@ -6,6 +6,13 @@ sub json_ws {
   $pos++ while $pos < length($text) && substr($text, $pos, 1) =~ /\s/;
 }
 
+sub json_hex4 {
+  my $hex = substr($text, $pos, 4);
+  json_error() unless $hex =~ /\A[0-9a-fA-F]{4}\z/;
+  $pos += 4;
+  return hex($hex);
+}
+
 sub json_string {
   json_error() unless substr($text, $pos, 1) eq '"';
   $pos++;
@@ -23,6 +30,7 @@ sub json_string {
         : $esc eq 'n' ? "\n"
         : $esc eq 'r' ? "\r"
         : $esc eq 't' ? "\t"
+        : $esc eq 'u' ? chr(json_hex4())
         : json_error();
     } else {
       $out .= $ch;
