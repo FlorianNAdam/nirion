@@ -1,5 +1,5 @@
 use crossterm::{cursor, execute, style::Stylize};
-use futures::{stream::FuturesUnordered, StreamExt};
+use futures::{StreamExt, stream::FuturesUnordered};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use nirion_lib::{
     auth::AuthConfig,

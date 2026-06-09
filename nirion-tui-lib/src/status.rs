@@ -101,9 +101,5 @@ fn optimal_sublist_length(width: usize, n: usize, i: usize) -> usize {
     let base = width / n;
     let extra = width % n;
 
-    if i < extra {
-        base + 1
-    } else {
-        base
-    }
+    if i < extra { base + 1 } else { base }
 }

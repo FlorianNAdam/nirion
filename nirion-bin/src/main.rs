@@ -1,4 +1,4 @@
-use crate::commands::{handle_command, Commands};
+use crate::commands::{Commands, handle_command};
 use anyhow::Context;
 use clap::{CommandFactory, Parser};
 use clap_complete::{ArgValueCompleter, CompletionCandidate};
@@ -6,8 +6,8 @@ use crossterm::style::Stylize;
 use nirion_lib::auth::AuthConfig;
 use nirion_lib::lock::LockedImages;
 use nirion_lib::projects::{
-    parse_selector, parse_service_selector, Project, Projects, ServiceSelector,
-    TargetSelector,
+    Project, Projects, ServiceSelector, TargetSelector, parse_selector,
+    parse_service_selector,
 };
 use std::sync::OnceLock;
 use std::{fs, path::PathBuf};

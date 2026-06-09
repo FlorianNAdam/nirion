@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use oci_client::{
-    config::ConfigFile, secrets::RegistryAuth, Client, Reference,
+    Client, Reference, config::ConfigFile, secrets::RegistryAuth,
 };
 
 use crate::{
@@ -9,7 +9,7 @@ use crate::{
     oci::{
         get_alias_oci_tags, get_version_from_config, get_version_from_oci_tags,
     },
-    version::{canonical_version_tag, VersionedImage},
+    version::{VersionedImage, canonical_version_tag},
 };
 
 pub async fn get_alias_tags(

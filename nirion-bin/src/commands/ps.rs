@@ -214,22 +214,8 @@ fn print_row(svc: &crate::docker::ServiceStatus) -> anyhow::Result<String> {
         .replace(healthy_token, &"healthy".green().to_string())
         .replace(unhealthy_token, &"unhealthy".red().to_string());
 
-    let port_strs = svc
-        .ports
-        .iter()
-        .map(|p| {
-            let prefix = if let Some(external) = &p.external {
-                format!("{}->", external.port)
-            } else {
-                String::new()
-            };
-
-            format!("{}{}/{}", prefix, p.port, p.proto)
-        })
-        .collect::<HashSet<_>>();
-    let mut port_strs = port_strs
-        .into_iter()
-        .collect::<Vec<_>>();
+    let port_strs = collapsed_ports(&svc.ports).into_iter().collect::<HashSet<_>>();
+    let mut port_strs = port_strs.into_iter().collect::<Vec<_>>();
     port_strs.sort_unstable();
     let port_str = port_strs.join(", ");
 
@@ -237,4 +223,70 @@ fn print_row(svc: &crate::docker::ServiceStatus) -> anyhow::Result<String> {
         " - {}\t{}\t{}\t{}",
         svc.container_name, running_for, status, port_str
     ))
+}
+
+fn collapsed_ports(ports: &[crate::docker::Port]) -> Vec<String> {
+    let mut ports = ports.iter().collect::<Vec<_>>();
+    ports.sort_by_key(|p| {
+        (
+            p.proto.as_str(),
+            p.external.as_ref().map(|e| e.port),
+            p.port,
+        )
+    });
+
+    let mut collapsed = Vec::new();
+    let mut i = 0;
+
+    while i < ports.len() {
+        let start = ports[i];
+        let mut end = start;
+        let mut next = i + 1;
+
+        while next < ports.len()
+            && ports[next].proto == start.proto
+            && consecutive_external(end, ports[next])
+            && ports[next].port == end.port + 1
+        {
+            end = ports[next];
+            next += 1;
+        }
+
+        collapsed.push(format_port_range(start, end));
+        i = next;
+    }
+
+    collapsed
+}
+
+fn consecutive_external(
+    previous: &crate::docker::Port,
+    next: &crate::docker::Port,
+) -> bool {
+    match (&previous.external, &next.external) {
+        (None, None) => true,
+        (Some(previous), Some(next)) => next.port == previous.port + 1,
+        _ => false,
+    }
+}
+
+fn format_port_range(
+    start: &crate::docker::Port,
+    end: &crate::docker::Port,
+) -> String {
+    let internal = if start.port == end.port {
+        start.port.to_string()
+    } else {
+        format!("{}-{}", start.port, end.port)
+    };
+
+    let prefix = match (&start.external, &end.external) {
+        (Some(start), Some(end)) if start.port == end.port => {
+            format!("{}->", start.port)
+        }
+        (Some(start), Some(end)) => format!("{}-{}->", start.port, end.port),
+        _ => String::new(),
+    };
+
+    format!("{}{} /{}", prefix, internal, start.proto).replace(" /", "/")
 }

@@ -1,11 +1,11 @@
 use oci_client::{
+    Client, Reference,
     config::{Architecture, ConfigFile},
     manifest::OciManifest,
     secrets::RegistryAuth,
-    Client, Reference,
 };
 
-use crate::version::{canonical_version_score, clean_tag, NON_VERSION_TAGS};
+use crate::version::{NON_VERSION_TAGS, canonical_version_score, clean_tag};
 
 pub fn resolve_registry(registry: String) -> String {
     Reference::with_tag(registry, "dummy".to_string(), "dummy".to_string())

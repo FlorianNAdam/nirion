@@ -1,4 +1,4 @@
-use oci_client::{config::Architecture, Reference};
+use oci_client::{Reference, config::Architecture};
 use reqwest::StatusCode;
 use serde::Deserialize;
 use thiserror::Error;

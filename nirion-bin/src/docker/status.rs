@@ -72,7 +72,7 @@ pub struct ServiceStatus {
     pub networks: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Port {
     pub external: Option<ExternalPort>,
     pub port: u16,
@@ -80,7 +80,7 @@ pub struct Port {
 }
 
 #[allow(unused)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalPort {
     pub ip: String,
     pub port: u16,
@@ -165,41 +165,9 @@ impl ProjectStatus {
                 .split(",")
                 .map(|s| s.trim())
                 .filter(|s| !s.is_empty())
-                .map(|port_str| {
-                    let (port_str, proto) = port_str
-                        .split_once("/")
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "Failed to split port by '/': {port_str}"
-                            )
-                        })?;
-
-                    if let Some((ip, port_str)) = port_str.rsplit_once(":") {
-                        let (external, internal) = port_str
-                            .split_once("->")
-                            .ok_or_else(|| {
-                                anyhow::anyhow!(
-                                    "Failed to split port by ':': {port_str}"
-                                )
-                            })?;
-
-                        Ok(Port {
-                            external: Some(ExternalPort {
-                                ip: ip.to_string(),
-                                port: external.parse()?,
-                            }),
-                            port: internal.parse()?,
-                            proto: proto.to_string(),
-                        })
-                    } else {
-                        Ok(Port {
-                            port: port_str.parse()?,
-                            external: None,
-                            proto: proto.to_string(),
-                        })
-                    }
-                })
+                .map(parse_port_mapping)
                 .collect::<anyhow::Result<Vec<_>>>()
+                .map(|ports| ports.into_iter().flatten().collect())
                 .context(format!("Failed to parse ports: {:?}", ports_c))?;
 
             project.services.insert(
@@ -308,6 +276,71 @@ impl ProjectStatus {
             all [Healthy | Succeeded | Running] => ProjectState::Running,
             all [Healthy | Succeeded | Running | Paused] => ProjectState::Paused,
         })
+    }
+}
+
+fn parse_port_mapping(port_str: &str) -> anyhow::Result<Vec<Port>> {
+    let (port_str, proto) = port_str
+        .split_once("/")
+        .ok_or_else(|| {
+            anyhow::anyhow!("Failed to split port by '/': {port_str}")
+        })?;
+
+    if let Some((ip, port_str)) = port_str.rsplit_once(":") {
+        let (external, internal) =
+            port_str
+                .split_once("->")
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Failed to split port by ':': {port_str}")
+                })?;
+
+        let external = parse_port_range(external)?;
+        let internal = parse_port_range(internal)?;
+
+        if external.len() != internal.len() {
+            anyhow::bail!(
+                "Port ranges have different lengths: {external:?}->{internal:?}"
+            );
+        }
+
+        Ok(external
+            .into_iter()
+            .zip(internal)
+            .map(|(external, internal)| Port {
+                external: Some(ExternalPort {
+                    ip: ip.to_string(),
+                    port: external,
+                }),
+                port: internal,
+                proto: proto.to_string(),
+            })
+            .collect())
+    } else {
+        parse_port_range(port_str).map(|ports| {
+            ports
+                .into_iter()
+                .map(|port| Port {
+                    port,
+                    external: None,
+                    proto: proto.to_string(),
+                })
+                .collect()
+        })
+    }
+}
+
+fn parse_port_range(port_str: &str) -> anyhow::Result<Vec<u16>> {
+    if let Some((start, end)) = port_str.split_once("-") {
+        let start = start.parse::<u16>()?;
+        let end = end.parse::<u16>()?;
+
+        if start > end {
+            anyhow::bail!("Invalid descending port range: {port_str}");
+        }
+
+        Ok((start..=end).collect())
+    } else {
+        Ok(vec![port_str.parse()?])
     }
 }
 

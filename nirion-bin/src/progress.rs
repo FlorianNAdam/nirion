@@ -9,11 +9,11 @@ use nirion_tui_lib::{
     status::{Status, StatusEntry},
 };
 use std::collections::BTreeMap;
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 use tokio::time::Duration;
 
-use crate::docker::{DockerMonitoredProcess, ProjectStatus, ServiceState};
 use crate::TargetSelector;
+use crate::docker::{DockerMonitoredProcess, ProjectStatus, ServiceState};
 
 async fn create_status(
     spinner: &Spinner,

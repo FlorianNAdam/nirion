@@ -1,5 +1,5 @@
-use crate::docker::DockerProjectMonitor;
 use crate::TargetSelector;
+use crate::docker::DockerProjectMonitor;
 use crossterm::terminal::Clear;
 use crossterm::{
     cursor::{self, MoveUp},
@@ -9,9 +9,9 @@ use crossterm::{
 use nirion_lib::projects::Projects;
 use nirion_tui_lib::status::{Status, StatusEntry};
 use std::collections::BTreeMap;
-use std::io::stdout;
 use std::io::Write;
-use tokio::time::{sleep, Duration};
+use std::io::stdout;
+use tokio::time::{Duration, sleep};
 
 pub async fn create_status(
     monitors: &BTreeMap<String, DockerProjectMonitor>,

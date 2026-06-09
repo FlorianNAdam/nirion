@@ -5,8 +5,8 @@ use std::{
 use tokio::{process::Command, sync::RwLock, task::JoinHandle};
 
 use crate::{
-    docker::{query_project_status, ProjectStatus},
     Project,
+    docker::{ProjectStatus, query_project_status},
 };
 
 pub struct DockerProjectMonitor {
