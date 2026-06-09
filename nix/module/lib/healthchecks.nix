@@ -30,35 +30,7 @@
             builtins.head selectedExpectKeys;
         expectValue = expect.${expectKey};
 
-        jsonHelpers = ''
-          sub json_canonical {
-            return JSON::PP->new->canonical->encode(shift);
-          }
-
-          sub json_contains {
-            my ($actual, $expected) = @_;
-
-            if (ref($expected) eq "HASH") {
-              return 0 unless ref($actual) eq "HASH";
-              for my $key (keys %$expected) {
-                return 0 unless exists $actual->{$key};
-                return 0 unless json_contains($actual->{$key}, $expected->{$key});
-              }
-              return 1;
-            }
-
-            if (ref($expected) eq "ARRAY") {
-              return 0 unless ref($actual) eq "ARRAY";
-              return 0 unless @$actual == @$expected;
-              for (my $i = 0; $i < @$expected; $i++) {
-                return 0 unless json_contains($actual->[$i], $expected->[$i]);
-              }
-              return 1;
-            }
-
-            return json_canonical($actual) eq json_canonical($expected);
-          }
-        '';
+        jsonHelpers = builtins.readFile ./json-healthcheck.pl;
 
         expectationCheck =
           if expectKey == "status" then
@@ -136,11 +108,7 @@
 
         perlModules = [
           "-MIO::Socket::INET"
-        ]
-        ++ lib.optional (lib.elem expectKey [
-          "jsonEquals"
-          "jsonContains"
-        ]) "-MJSON::PP=decode_json";
+        ];
       in
       [
         "CMD"
