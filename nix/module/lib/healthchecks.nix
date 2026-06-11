@@ -7,6 +7,8 @@
         host ? "localhost",
         port,
         path,
+        timeout ? 3,
+        expectedStatus ? 200,
         expect,
       }:
       let
@@ -80,7 +82,11 @@
             throw "unexpected expectKey";
 
         script = ''
-          my $s = IO::Socket::INET->new("${host}:${builtins.toString port}") or do {
+          my $s = IO::Socket::INET->new(
+            PeerHost => "${host}",
+            PeerPort => ${builtins.toString port},
+            Timeout => ${builtins.toString timeout},
+          ) or do {
             print "Failed to connect";
             exit 1;
           };
@@ -100,6 +106,11 @@
             print shift, "\n";
             exit 1;
           }
+
+          ${lib.optionalString (expectKey != "status" && expectedStatus != null) ''
+            fail("Expected HTTP status ${builtins.toString expectedStatus}, got " . (defined $status ? $status : "none"))
+              unless defined $status && $status == ${builtins.toString expectedStatus};
+          ''}
 
           ${expectationCheck}
 
