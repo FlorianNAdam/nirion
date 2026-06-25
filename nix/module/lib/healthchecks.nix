@@ -64,7 +64,7 @@
               my $expected = decode_json(<<'JSON');
               ${builtins.toJSON expectValue}
               JSON
-              fail("Response JSON did not equal expected JSON")
+              fail("Response JSON did not equal expected JSON\nExpected JSON: " . json_canonical($expected) . "\nActual JSON: " . json_canonical($json))
                 unless json_canonical($json) eq json_canonical($expected);
             ''
           else if expectKey == "jsonContains" then
@@ -75,7 +75,7 @@
               my $expected = decode_json(<<'JSON');
               ${builtins.toJSON expectValue}
               JSON
-              fail("Response JSON did not contain expected JSON")
+              fail("Response JSON did not contain expected JSON\nExpected JSON subset: " . json_canonical($expected) . "\nActual JSON: " . json_canonical($json))
                 unless json_contains($json, $expected);
             ''
           else
