@@ -77,22 +77,39 @@ let
     };
 
   projectSopsSecretDefaults =
-    project:
+    projectName: project:
     lib.optionalAttrs (project.sops.file != null) {
       sopsFile = lib.mkDefault project.sops.file;
     }
     // projectSopsAccessDefaults project;
 
-  projectSopsSecrets = lib.foldlAttrs (
-    acc: _: project:
-    acc // lib.mapAttrs (_: secret: (projectSopsSecretDefaults project) // secret) project.sops.secrets
-  ) { } cfg.projects;
+  projectSopsReloadUnits =
+    projectName: project: entry:
+    lib.optionalAttrs project.sops.reloadOnChange {
+      reloadUnits = lib.unique ((entry.reloadUnits or [ ]) ++ [ "nirion-${projectName}.service" ]);
+    };
 
-  projectSopsTemplates = lib.foldlAttrs (
-    acc: _: project:
+  projectSopsEntry =
+    projectName: project: defaults: entry:
+    defaults // entry // projectSopsReloadUnits projectName project entry;
+
+  projectSopsSecrets = lib.foldlAttrs (
+    acc: projectName: project:
     acc
     // lib.mapAttrs (
-      _: template: (projectSopsAccessDefaults project) // template
+      _: secret:
+      projectSopsEntry projectName project (projectSopsSecretDefaults projectName project) secret
+    ) project.sops.secrets
+  ) { } cfg.projects;
+
+  projectSopsTemplateDefaults = projectName: project: projectSopsAccessDefaults project;
+
+  projectSopsTemplates = lib.foldlAttrs (
+    acc: projectName: project:
+    acc
+    // lib.mapAttrs (
+      _: template:
+      projectSopsEntry projectName project (projectSopsTemplateDefaults projectName project) template
     ) project.sops.templates
   ) { } cfg.projects;
 

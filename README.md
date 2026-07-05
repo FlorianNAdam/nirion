@@ -148,6 +148,8 @@ Projects can declare sops-nix secrets and templates. If `sops.group` is set, Nir
 
 `sops.file` is optional and is used as the default `sopsFile` for the project's secrets. It does not apply to templates. `sops.group.name` defaults to `nirion-<project-name>`, while `sops.group.gid` must be set when a group is used. Project secret and template declarations are forwarded to the global `sops.secrets` and `sops.templates` options, so sops-nix must be imported when they are used.
 
+Project sops secrets and templates reload the generated `nirion-<project>.service` unit by default when their materialized contents change. Any explicitly configured `reloadUnits` are preserved and the Nirion unit is appended. Set `sops.reloadOnChange = false;` on a project to opt out.
+
 ### The Lock File
 
 One of the core features of nirion is the ability to lock docker images to specific commits and update them.\
@@ -161,7 +163,7 @@ Generated systemd units call `nirion up --no-tui`, `nirion reload --no-tui`, and
 
 `virtualisation.nirion.sops.overrideComposeFile` is intentionally opt-in. If it is enabled, generated compose files are written through sops-nix templates. A module that provides `sops.templates`, such as sops-nix, must also be imported.
 
-This means `sops.secrets.<name>.reloadUnits = [ "nirion-<project>.service" ];` can be used to reload a project after secret material changes.
+Project-level sops secrets and templates add `nirion-<project>.service` to `reloadUnits` by default, so secret material changes reload the affected project unless `sops.reloadOnChange = false;` is set.
 
 
 ## Nirion-Cli

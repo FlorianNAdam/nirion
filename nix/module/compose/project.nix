@@ -35,6 +35,11 @@ let
         default = null;
         description = "Optional project secret read-access group.";
       };
+      reloadOnChange = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Reload this project's systemd unit when project sops secrets or templates change.";
+      };
       secrets = mkOption {
         type = types.attrsOf types.anything;
         default = { };
