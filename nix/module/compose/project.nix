@@ -13,6 +13,8 @@ let
     options = {
       name = mkOption {
         type = types.str;
+        default = "nirion-${name}";
+        defaultText = lib.literalExpression ''"nirion-<project-name>"'';
         description = "Project secret read-access group name.";
       };
       gid = mkOption {

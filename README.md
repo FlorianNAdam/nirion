@@ -126,7 +126,6 @@ Projects can declare sops-nix secrets and templates. If `sops.group` is set, Nir
       file = ./secrets.yaml;
 
       group = {
-        name = "arion-password";
         gid = 9004;
       };
 
@@ -147,7 +146,7 @@ Projects can declare sops-nix secrets and templates. If `sops.group` is set, Nir
 }
 ```
 
-`sops.file` is optional and is used as the default `sopsFile` for the project's secrets. It does not apply to templates. Project secret and template declarations are forwarded to the global `sops.secrets` and `sops.templates` options, so sops-nix must be imported when they are used.
+`sops.file` is optional and is used as the default `sopsFile` for the project's secrets. It does not apply to templates. `sops.group.name` defaults to `nirion-<project-name>`, while `sops.group.gid` must be set when a group is used. Project secret and template declarations are forwarded to the global `sops.secrets` and `sops.templates` options, so sops-nix must be imported when they are used.
 
 ### The Lock File
 
