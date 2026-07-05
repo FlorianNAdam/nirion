@@ -25,8 +25,8 @@ pub struct PsArgs {
     )]
     pub target: TargetSelector,
 
-    /// Use legacy docker compose ps implementation
-    #[arg(long)]
+    /// Disable TUI table output and use docker compose ps directly
+    #[arg(long, alias = "no-tui")]
     pub legacy: bool,
 
     /// Show all containers (including stopped ones)
@@ -214,8 +214,12 @@ fn print_row(svc: &crate::docker::ServiceStatus) -> anyhow::Result<String> {
         .replace(healthy_token, &"healthy".green().to_string())
         .replace(unhealthy_token, &"unhealthy".red().to_string());
 
-    let port_strs = collapsed_ports(&svc.ports).into_iter().collect::<HashSet<_>>();
-    let mut port_strs = port_strs.into_iter().collect::<Vec<_>>();
+    let port_strs = collapsed_ports(&svc.ports)
+        .into_iter()
+        .collect::<HashSet<_>>();
+    let mut port_strs = port_strs
+        .into_iter()
+        .collect::<Vec<_>>();
     port_strs.sort_unstable();
     let port_str = port_strs.join(", ");
 

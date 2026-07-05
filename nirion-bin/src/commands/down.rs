@@ -37,8 +37,8 @@ pub struct DownArgs {
     #[arg(short, long)]
     pub quiet: bool,
 
-    /// Use legacy restart method instead of the current implementation
-    #[arg(short, long)]
+    /// Disable TUI progress output and use docker compose directly
+    #[arg(short, long, alias = "no-tui")]
     pub legacy: bool,
 }
 

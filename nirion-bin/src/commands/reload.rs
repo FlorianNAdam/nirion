@@ -37,8 +37,8 @@ pub struct ReloadArgs {
     #[arg(short, long)]
     pub quiet: bool,
 
-    /// Use legacy reload method instead of the current implementation
-    #[arg(short, long)]
+    /// Disable TUI progress output and use docker compose directly
+    #[arg(short, long, alias = "no-tui")]
     pub legacy: bool,
 
     /// Skip health checks when determining if containers are ready
