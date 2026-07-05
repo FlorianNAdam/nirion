@@ -8,7 +8,7 @@ use std::path::Path;
 
 use crate::{docker::compose_target_cmd, ClapSelector};
 
-/// Run a docker-compose command for a project or service
+/// Run a docker compose command for a project or service
 #[derive(Parser, Debug, Clone)]
 pub struct ComposeExecArgs {
     /// Target selector: *, project, or project.service

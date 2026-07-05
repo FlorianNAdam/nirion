@@ -93,7 +93,7 @@ fn print_service_section(
         .get(&Value::String(service_name.to_string()))
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "Service `{}` not found in docker-compose for project `{}`",
+                "Service `{}` not found in compose file for project `{}`",
                 service_name,
                 project_name
             )

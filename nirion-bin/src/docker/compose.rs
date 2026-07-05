@@ -83,7 +83,8 @@ pub async fn compose_cmd(
 }
 
 pub async fn run_docker_compose(cmd_args: &[&str]) -> anyhow::Result<()> {
-    let mut child = Command::new("docker-compose")
+    let mut child = Command::new("docker")
+        .arg("compose")
         .args(cmd_args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -117,7 +118,7 @@ pub async fn run_docker_compose(cmd_args: &[&str]) -> anyhow::Result<()> {
     err_thread.await.ok();
 
     if !status.success() {
-        println!("docker-compose exited with status {}", status);
+        println!("docker compose exited with status {}", status);
     }
 
     Ok(())

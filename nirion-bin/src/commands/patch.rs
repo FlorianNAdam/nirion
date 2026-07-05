@@ -73,7 +73,7 @@ pub async fn handle_patch(
                         .get(&img.service)
                         .with_context(|| {
                             format!(
-                                "Service `{}` not found in docker-compose for project `{}`",
+                                "Service `{}` not found in compose file for project `{}`",
                                 img.service, img.project
                             )
                         })?;

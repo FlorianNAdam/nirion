@@ -124,7 +124,7 @@ To update images simply use `nirion update` to update the lock file and then reb
 ### NixOS Module Behavior
 
 The NixOS module uses Docker Compose v2 (`docker compose`) for generated systemd units.
-The current Rust CLI still shells out to the legacy `docker-compose` binary in some commands; that compatibility will be cleaned up separately.
+The Rust CLI also shells out to Docker Compose v2 (`docker compose`).
 
 `virtualisation.nirion.enableSops` is intentionally opt-in. If it is enabled, a module that provides `sops.templates`, such as sops-nix, must also be imported.
 
