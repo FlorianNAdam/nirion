@@ -126,7 +126,7 @@ To update images simply use `nirion update` to update the lock file and then reb
 The NixOS module uses Docker Compose v2 (`docker compose`) for generated systemd units.
 The Rust CLI also shells out to Docker Compose v2 (`docker compose`).
 
-`virtualisation.nirion.enableSops` is intentionally opt-in. If it is enabled, a module that provides `sops.templates`, such as sops-nix, must also be imported.
+`virtualisation.nirion.sops.overrideComposeFile` is intentionally opt-in. If it is enabled, generated compose files are written through sops-nix templates. A module that provides `sops.templates`, such as sops-nix, must also be imported.
 
 Generated systemd services currently run `docker compose up -d` during start. Stop/reload behavior is intentionally minimal for now and should be expanded separately if Nirion should fully manage service lifecycle.
 

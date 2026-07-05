@@ -49,10 +49,12 @@ in
     description = "Nirion Docker Compose projects.";
   };
 
-  enableSops = mkOption {
-    type = types.bool;
-    default = false;
-    description = "Write compose files through sops-nix templates. This is intentionally opt-in.";
+  sops = {
+    overrideComposeFile = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Write compose files through sops-nix templates. This is intentionally opt-in.";
+    };
   };
 
   images = mkOption {

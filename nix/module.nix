@@ -102,8 +102,8 @@ in
 
       assertions = [
         {
-          assertion = !cfg.enableSops || hasSops;
-          message = "virtualisation.nirion.enableSops requires a module that provides the sops.templates option, such as sops-nix.";
+          assertion = !cfg.sops.overrideComposeFile || hasSops;
+          message = "virtualisation.nirion.sops.overrideComposeFile requires a module that provides the sops.templates option, such as sops-nix.";
         }
         {
           assertion = !hasProjectSops || hasSops;
@@ -165,7 +165,8 @@ in
           projectName: project:
           let
             compose = cfg.out.compose.${projectName};
-            composeFile = if cfg.enableSops && hasSops then sopsTemplatePath projectName else compose.file;
+            composeFile =
+              if cfg.sops.overrideComposeFile && hasSops then sopsTemplatePath projectName else compose.file;
           in
           {
             name = compose.name;
@@ -186,7 +187,7 @@ in
     }
 
     (lib.optionalAttrs hasSops (
-      lib.mkIf cfg.enableSops {
+      lib.mkIf cfg.sops.overrideComposeFile {
         sops.templates = lib.mapAttrs' (projectName: project: {
           name = sopsTemplateName projectName;
           value.content = cfg.out.compose.${projectName}.text;

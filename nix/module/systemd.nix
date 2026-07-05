@@ -11,7 +11,8 @@ lib.mkIf (cfg.projects != { }) {
     projectName: project:
     let
       compose = cfg.out.compose.${projectName};
-      composeFile = if cfg.enableSops && hasSops then sopsTemplatePath projectName else compose.file;
+      composeFile =
+        if cfg.sops.overrideComposeFile && hasSops then sopsTemplatePath projectName else compose.file;
       composeArgs = "--file ${lib.escapeShellArg composeFile} --project-name ${lib.escapeShellArg compose.name}";
     in
     lib.nameValuePair "nirion-${projectName}" {
