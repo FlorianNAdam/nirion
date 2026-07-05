@@ -84,6 +84,10 @@ in
           assertion = !cfg.enableSops || hasSops;
           message = "virtualisation.nirion.enableSops requires a module that provides the sops.templates option, such as sops-nix.";
         }
+        {
+          assertion = (cfg.nixEval.nixos.config == null) == (cfg.nixEval.nixos.host == null);
+          message = "virtualisation.nirion.nixEval.nixos.config and virtualisation.nirion.nixEval.nixos.host must be set together.";
+        }
       ];
 
       virtualisation.docker.enable = lib.mkIf (cfg.projects != { }) true;

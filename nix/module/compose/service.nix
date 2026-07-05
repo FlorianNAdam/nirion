@@ -87,6 +87,55 @@ let
       };
     };
   };
+
+  networkAttachmentType = types.submodule (
+    { options, ... }:
+    {
+      options = {
+        aliases = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+        };
+        ipv4_address = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+        };
+        ipv6_address = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+        };
+        link_local_ips = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+        };
+        priority = mkOption {
+          type = types.nullOr types.int;
+          default = null;
+        };
+        out.compose = mkOption {
+          type = types.attrsOf types.anything;
+          readOnly = true;
+          internal = true;
+        };
+      };
+
+      config.out.compose = optionValues {
+        inherit (options)
+          aliases
+          ipv4_address
+          ipv6_address
+          link_local_ips
+          priority
+          ;
+      };
+    }
+  );
+
+  renderedNetworks =
+    if builtins.isAttrs config.networks then
+      lib.mapAttrs (_: network: network.out.compose) config.networks
+    else
+      config.networks;
 in
 {
   options = {
@@ -182,6 +231,10 @@ in
       type = types.nullOr types.bool;
       default = null;
     };
+    init = mkOption {
+      type = types.nullOr types.bool;
+      default = null;
+    };
     tty = mkOption {
       type = types.nullOr types.bool;
       default = null;
@@ -207,8 +260,28 @@ in
       default = null;
     };
     networks = mkOption {
-      type = types.either (types.listOf types.str) (types.attrsOf types.anything);
+      type = types.either (types.listOf types.str) (types.attrsOf networkAttachmentType);
       default = [ ];
+    };
+    logging = mkOption {
+      type = types.nullOr types.anything;
+      default = null;
+    };
+    ulimits = mkOption {
+      type = types.nullOr types.anything;
+      default = null;
+    };
+    security_opt = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+    };
+    group_add = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+    };
+    shm_size = mkOption {
+      type = types.nullOr (types.either types.str types.int);
+      default = null;
     };
     sysctls = mkOption {
       type = types.attrsOf (types.either types.str types.int);
@@ -255,17 +328,25 @@ in
         stop_signal
         stop_grace_period
         privileged
+        init
         tty
         dns
         extra_hosts
         links
         external_links
         network_mode
-        networks
+        logging
+        ulimits
+        security_opt
+        group_add
+        shm_size
         sysctls
         blkio_config
         ;
     })
+    // lib.optionalAttrs (renderedNetworks != [ ] && renderedNetworks != { }) {
+      networks = renderedNetworks;
+    }
     // lib.optionalAttrs (renderedBuild != { }) {
       build = renderedBuild;
     }
