@@ -114,6 +114,41 @@ virtualisation.nirion.projects.postgres = {
 }
 ```
 
+#### SOPS secrets
+
+Projects can declare sops-nix secrets and templates. If `sops.group` is set, Nirion creates the group, defaults generated secrets and templates to `root:<group>` with mode `0440`, and adds the group GID to every service in the project through Compose `group_add`.
+
+```nix
+{ config, ... }:
+{
+  virtualisation.nirion.projects.password = {
+    sops = {
+      file = ./secrets.yaml;
+
+      group = {
+        name = "arion-password";
+        gid = 9004;
+      };
+
+      secrets."vaultwarden/admin_token" = { };
+
+      templates."vaultwarden.env".content = ''
+        ADMIN_TOKEN="${config.sops.placeholder."vaultwarden/admin_token"}"
+      '';
+    };
+
+    services.vaultwarden = {
+      image = "vaultwarden/server:latest";
+      env_file = [
+        config.sops.templates."vaultwarden.env".path
+      ];
+    };
+  };
+}
+```
+
+`sops.file` is optional and is used as the default `sopsFile` for the project's secrets. It does not apply to templates. Project secret and template declarations are forwarded to the global `sops.secrets` and `sops.templates` options, so sops-nix must be imported when they are used.
+
 ### The Lock File
 
 One of the core features of nirion is the ability to lock docker images to specific commits and update them.\

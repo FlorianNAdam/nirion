@@ -63,7 +63,7 @@ let
 
   sopsTemplateName = projectName: "nirion/${projectName}/compose.yaml";
   sopsTemplatePath = projectName: config.sops.templates.${sopsTemplateName projectName}.path;
-  hasSops = options ? sops.secrets && options ? sops.templates;
+  hasSops = options ? sops;
   hasProjectSops = lib.any (project: project.sops.secrets != { } || project.sops.templates != { }) (
     lib.attrValues cfg.projects
   );
