@@ -1,4 +1,5 @@
 { lib, ... }:
+
 {
   lib.nirion = {
     mkHttpHealthcheck =
@@ -32,7 +33,7 @@
             builtins.head selectedExpectKeys;
         expectValue = expect.${expectKey};
 
-        jsonHelpers = builtins.readFile ./json-healthcheck.pl;
+        jsonHelpers = builtins.readFile ./micro-json.pl;
 
         expectationCheck =
           if expectKey == "status" then
@@ -123,7 +124,7 @@
       in
       [
         "CMD"
-        "${binary}"
+        binary
       ]
       ++ perlModules
       ++ [

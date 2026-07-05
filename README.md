@@ -1,6 +1,6 @@
 # Nirion
 
-**Nirion** is a wrapper around [arion](https://docs.hercules-ci.com/arion/) for simpler Nix-based home lab Docker setups and management.  
+**Nirion** is a Docker Compose manager for simpler Nix-based home lab Docker setups and management.  
 It streamlines container management, Nix evaluation, and service patching for reproducible and maintainable workflows.\
 By adding a lock-file mechanism, it makes deployments even more deterministic and reproducible.
 
@@ -9,7 +9,7 @@ By adding a lock-file mechanism, it makes deployments even more deterministic an
 ## Features
 
 - Start, stop, and manage Docker services with ease
-- Integrates with Nix for reproducible builds
+- NixOS module for Docker Compose projects
 - Lock file support for deterministic deployments
 - Patch service files using `mirage-patch`
 - Inspect and monitor running containers
@@ -28,23 +28,6 @@ inputs = {
   nirion = {
     url = "github:FlorianNAdam/nirion";
     inputs.nixpkgs.follows = "nixpkgs";
-  };
-};
-```
-
-If arion is added separately, nirions input **must** follow arion:
-
-```nix
-inputs = {
-  arion = {
-    url = "github:hercules-ci/arion";
-    inputs.nixpkgs.follows = "nixpkgs";
-  };
-
-  nirion = {
-    url = "github:FlorianNAdam/nirion";
-    inputs.nixpkgs.follows = "nixpkgs";
-    inputs.arion.follows = "arion"; # ensures nirion tracks arion
   };
 };
 ```
@@ -73,67 +56,62 @@ virtualisation.nirion = {
 
 ### Projects
 
-The basics of nirion projects follow [arion](https://docs.hercules-ci.com/arion/) 1:1.\
-The only different is the usage of `virtualisation.nirion` instead of `virtualisation.arion`
+Nirion projects are Docker Compose projects defined directly in the NixOS module.
+The module generates Compose JSON files. Docker Compose accepts these files even though they are not YAML.
 
-#### Minimal: Plain command using nixpkgs
+#### Docker image from Docker Hub
 
 ```nix
-virtualisation.nirion.projects.webapp.settings = {
-  project.name = "webapp";
+virtualisation.nirion.projects.webapp = {
   services = {
-
     webserver = {
-      image.enableRecommendedContents = true;
-      service.useHostStore = true;
-      service.command = [ "sh" "-c" ''
-        cd "$$WEB_ROOT"
-        ${pkgs.python3}/bin/python -m http.server
-      ''];
-      service.ports = [
+      image = "nginx:latest";
+      ports = [
         "8000:8000" # host:container
       ];
-      service.environment.WEB_ROOT = "${pkgs.nix.doc}/share/doc/nix/manual";
-      service.stop_signal = "SIGINT";
+      restart = "unless-stopped";
     };
   };
 };
 ```
 
-#### NixOS: run full OS
+#### Compose project name override
 
 ```nix
-virtualisation.nirion.projects.some-project.settings = {
-  project.name = "full-nixos";
-  services.webserver = { pkgs, lib, ... }: {
-    nixos.useSystemd = true;
-    nixos.configuration.boot.tmp.useTmpfs = true;
-    nixos.configuration.services.nginx.enable = true;
-    nixos.configuration.services.nscd.enable = false;
-    nixos.configuration.system.nssModules = lib.mkForce [];
-    service.useHostStore = true;
-    service.ports = [
-      "8000:80" # host:container
-    ];
-  };
+virtualisation.nirion.projects.webapp = {
+  composeProjectName = "webapp-prod";
+  services.webserver.image = "nginx:latest";
 };
 ```
 
-#### Docker image from DockerHub
+#### Volumes and networks
 
 ```nix
-virtualisation.nirion = {
-  projects.hello-world.settings = {
-    project.name = "hello-world";
-    services = {
-      hello-world.service = {
-        image = "library/hello-world";
-        container_name = "hello-world";
-        restart = "always";
-      };
+virtualisation.nirion.projects.postgres = {
+  services.db = {
+    image = "postgres:16";
+    volumes = [ "data:/var/lib/postgresql/data" ];
+    environment.POSTGRES_DB = "app";
+  };
+
+  volumes.data = { };
+};
+```
+
+#### Healthchecks
+
+```nix
+{ config, ... }:
+{
+  virtualisation.nirion.projects.web.services.nginx = {
+    image = "nginx:latest";
+    healthcheck.test = config.lib.nirion.mkHttpHealthcheck {
+      port = 80;
+      path = "/";
+      expect.status = 200;
     };
   };
-};
+}
 ```
 
 ### The Lock File
@@ -142,6 +120,15 @@ One of the core features of nirion is the ability to lock docker images to speci
 To use this feature simply use `nirion lock` to create/populate the lock file.\
 Nirion will automatically use locked images if possible.
 To update images simply use `nirion update` to update the lock file and then rebuild the system.
+
+### NixOS Module Behavior
+
+The NixOS module uses Docker Compose v2 (`docker compose`) for generated systemd units.
+The current Rust CLI still shells out to the legacy `docker-compose` binary in some commands; that compatibility will be cleaned up separately.
+
+`virtualisation.nirion.enableSops` is intentionally opt-in. If it is enabled, a module that provides `sops.templates`, such as sops-nix, must also be imported.
+
+Generated systemd services currently run `docker compose up -d` during start. Stop/reload behavior is intentionally minimal for now and should be expanded separately if Nirion should fully manage service lifecycle.
 
 
 ## Nirion-Cli
@@ -161,12 +148,12 @@ nirion [OPTIONS] <COMMAND>
 | `lock`         | Create missing lock file entries                      |
 | `exec`         | Execute a command in a running service container      |
 | `logs`         | View output from service containers                   |
-| `cat`          | Print the Docker Compose file as YAML                 |
+| `cat`          | Print the Docker Compose file                         |
 | `ps`           | List running service containers                       |
 | `top`          | Display running processes of a service container      |
 | `volumes`      | List volumes                                          |
 | `restart`      | Restart service containers                            |
-| `compose-exec` | Run a docker-compose command for a project or service |
+| `compose-exec` | Run a Docker Compose command for a project or service |
 | `monitor`      | Monitor running containers (TBD)                      |
 | `patch`        | Patch service files using `mirage-patch`              |
 | `inspect`      | Inspect images and services                           |
@@ -211,7 +198,7 @@ View logs of a service:
 nirion logs application.db
 ```
 
-Print the Docker Compose YAML:
+Print the Docker Compose file:
 
 ```bash
 nirion cat

@@ -1,15 +1,11 @@
 {
-  description = "Convenience wrapper for arion";
+  description = "Docker Compose management for NixOS";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     naersk = {
       url = "github:nix-community/naersk";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-    arion = {
-      url = "github:hercules-ci/arion";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -20,7 +16,6 @@
       nixpkgs,
       flake-utils,
       naersk,
-      arion,
     }:
 
     flake-utils.lib.eachDefaultSystem (
@@ -40,6 +35,6 @@
       }
     )
     // {
-      nixosModules.nirion = import ./nix/module.nix { inherit self arion; };
+      nixosModules.nirion = import ./nix/module.nix { inherit self; };
     };
 }

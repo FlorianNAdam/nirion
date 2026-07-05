@@ -1,98 +1,96 @@
-{ config, lib }:
+{ lib }:
 
+let
+  inherit (lib) mkOption types;
+in
 {
-  virtualisation.nirion = {
-    # Lockfile
-    lockFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
-      default = null;
-      description = "Optional path to image digest lock file";
-    };
-    lockFileOutput = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      description = "Optional writable output path for lockfile updates";
-    };
+  lockFile = mkOption {
+    type = types.nullOr types.path;
+    default = null;
+    description = "Optional path to image digest lock file.";
+  };
 
-    # Nix-eval
-    nixEval = {
-      target = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
+  lockFileOutput = mkOption {
+    type = types.nullOr types.str;
+    default = null;
+    description = "Optional writable output path for lock file updates.";
+  };
+
+  authFile = mkOption {
+    type = types.nullOr types.path;
+    default = null;
+    description = "Optional path to OCI registry auth config.";
+  };
+
+  nixEval = {
+    target = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+    };
+    rawTarget = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+    };
+    nixos = {
+      config = mkOption {
+        type = types.nullOr types.str;
         default = null;
-        description = "Target for nix-eval (suffix will be appended)";
       };
-      rawTarget = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
+      host = mkOption {
+        type = types.nullOr types.str;
         default = null;
-        description = "Raw target for nix-eval (used as-is)";
-      };
-      nixos = {
-        config = lib.mkOption {
-          type = lib.types.nullOr lib.types.str;
-          default = null;
-        };
-        host = lib.mkOption {
-          type = lib.types.nullOr lib.types.str;
-          default = null;
-        };
       };
     };
+  };
 
-    # Auth
-    authFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
-      default = null;
-      description = "Optional path to file with oci registry auth configs";
-    };
+  projects = mkOption {
+    type = types.attrsOf (types.submodule ./compose/project.nix);
+    default = { };
+    description = "Nirion Docker Compose projects.";
+  };
 
-    # Arion
-    projects = lib.mkOption {
-      type = lib.types.attrsOf (lib.types.anything);
-      default = { };
-      description = "Arion project configuration with lockfile support";
-    };
+  enableSops = mkOption {
+    type = types.bool;
+    default = false;
+    description = "Write compose files through sops-nix templates. This is intentionally opt-in.";
+  };
 
-    # Sops
-    enableSops = lib.mkOption {
-      type = lib.types.bool;
-      default = config ? sops;
-      description = "Enable the sops integration";
-    };
+  images = mkOption {
+    type = types.attrsOf types.str;
+    default = { };
+    description = "Image references to resolve with lock file digests.";
+  };
 
-    # Internal
-    images = lib.mkOption {
-      type = lib.types.attrsOf lib.types.str;
-      default = { };
-      description = "Image references to be resolved with digests";
+  out = {
+    images_v2 = mkOption {
+      type = types.attrsOf types.anything;
+      readOnly = true;
+      internal = true;
     };
-    out = {
-      images_v2 = lib.mkOption {
-        type = lib.types.attrsOf lib.types.anything;
-        readOnly = true;
-        internal = true;
-        description = "Image references to be resolved with digests";
-      };
-      locked_images = lib.mkOption {
-        type = lib.types.attrsOf lib.types.str;
-        readOnly = true;
-        internal = true;
-        description = "Resolved image references with digests";
-      };
-      projects = lib.mkOption {
-        type = lib.types.attrsOf lib.types.anything;
-        readOnly = true;
-        internal = true;
-      };
-      projectsFileStatic = lib.mkOption {
-        type = lib.types.str;
-        readOnly = true;
-        internal = true;
-      };
-      projectsFile = lib.mkOption {
-        type = lib.types.str;
-        readOnly = true;
-        internal = true;
-      };
+    locked_images = mkOption {
+      type = types.attrsOf types.str;
+      readOnly = true;
+      internal = true;
+    };
+    projects = mkOption {
+      type = types.attrsOf types.anything;
+      readOnly = true;
+      internal = true;
+    };
+    compose = mkOption {
+      type = types.attrsOf types.anything;
+      readOnly = true;
+      internal = true;
+    };
+    projectsFile = mkOption {
+      type = types.str;
+      readOnly = true;
+      internal = true;
+    };
+    projectsFileStatic = mkOption {
+      type = types.str;
+      readOnly = true;
+      internal = true;
     };
   };
 }
