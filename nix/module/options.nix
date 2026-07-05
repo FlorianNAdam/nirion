@@ -5,15 +5,13 @@ let
 in
 {
   lockFile = mkOption {
-    type = types.nullOr types.path;
-    default = null;
-    description = "Optional path to image digest lock file.";
+    type = types.path;
+    description = "Path to image digest lock file.";
   };
 
   lockFileOutput = mkOption {
-    type = types.nullOr types.str;
-    default = null;
-    description = "Optional writable output path for lock file updates.";
+    type = types.str;
+    description = "Writable output path for lock file updates.";
   };
 
   authFile = mkOption {

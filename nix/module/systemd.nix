@@ -1,20 +1,14 @@
 {
   cfg,
+  envVars,
   lib,
+  nirionPkg,
   pkgs,
-  sopsTemplatePath,
-  hasSops,
 }:
 
 lib.mkIf (cfg.projects != { }) {
   systemd.services = lib.mapAttrs' (
     projectName: project:
-    let
-      compose = cfg.out.compose.${projectName};
-      composeFile =
-        if cfg.sops.overrideComposeFile && hasSops then sopsTemplatePath projectName else compose.file;
-      composeArgs = "--file ${lib.escapeShellArg composeFile} --project-name ${lib.escapeShellArg compose.name}";
-    in
     lib.nameValuePair "nirion-${projectName}" {
       wantedBy = [ "multi-user.target" ];
       after = [
@@ -22,15 +16,22 @@ lib.mkIf (cfg.projects != { }) {
         "docker.socket"
       ];
       requires = [ "docker.service" ];
-      path = [ pkgs.docker ];
+      environment = envVars;
+      path = [
+        nirionPkg
+        pkgs.docker
+      ];
       script = ''
-        docker compose ${composeArgs} up -d
+        nirion up --no-tui ${lib.escapeShellArg projectName}
       '';
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
         ExecReload = ''
-          docker compose ${composeArgs} up -d
+          nirion reload --no-tui ${lib.escapeShellArg projectName}
+        '';
+        ExecStop = ''
+          nirion down --no-tui ${lib.escapeShellArg projectName}
         '';
       };
     }

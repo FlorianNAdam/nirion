@@ -38,10 +38,10 @@ nirion needs some configuration to work correctly:
 
 ```nix
 virtualisation.nirion = {
-  # lock file readable by nix / nirion
+  # required lock file readable by nix / nirion
   lockFile = ./nirion.lock;
 
-  # lock file writable by nirion
+  # required lock file writable by nirion
   lockFileOutput = "${host.homeDirectory}/my-nixos/nirion.lock";
 
   # path to the flake for dynamic reloads / evaluation
@@ -157,12 +157,11 @@ To update images simply use `nirion update` to update the lock file and then reb
 
 ### NixOS Module Behavior
 
-The NixOS module uses Docker Compose v2 (`docker compose`) for generated systemd units.
-The Rust CLI also shells out to Docker Compose v2 (`docker compose`).
+Generated systemd units call `nirion up --no-tui`, `nirion reload --no-tui`, and `nirion down --no-tui` for start, reload, and stop. Systemd restart uses stop plus start. The Rust CLI shells out to Docker Compose v2 (`docker compose`) under the hood.
 
 `virtualisation.nirion.sops.overrideComposeFile` is intentionally opt-in. If it is enabled, generated compose files are written through sops-nix templates. A module that provides `sops.templates`, such as sops-nix, must also be imported.
 
-Generated systemd services currently run `docker compose up -d` during start. Stop/reload behavior is intentionally minimal for now and should be expanded separately if Nirion should fully manage service lifecycle.
+This means `sops.secrets.<name>.reloadUnits = [ "nirion-<project>.service" ];` can be used to reload a project after secret material changes.
 
 
 ## Nirion-Cli

@@ -223,10 +223,10 @@ in
     (import ./module/systemd.nix {
       inherit
         cfg
+        envVars
         lib
+        nirionPkg
         pkgs
-        sopsTemplatePath
-        hasSops
         ;
     })
   ];
