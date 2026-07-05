@@ -12,6 +12,7 @@ lib.mkIf (cfg.projects != { }) {
     let
       compose = cfg.out.compose.${projectName};
       composeFile = if cfg.enableSops && hasSops then sopsTemplatePath projectName else compose.file;
+      composeArgs = "--file ${lib.escapeShellArg composeFile} --project-name ${lib.escapeShellArg compose.name}";
     in
     lib.nameValuePair "nirion-${projectName}" {
       wantedBy = [ "multi-user.target" ];
@@ -21,9 +22,19 @@ lib.mkIf (cfg.projects != { }) {
       ];
       requires = [ "docker.service" ];
       path = [ pkgs.docker ];
-      script = ''
-        docker compose --file ${lib.escapeShellArg composeFile} --project-name ${lib.escapeShellArg compose.name} up -d
-      '';
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = ''
+          docker-compose ${composeArgs} up -d
+        '';
+        ExecStop = ''
+          docker-compose ${composeArgs} down
+        '';
+        ExecReload = ''
+          docker-compose ${composeArgs} up -d
+        '';
+      };
     }
   ) cfg.projects;
 }
