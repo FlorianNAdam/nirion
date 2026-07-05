@@ -10,7 +10,7 @@ use std::path::Path;
 
 use crate::ClapSelector;
 
-/// Print the docker compose file as yaml
+/// Print the docker compose file
 #[derive(Parser, Debug, Clone)]
 pub struct CatArgs {
     /// Target selector: *, project, or project.service
@@ -33,12 +33,12 @@ pub async fn handle_cat(
         TargetSelector::All => {
             for (project_name, project) in projects.iter() {
                 println!("Project {}:", project_name);
-                print_full_yaml(project_name, project)?;
+                print_full_compose(project_name, project)?;
             }
         }
         TargetSelector::Project(proj) => {
             let project = &projects[&proj.name];
-            print_full_yaml(&proj.name, project)?;
+            print_full_compose(&proj.name, project)?;
         }
         TargetSelector::Service(img) => {
             let project = &projects[&img.project];
@@ -49,20 +49,22 @@ pub async fn handle_cat(
     Ok(())
 }
 
-fn load_yaml(path: &str) -> Result<Value> {
+fn load_compose(path: &str) -> Result<Value> {
     let data = fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("Failed reading {}: {}", path, e))?;
 
-    serde_yaml::from_str::<Value>(&data)
-        .map_err(|e| anyhow::anyhow!("YAML parse error in {}: {}", path, e))
+    serde_yaml::from_str::<Value>(&data).map_err(|e| {
+        anyhow::anyhow!("Compose file parse error in {}: {}", path, e)
+    })
 }
 
-fn print_full_yaml(_project_name: &str, project: &Project) -> Result<()> {
+fn print_full_compose(_project_name: &str, project: &Project) -> Result<()> {
     let path = &project.docker_compose;
 
-    let yaml = load_yaml(path)?;
-    let pretty = serde_yaml::to_string(&yaml)
-        .map_err(|e| anyhow::anyhow!("Failed to pretty-print YAML: {}", e))?;
+    let compose = load_compose(path)?;
+    let pretty = serde_yaml::to_string(&compose).map_err(|e| {
+        anyhow::anyhow!("Failed to pretty-print compose file: {}", e)
+    })?;
 
     println!("{}", pretty);
     println!();
@@ -77,15 +79,15 @@ fn print_service_section(
 ) -> Result<()> {
     let path = &project.docker_compose;
 
-    let yaml = load_yaml(path)?;
+    let compose = load_compose(path)?;
 
-    let services = yaml
-        .get("services")
-        .ok_or_else(|| anyhow::anyhow!("No `services:` section in YAML"))?;
+    let services = compose.get("services").ok_or_else(|| {
+        anyhow::anyhow!("No `services:` section in compose file")
+    })?;
 
     let services_map = services
         .as_mapping()
-        .ok_or_else(|| anyhow::anyhow!("`services:` is not a YAML mapping"))?;
+        .ok_or_else(|| anyhow::anyhow!("`services:` is not a mapping"))?;
 
     let service_value = services_map
         .get(&Value::String(service_name.to_string()))
@@ -105,8 +107,10 @@ fn print_service_section(
     );
     root_map.insert(Value::String("services".into()), Value::Mapping(svc_map));
 
-    let pretty = serde_yaml::to_string(&Value::Mapping(root_map))
-        .map_err(|e| anyhow::anyhow!("Failed to pretty-print YAML: {}", e))?;
+    let pretty =
+        serde_yaml::to_string(&Value::Mapping(root_map)).map_err(|e| {
+            anyhow::anyhow!("Failed to pretty-print compose file: {}", e)
+        })?;
 
     println!("{}", pretty);
     println!();

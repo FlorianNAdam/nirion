@@ -181,7 +181,7 @@ pub fn healthchecks_finished(
                 }
             }
 
-            if service.healthcheck.is_none() {
+            if !service.healthcheck {
                 continue;
             }
 

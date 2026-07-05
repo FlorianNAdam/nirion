@@ -103,7 +103,7 @@ fn load_compose(path: &str) -> anyhow::Result<ComposeFile> {
         .with_context(|| format!("Failed reading {}", path))?;
 
     serde_yaml::from_str::<ComposeFile>(&data)
-        .with_context(|| format!("YAML parse error in {}", path))
+        .with_context(|| format!("Compose file parse error in {}", path))
 }
 
 #[derive(Debug, Deserialize)]

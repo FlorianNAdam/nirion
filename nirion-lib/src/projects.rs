@@ -107,7 +107,8 @@ pub struct Project {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Service {
     pub image: Option<String>,
-    pub healthcheck: Option<serde_json::Value>,
+    #[serde(default)]
+    pub healthcheck: bool,
     pub restart: Option<String>,
 }
 
