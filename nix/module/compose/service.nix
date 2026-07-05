@@ -1,12 +1,92 @@
 {
   config,
   lib,
+  options,
   ...
 }:
 
 let
   inherit (lib) mkOption types;
-  composeTypes = import ./types.nix { inherit lib; };
+  configuredOptions = lib.filterAttrs (_: option: option.highestPrio < 1500);
+
+  capAdd = lib.attrNames (lib.filterAttrs (_: value: value == true) config.capabilities);
+  capDrop = lib.attrNames (lib.filterAttrs (_: value: value == false) config.capabilities);
+
+  optionValues = opts: lib.mapAttrs (_: option: option.value) (configuredOptions opts);
+
+  renderedBuild = optionValues (
+    builtins.intersectAttrs options.build {
+      context = null;
+      dockerfile = null;
+      target = null;
+      args = null;
+    }
+  );
+
+  renderedHealthcheck =
+    if config.healthcheck.test != null || config.healthcheck.disable != null then
+      lib.filterAttrs (_: value: value != null) {
+        inherit (config.healthcheck)
+          test
+          interval
+          timeout
+          start_period
+          retries
+          disable
+          ;
+      }
+    else
+      { };
+
+  healthcheckType = types.submodule {
+    options = {
+      test = mkOption {
+        type = types.nullOr (types.listOf types.str);
+        default = null;
+      };
+      interval = mkOption {
+        type = types.str;
+        default = "30s";
+      };
+      timeout = mkOption {
+        type = types.str;
+        default = "30s";
+      };
+      start_period = mkOption {
+        type = types.str;
+        default = "0s";
+      };
+      retries = mkOption {
+        type = types.int;
+        default = 3;
+      };
+      disable = mkOption {
+        type = types.nullOr types.bool;
+        default = null;
+      };
+    };
+  };
+
+  buildType = types.submodule {
+    options = {
+      context = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+      };
+      dockerfile = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+      };
+      target = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+      };
+      args = mkOption {
+        type = types.attrsOf types.anything;
+        default = { };
+      };
+    };
+  };
 in
 {
   options = {
@@ -19,7 +99,7 @@ in
       default = null;
     };
     build = mkOption {
-      type = composeTypes.build;
+      type = buildType;
       default = { };
     };
     command = mkOption {
@@ -47,7 +127,7 @@ in
       default = null;
     };
     environment = mkOption {
-      type = types.attrsOf composeTypes.environmentValue;
+      type = types.attrsOf (types.either types.str types.int);
       default = { };
     };
     env_file = mkOption {
@@ -83,7 +163,7 @@ in
       default = [ ];
     };
     healthcheck = mkOption {
-      type = composeTypes.healthcheck;
+      type = healthcheckType;
       default = { };
     };
     restart = mkOption {
@@ -146,5 +226,57 @@ in
       type = types.attrsOf types.anything;
       default = { };
     };
+    out.compose = mkOption {
+      type = types.attrsOf types.anything;
+      readOnly = true;
+      internal = true;
+    };
   };
+
+  config.out.compose =
+    lib.mapAttrs (_: option: option.value) (configuredOptions {
+      inherit (options)
+        command
+        entrypoint
+        container_name
+        hostname
+        user
+        working_dir
+        environment
+        env_file
+        labels
+        ports
+        expose
+        volumes
+        tmpfs
+        devices
+        depends_on
+        restart
+        stop_signal
+        stop_grace_period
+        privileged
+        tty
+        dns
+        extra_hosts
+        links
+        external_links
+        network_mode
+        networks
+        sysctls
+        blkio_config
+        ;
+    })
+    // lib.optionalAttrs (renderedBuild != { }) {
+      build = renderedBuild;
+    }
+    // lib.optionalAttrs (renderedHealthcheck != { }) {
+      healthcheck = renderedHealthcheck;
+    }
+    // lib.optionalAttrs (capAdd != [ ]) {
+      cap_add = capAdd;
+    }
+    // lib.optionalAttrs (capDrop != [ ]) {
+      cap_drop = capDrop;
+    }
+    // config.extraOptions;
 }

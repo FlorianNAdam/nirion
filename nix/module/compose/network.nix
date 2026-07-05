@@ -1,8 +1,13 @@
-{ config, lib, ... }:
+{
+  config,
+  lib,
+  options,
+  ...
+}:
 
 let
   inherit (lib) mkOption types;
-  nonEmpty = value: value != null && value != { };
+  configuredOptions = lib.filterAttrs (_: option: option.highestPrio < 1500);
 in
 {
   options = {
@@ -14,8 +19,12 @@ in
       type = types.nullOr types.str;
       default = null;
     };
+    driver_opts = mkOption {
+      type = types.attrsOf types.str;
+      default = { };
+    };
     external = mkOption {
-      type = types.nullOr (types.either types.bool types.anything);
+      type = types.nullOr types.bool;
       default = null;
     };
     internal = mkOption {
@@ -50,10 +59,11 @@ in
   };
 
   config.out.compose =
-    lib.filterAttrs (_: nonEmpty) {
-      inherit (config)
+    lib.mapAttrs (_: option: option.value) (configuredOptions {
+      inherit (options)
         name
         driver
+        driver_opts
         external
         internal
         attachable
@@ -61,6 +71,6 @@ in
         ipam
         labels
         ;
-    }
+    })
     // config.extraOptions;
 }

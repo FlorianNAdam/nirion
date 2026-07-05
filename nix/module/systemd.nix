@@ -22,15 +22,12 @@ lib.mkIf (cfg.projects != { }) {
       ];
       requires = [ "docker.service" ];
       path = [ pkgs.docker ];
+      script = ''
+        docker-compose ${composeArgs} up -d
+      '';
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        ExecStart = ''
-          docker-compose ${composeArgs} up -d
-        '';
-        ExecStop = ''
-          docker-compose ${composeArgs} down
-        '';
         ExecReload = ''
           docker-compose ${composeArgs} up -d
         '';

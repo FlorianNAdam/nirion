@@ -141,10 +141,10 @@ in
           {
             name = compose.name;
             docker-compose = composeFile;
-            services = lib.mapAttrs (_: service: {
-              image = service.image or null;
-              healthcheck = service.healthcheck or null;
-              restart = service.restart or null;
+            services = lib.mapAttrs (serviceName: renderedService: {
+              image = project.services.${serviceName}.image or null;
+              healthcheck = renderedService ? healthcheck;
+              restart = renderedService.restart or null;
             }) compose.services;
           }
         ) cfg.projects;
