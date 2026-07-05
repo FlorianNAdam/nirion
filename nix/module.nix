@@ -63,14 +63,17 @@ let
 
   sopsTemplateName = projectName: "nirion/${projectName}/compose.yaml";
   sopsTemplatePath = projectName: config.sops.templates.${sopsTemplateName projectName}.path;
-  hasSops = options ? sops.templates;
+  hasSops = options ? sops.secrets && options ? sops.templates;
   hasProjectSops = lib.any (project: project.sops.secrets != { } || project.sops.templates != { }) (
     lib.attrValues cfg.projects
   );
 
   projectSopsDefaults =
     project:
-    lib.optionalAttrs (project.sops.group != null) {
+    lib.optionalAttrs (project.sops.file != null) {
+      sopsFile = lib.mkDefault project.sops.file;
+    }
+    // lib.optionalAttrs (project.sops.group != null) {
       owner = lib.mkDefault "root";
       group = lib.mkDefault project.sops.group.name;
       mode = lib.mkDefault "0440";

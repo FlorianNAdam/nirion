@@ -23,6 +23,11 @@ let
   };
   sopsType = types.submodule {
     options = {
+      file = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = "Default sops file for this project's secrets.";
+      };
       group = mkOption {
         type = types.nullOr sopsGroupType;
         default = null;

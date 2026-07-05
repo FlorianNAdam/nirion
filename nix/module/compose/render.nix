@@ -22,7 +22,7 @@ let
     in
     service.out.compose
     // lib.optionalAttrs (sopsGroupAdd != [ ]) {
-      group_add = (service.out.compose.group_add or [ ]) ++ sopsGroupAdd;
+      group_add = lib.unique ((service.out.compose.group_add or [ ]) ++ sopsGroupAdd);
     }
     // lib.optionalAttrs (resolvedImage != null) {
       image = resolvedImage;
