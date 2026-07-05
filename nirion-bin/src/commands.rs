@@ -48,6 +48,7 @@ macro_rules! define_commands {
 define_commands!([
     up,
     down,
+    reload,
     start,
     stop,
     list,

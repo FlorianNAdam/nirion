@@ -177,6 +177,7 @@ nirion [OPTIONS] <COMMAND>
 | -------------- | ----------------------------------------------------- |
 | `up`           | Create and start service containers                   |
 | `down`         | Stop and remove service containers and networks       |
+| `reload`       | Stop and recreate service containers                  |
 | `list`         | List projects or services                             |
 | `update`       | Update lock file entries                              |
 | `lock`         | Create missing lock file entries                      |
