@@ -28,10 +28,10 @@ lib.mkIf (cfg.projects != { }) {
         Type = "oneshot";
         RemainAfterExit = true;
         ExecReload = ''
-          nirion reload --no-tui ${lib.escapeShellArg projectName}
+          ${nirionPkg}/bin/nirion reload --no-tui ${lib.escapeShellArg projectName}
         '';
         ExecStop = ''
-          nirion down --no-tui ${lib.escapeShellArg projectName}
+          ${nirionPkg}/bin/nirion down --no-tui ${lib.escapeShellArg projectName}
         '';
       };
     }
