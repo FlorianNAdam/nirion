@@ -61,7 +61,7 @@ let
       ;
   };
 
-  sopsTemplateName = projectName: "nirion/${projectName}/docker-compose.json";
+  sopsTemplateName = projectName: "nirion/${projectName}/compose.yaml";
   sopsTemplatePath = projectName: config.sops.templates.${sopsTemplateName projectName}.path;
   hasSops = options ? sops.templates;
 
@@ -144,7 +144,7 @@ in
           in
           {
             name = compose.name;
-            docker-compose = composeFile;
+            dockerCompose = composeFile;
             services = lib.mapAttrs (serviceName: renderedService: {
               image = project.services.${serviceName}.image or null;
               healthcheck = renderedService ? healthcheck;

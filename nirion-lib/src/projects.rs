@@ -99,7 +99,7 @@ impl Deref for ProjectName {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
     pub name: ProjectName,
-    #[serde(rename = "docker-compose")]
+    #[serde(rename = "dockerCompose")]
     pub docker_compose: String,
     pub services: BTreeMap<String, Service>,
 }

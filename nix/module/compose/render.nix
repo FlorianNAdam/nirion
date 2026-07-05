@@ -36,7 +36,7 @@ lib.mapAttrs (
     // project.extraOptions;
 
     text = builtins.toJSON attrs;
-    file = pkgs.writeText "docker-compose-${projectName}.json" text;
+    file = pkgs.writeText "compose-${projectName}.yaml" text;
   in
   {
     inherit
