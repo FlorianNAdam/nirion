@@ -102,14 +102,28 @@ let
     ) project.sops.secrets
   ) { } cfg.projects;
 
-  projectSopsTemplateDefaults = projectName: project: projectSopsAccessDefaults project;
+  projectSopsTemplate =
+    projectName: project: template:
+    {
+      content = template.content;
+      mode = lib.mkDefault template.mode;
+      reloadUnits =
+        template.reloadUnits ++ lib.optional project.sops.reloadOnChange "nirion-${projectName}.service";
+      restartUnits = template.restartUnits;
+    }
+    // lib.optionalAttrs (template.owner != null) {
+      owner = template.owner;
+    }
+    // lib.optionalAttrs (template.group != null) {
+      group = template.group;
+    }
+    // projectSopsAccessDefaults project;
 
   projectSopsTemplates = lib.foldlAttrs (
     acc: projectName: project:
     acc
     // lib.mapAttrs (
-      _: template:
-      projectSopsEntry projectName project (projectSopsTemplateDefaults projectName project) template
+      _: template: projectSopsTemplate projectName project template
     ) project.sops.templates
   ) { } cfg.projects;
 

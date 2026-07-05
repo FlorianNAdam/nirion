@@ -23,6 +23,34 @@ let
       };
     };
   };
+  sopsTemplateType = types.submodule {
+    options = {
+      content = mkOption {
+        type = types.lines;
+        default = "";
+      };
+      owner = mkOption {
+        type = types.nullOr types.singleLineStr;
+        default = null;
+      };
+      group = mkOption {
+        type = types.nullOr types.singleLineStr;
+        default = null;
+      };
+      mode = mkOption {
+        type = types.singleLineStr;
+        default = "0400";
+      };
+      reloadUnits = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+      };
+      restartUnits = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+      };
+    };
+  };
   sopsType = types.submodule {
     options = {
       file = mkOption {
@@ -46,7 +74,7 @@ let
         description = "Project sops-nix secrets.";
       };
       templates = mkOption {
-        type = types.attrsOf types.anything;
+        type = types.attrsOf sopsTemplateType;
         default = { };
         description = "Project sops-nix templates.";
       };
