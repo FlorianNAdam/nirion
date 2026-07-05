@@ -68,25 +68,32 @@ let
     lib.attrValues cfg.projects
   );
 
-  projectSopsDefaults =
+  projectSopsAccessDefaults =
     project:
-    lib.optionalAttrs (project.sops.file != null) {
-      sopsFile = lib.mkDefault project.sops.file;
-    }
-    // lib.optionalAttrs (project.sops.group != null) {
+    lib.optionalAttrs (project.sops.group != null) {
       owner = lib.mkDefault "root";
       group = lib.mkDefault project.sops.group.name;
       mode = lib.mkDefault "0440";
     };
 
+  projectSopsSecretDefaults =
+    project:
+    lib.optionalAttrs (project.sops.file != null) {
+      sopsFile = lib.mkDefault project.sops.file;
+    }
+    // projectSopsAccessDefaults project;
+
   projectSopsSecrets = lib.foldlAttrs (
     acc: _: project:
-    acc // lib.mapAttrs (_: secret: (projectSopsDefaults project) // secret) project.sops.secrets
+    acc // lib.mapAttrs (_: secret: (projectSopsSecretDefaults project) // secret) project.sops.secrets
   ) { } cfg.projects;
 
   projectSopsTemplates = lib.foldlAttrs (
     acc: _: project:
-    acc // lib.mapAttrs (_: template: (projectSopsDefaults project) // template) project.sops.templates
+    acc
+    // lib.mapAttrs (
+      _: template: (projectSopsAccessDefaults project) // template
+    ) project.sops.templates
   ) { } cfg.projects;
 
 in
