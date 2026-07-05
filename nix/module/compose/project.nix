@@ -9,6 +9,37 @@ let
   inherit (lib) mkOption types;
   serviceModule = import ./service.nix;
   networkModule = import ./network.nix;
+  sopsGroupType = types.submodule {
+    options = {
+      name = mkOption {
+        type = types.str;
+        description = "Project secret read-access group name.";
+      };
+      gid = mkOption {
+        type = types.int;
+        description = "Project secret read-access group ID.";
+      };
+    };
+  };
+  sopsType = types.submodule {
+    options = {
+      group = mkOption {
+        type = types.nullOr sopsGroupType;
+        default = null;
+        description = "Optional project secret read-access group.";
+      };
+      secrets = mkOption {
+        type = types.attrsOf types.anything;
+        default = { };
+        description = "Project sops-nix secrets.";
+      };
+      templates = mkOption {
+        type = types.attrsOf types.anything;
+        default = { };
+        description = "Project sops-nix templates.";
+      };
+    };
+  };
   defaultNetwork = lib.optionalAttrs config.enableDefaultNetwork {
     default = {
       name = config.composeProjectName;
@@ -42,6 +73,11 @@ in
     extraOptions = mkOption {
       type = types.attrsOf types.anything;
       default = { };
+    };
+    sops = mkOption {
+      type = sopsType;
+      default = { };
+      description = "Project-level sops-nix secret and template declarations.";
     };
     out = {
       networks = mkOption {

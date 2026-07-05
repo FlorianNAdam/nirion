@@ -64,6 +64,27 @@ let
   sopsTemplateName = projectName: "nirion/${projectName}/compose.yaml";
   sopsTemplatePath = projectName: config.sops.templates.${sopsTemplateName projectName}.path;
   hasSops = options ? sops.templates;
+  hasProjectSops = lib.any (project: project.sops.secrets != { } || project.sops.templates != { }) (
+    lib.attrValues cfg.projects
+  );
+
+  projectSopsDefaults =
+    project:
+    lib.optionalAttrs (project.sops.group != null) {
+      owner = lib.mkDefault "root";
+      group = lib.mkDefault project.sops.group.name;
+      mode = lib.mkDefault "0440";
+    };
+
+  projectSopsSecrets = lib.foldlAttrs (
+    acc: _: project:
+    acc // lib.mapAttrs (_: secret: (projectSopsDefaults project) // secret) project.sops.secrets
+  ) { } cfg.projects;
+
+  projectSopsTemplates = lib.foldlAttrs (
+    acc: _: project:
+    acc // lib.mapAttrs (_: template: (projectSopsDefaults project) // template) project.sops.templates
+  ) { } cfg.projects;
 
 in
 {
@@ -83,6 +104,10 @@ in
         {
           assertion = !cfg.enableSops || hasSops;
           message = "virtualisation.nirion.enableSops requires a module that provides the sops.templates option, such as sops-nix.";
+        }
+        {
+          assertion = !hasProjectSops || hasSops;
+          message = "virtualisation.nirion.projects.*.sops requires a module that provides the sops options, such as sops-nix.";
         }
         {
           assertion = (cfg.nixEval.nixos.config == null) == (cfg.nixEval.nixos.host == null);
@@ -168,6 +193,21 @@ in
         }) cfg.projects;
       }
     ))
+
+    {
+      users.groups = lib.foldlAttrs (
+        acc: _: project:
+        acc
+        // lib.optionalAttrs (project.sops.group != null) {
+          ${project.sops.group.name}.gid = project.sops.group.gid;
+        }
+      ) { } cfg.projects;
+    }
+
+    (lib.optionalAttrs hasSops {
+      sops.secrets = projectSopsSecrets;
+      sops.templates = projectSopsTemplates;
+    })
 
     (import ./module/systemd.nix {
       inherit

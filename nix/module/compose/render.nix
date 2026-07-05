@@ -6,7 +6,7 @@
 
 let
   renderService =
-    projectName: serviceName: service:
+    projectName: project: serviceName: service:
     let
       resolvedImage =
         if service.lockedImage != null then
@@ -17,8 +17,13 @@ let
         else
           null;
 
+      sopsGroupAdd = lib.optional (project.sops.group != null) (toString project.sops.group.gid);
+
     in
     service.out.compose
+    // lib.optionalAttrs (sopsGroupAdd != [ ]) {
+      group_add = (service.out.compose.group_add or [ ]) ++ sopsGroupAdd;
+    }
     // lib.optionalAttrs (resolvedImage != null) {
       image = resolvedImage;
     };
@@ -26,7 +31,7 @@ in
 lib.mapAttrs (
   projectName: project:
   let
-    services = lib.mapAttrs (renderService projectName) project.services;
+    services = lib.mapAttrs (renderService projectName project) project.services;
 
     attrs = {
       inherit services;
