@@ -25,17 +25,33 @@ let
   };
   sopsTemplateType = types.submodule {
     options = {
+      path = mkOption {
+        type = types.nullOr types.singleLineStr;
+        default = null;
+      };
       content = mkOption {
         type = types.lines;
         default = "";
+      };
+      file = mkOption {
+        type = types.nullOr types.path;
+        default = null;
       };
       owner = mkOption {
         type = types.nullOr types.singleLineStr;
         default = null;
       };
+      uid = mkOption {
+        type = types.nullOr types.int;
+        default = 0;
+      };
       group = mkOption {
         type = types.nullOr types.singleLineStr;
         default = null;
+      };
+      gid = mkOption {
+        type = types.nullOr types.int;
+        default = 0;
       };
       mode = mkOption {
         type = types.singleLineStr;

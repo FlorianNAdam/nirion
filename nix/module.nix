@@ -107,9 +107,17 @@ let
     {
       content = template.content;
       mode = lib.mkDefault template.mode;
+      uid = template.uid;
+      gid = template.gid;
       reloadUnits =
         template.reloadUnits ++ lib.optional project.sops.reloadOnChange "nirion-${projectName}.service";
       restartUnits = template.restartUnits;
+    }
+    // lib.optionalAttrs (template.path != null) {
+      path = template.path;
+    }
+    // lib.optionalAttrs (template.file != null) {
+      file = template.file;
     }
     // lib.optionalAttrs (template.owner != null) {
       owner = template.owner;
