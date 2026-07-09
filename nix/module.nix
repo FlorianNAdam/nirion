@@ -239,7 +239,12 @@ in
       lib.mkIf cfg.sops.overrideComposeFile {
         sops.templates = lib.mapAttrs' (projectName: project: {
           name = sopsTemplateName projectName;
-          value.content = cfg.out.compose.${projectName}.text;
+          value = {
+            content = cfg.out.compose.${projectName}.text;
+          }
+          // lib.optionalAttrs project.sops.reloadOnChange {
+            reloadUnits = [ "nirion-${projectName}.service" ];
+          };
         }) cfg.projects;
       }
     ))
