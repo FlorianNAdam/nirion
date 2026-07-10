@@ -1,3 +1,4 @@
+use anyhow::Context;
 use nirion_lib::projects::ProjectName;
 use std::{
     collections::BTreeMap, ffi::OsStr, ops::Deref, sync::Arc, time::Duration,
@@ -84,6 +85,7 @@ async fn project_refresh_thread(
 pub struct DockerMonitoredProcess {
     pub monitor: DockerProjectMonitor,
     finished: Arc<RwLock<bool>>,
+    error: Arc<RwLock<Option<String>>>,
 }
 
 impl DockerMonitoredProcess {
@@ -95,6 +97,7 @@ impl DockerMonitoredProcess {
         let monitor = DockerProjectMonitor::new(&project, refresh_interval);
 
         let finished = Arc::new(RwLock::new(false));
+        let error = Arc::new(RwLock::new(None));
 
         let _ = {
             let compose_file = project.docker_compose.clone();
@@ -103,9 +106,10 @@ impl DockerMonitoredProcess {
                 .map(|a| a.as_ref().to_os_string())
                 .collect();
             let finished = finished.clone();
+            let error = error.clone();
 
             tokio::spawn(async move {
-                let _ = Command::new("docker")
+                let result = Command::new("docker")
                     .arg("compose")
                     .arg("-f")
                     .arg(compose_file)
@@ -113,13 +117,40 @@ impl DockerMonitoredProcess {
                     .arg(project.name.deref())
                     .args(args)
                     .output()
-                    .await;
+                    .await
+                    .context("failed to execute docker compose")
+                    .and_then(|output| {
+                        if output.status.success() {
+                            Ok(())
+                        } else {
+                            let stderr =
+                                String::from_utf8_lossy(&output.stderr);
+                            anyhow::bail!(
+                                "docker compose exited with status {}{}{}",
+                                output.status,
+                                if stderr.trim().is_empty() {
+                                    ""
+                                } else {
+                                    ": "
+                                },
+                                stderr.trim()
+                            )
+                        }
+                    });
+
+                if let Err(e) = result {
+                    *error.write().await = Some(e.to_string());
+                }
 
                 *finished.write().await = true;
             })
         };
 
-        Self { monitor, finished }
+        Self {
+            monitor,
+            finished,
+            error,
+        }
     }
     pub async fn refresh_status(&self) -> anyhow::Result<()> {
         self.monitor.refresh_status().await
@@ -131,5 +162,9 @@ impl DockerMonitoredProcess {
 
     pub async fn finished(&self) -> bool {
         *self.finished.read().await
+    }
+
+    pub async fn error(&self) -> Option<String> {
+        self.error.read().await.clone()
     }
 }

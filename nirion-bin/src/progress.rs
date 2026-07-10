@@ -10,7 +10,7 @@ use nirion_tui_lib::{
 };
 use std::collections::BTreeMap;
 use std::io::{Write, stdout};
-use tokio::time::Duration;
+use tokio::time::{Duration, sleep};
 
 use crate::TargetSelector;
 use crate::docker::{DockerMonitoredProcess, ProjectStatus, ServiceState};
@@ -99,7 +99,8 @@ pub async fn run_command_with_progress(
     }
 
     if no_monitor {
-        return Ok(());
+        wait_for_processes(&map, refresh_interval).await;
+        return fail_on_process_errors(&map).await;
     }
 
     let mut stdout = stdout();
@@ -123,6 +124,10 @@ pub async fn run_command_with_progress(
             }
         }
 
+        if finished {
+            fail_on_process_errors(&map).await?;
+        }
+
         let mut statuses = BTreeMap::new();
         for (project_name, status) in map.iter() {
             statuses.insert(
@@ -135,6 +140,10 @@ pub async fn run_command_with_progress(
         {
             finished = false;
         }
+
+        if !finished {
+            sleep(refresh_interval).await;
+        }
     }
 
     for proj in map.values() {
@@ -144,6 +153,49 @@ pub async fn run_command_with_progress(
     if !quiet {
         print_progress(&map, &spinner, &projects).await?;
         stdout.flush()?;
+    }
+
+    fail_on_process_errors(&map).await
+}
+
+async fn wait_for_processes(
+    map: &BTreeMap<String, DockerMonitoredProcess>,
+    refresh_interval: Duration,
+) {
+    loop {
+        let mut finished = true;
+        for project in map.values() {
+            if !project.finished().await {
+                finished = false;
+                break;
+            }
+        }
+
+        if finished {
+            break;
+        }
+
+        sleep(refresh_interval).await;
+    }
+}
+
+async fn fail_on_process_errors(
+    map: &BTreeMap<String, DockerMonitoredProcess>,
+) -> anyhow::Result<()> {
+    let mut failures = Vec::new();
+
+    for (project_name, process) in map {
+        if let Some(error) = process.error().await {
+            failures.push(format!("{project_name}: {error}"));
+        }
+    }
+
+    if !failures.is_empty() {
+        anyhow::bail!(
+            "docker compose failed for {} project(s): {}",
+            failures.len(),
+            failures.join("; ")
+        );
     }
 
     Ok(())

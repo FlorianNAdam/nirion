@@ -24,11 +24,17 @@ pub async fn query_project_status(
         .await
         .context("failed to execute docker compose ps")?;
 
-    let json = if output.status.success() {
-        String::from_utf8_lossy(&output.stdout).to_string()
-    } else {
-        "[]".to_string()
-    };
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "docker compose ps failed with status {}{}{}",
+            output.status,
+            if stderr.trim().is_empty() { "" } else { ": " },
+            stderr.trim()
+        );
+    }
+
+    let json = String::from_utf8_lossy(&output.stdout).to_string();
 
     ProjectStatus::from_json(&json)
 }

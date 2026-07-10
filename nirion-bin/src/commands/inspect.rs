@@ -99,6 +99,8 @@ async fn inspect_project(
     format: &str,
     raw: bool,
 ) -> anyhow::Result<()> {
+    let mut failures = Vec::new();
+
     for service in projects[&target.name].services.keys() {
         let service_selector = ServiceSelector {
             project: target.name.to_string(),
@@ -114,11 +116,16 @@ async fn inspect_project(
         )
         .await
         {
-            eprintln!(
-                "Failed to inspect service {}.{}:{}",
-                target.name, service, e
-            );
+            failures.push(format!("{}.{}: {}", target.name, service, e));
         };
+    }
+
+    if !failures.is_empty() {
+        anyhow::bail!(
+            "failed to inspect {} service(s): {}",
+            failures.len(),
+            failures.join("; ")
+        );
     }
 
     Ok(())

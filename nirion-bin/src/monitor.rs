@@ -87,7 +87,7 @@ pub async fn create_monitors(
     target: &TargetSelector,
     projects: &Projects,
     refresh_interval: Duration,
-) -> BTreeMap<String, DockerProjectMonitor> {
+) -> anyhow::Result<BTreeMap<String, DockerProjectMonitor>> {
     let selected: Vec<String> = match target {
         TargetSelector::All => projects
             .iter()
@@ -102,9 +102,10 @@ pub async fn create_monitors(
     for name in selected {
         if let Some(project) = projects.get(&name) {
             let monitor = DockerProjectMonitor::new(project, refresh_interval);
+            monitor.refresh_status().await?;
             monitors.insert(name, monitor);
         }
     }
 
-    monitors
+    Ok(monitors)
 }

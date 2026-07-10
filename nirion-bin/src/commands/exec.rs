@@ -1,3 +1,4 @@
+use anyhow::Context;
 use clap::{Parser, ValueHint};
 use nirion_lib::{auth::AuthConfig, lock::LockedImages, projects::Projects};
 use std::{ops::Deref, path::Path, process::Command as ProcCommand};
@@ -103,12 +104,15 @@ pub async fn handle_exec(
     let status = ProcCommand::new("docker")
         .arg("compose")
         .args(&cmd_args)
-        .status()?;
+        .status()
+        .context("failed to execute docker compose exec")?;
 
     if !status.success() {
-        eprintln!(
+        anyhow::bail!(
             "Command failed in {}.{} with status {}",
-            project_name, service_name, status
+            project_name,
+            service_name,
+            status
         );
     }
 

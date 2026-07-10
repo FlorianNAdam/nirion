@@ -1,3 +1,4 @@
+use anyhow::Context;
 use crossterm::style::Stylize;
 use nirion_lib::projects::{ProjectName, Projects};
 use std::{ops::Deref, process::Stdio};
@@ -13,6 +14,8 @@ pub async fn compose_target_cmd(
     projects: &Projects,
     args: &[&str],
 ) -> anyhow::Result<()> {
+    let mut failures = Vec::new();
+
     match target {
         TargetSelector::All => {
             for (name, project) in projects.iter() {
@@ -24,7 +27,8 @@ pub async fn compose_target_cmd(
                 if let Err(e) =
                     compose_cmd(compose_file, project_name, &args).await
                 {
-                    println!("Project '{}' failed: {}", name, e)
+                    eprintln!("Project '{}' failed: {}", name, e);
+                    failures.push(format!("{name}: {e}"));
                 }
 
                 println!()
@@ -37,10 +41,9 @@ pub async fn compose_target_cmd(
             let compose_file = &project.docker_compose;
             let project_name = &project.name;
 
-            if let Err(e) = compose_cmd(compose_file, project_name, &args).await
-            {
-                println!("Project '{}' failed: {}", proj.name, e)
-            }
+            compose_cmd(compose_file, project_name, &args)
+                .await
+                .with_context(|| format!("Project '{}' failed", proj.name))?;
         }
 
         TargetSelector::Service(img) => {
@@ -55,12 +58,22 @@ pub async fn compose_target_cmd(
             if let Err(e) =
                 compose_cmd(compose_file, project_name, &cmd_args).await
             {
-                println!(
+                anyhow::bail!(
                     "Service '{}.{}' failed: {}",
-                    img.project, img.service, e
-                )
+                    img.project,
+                    img.service,
+                    e
+                );
             }
         }
+    }
+
+    if !failures.is_empty() {
+        anyhow::bail!(
+            "docker compose failed for {} project(s): {}",
+            failures.len(),
+            failures.join("; ")
+        );
     }
 
     Ok(())
@@ -88,7 +101,8 @@ pub async fn run_docker_compose(cmd_args: &[&str]) -> anyhow::Result<()> {
         .args(cmd_args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()?;
+        .spawn()
+        .context("failed to execute docker compose")?;
 
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
@@ -118,7 +132,7 @@ pub async fn run_docker_compose(cmd_args: &[&str]) -> anyhow::Result<()> {
     err_thread.await.ok();
 
     if !status.success() {
-        println!("docker compose exited with status {}", status);
+        anyhow::bail!("docker compose exited with status {}", status);
     }
 
     Ok(())

@@ -29,7 +29,8 @@ pub async fn handle_monitor(
     _lock_file: &Path,
     _auth: &AuthConfig,
 ) -> anyhow::Result<()> {
-    let monitors = create_monitors(&args.target, projects, args.refresh).await;
+    let monitors =
+        create_monitors(&args.target, projects, args.refresh).await?;
     monitor(&monitors, projects).await?;
     Ok(())
 }
