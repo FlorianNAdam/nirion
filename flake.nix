@@ -70,6 +70,14 @@
                 })
               ];
             };
+            vm-sops = pkgs.testers.runNixOSTest {
+              imports = [
+                (import ./tests/vm {
+                  inherit self;
+                  test = "sops";
+                })
+              ];
+            };
           };
 
           devShells.default = pkgs.callPackage ./nix/dev-shell.nix { };

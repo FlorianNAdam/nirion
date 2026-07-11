@@ -61,6 +61,7 @@ let
     basic = ./basic.nix;
     cli-lifecycle = ./cli-lifecycle.nix;
     multi-project = ./multi-project.nix;
+    sops = ./sops.nix;
   };
 in
 import tests.${test} common
