@@ -5,7 +5,8 @@
 
 naersk-lib.buildPackage {
   pname = "nirion";
-  src = ../.;
+  src = pkgs.lib.cleanSource ../.;
+  doCheck = false;
 
   buildInputs = with pkgs; [
     makeWrapper

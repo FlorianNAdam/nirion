@@ -18,22 +18,42 @@
       naersk,
     }:
 
-    flake-utils.lib.eachDefaultSystem (
-      system:
-      let
-        pkgs = import nixpkgs { inherit system; };
-        naersk-lib = pkgs.callPackage naersk { };
-        nirion = pkgs.callPackage ./nix/package.nix { inherit naersk-lib; };
-      in
-      {
-        packages = {
-          inherit nirion;
-          default = nirion;
-        };
+    flake-utils.lib.eachSystem
+      [
+        "x86_64-linux"
+        "aarch64-linux"
+      ]
+      (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          naersk-lib = pkgs.callPackage naersk { };
+          nirion = pkgs.callPackage ./nix/package.nix { inherit naersk-lib; };
+          workspace = naersk-lib.buildPackage {
+            pname = "nirion-workspace-tests";
+            src = pkgs.lib.cleanSource ./.;
+            mode = "test";
+            cargoTestOptions = options: options ++ [ "--workspace" ];
+          };
+        in
+        {
+          packages = {
+            inherit nirion;
+            default = nirion;
+          };
 
-        devShell = pkgs.callPackage ./nix/dev-shell.nix { };
-      }
-    )
+          checks = {
+            package = nirion;
+            inherit workspace;
+            module = pkgs.callPackage ./tests/module { inherit self; };
+            vm-basic = pkgs.testers.runNixOSTest {
+              imports = [ (import ./tests/vm/basic.nix { inherit self; }) ];
+            };
+          };
+
+          devShells.default = pkgs.callPackage ./nix/dev-shell.nix { };
+        }
+      )
     // {
       nixosModules.nirion = import ./nix/module.nix { inherit self; };
     };
