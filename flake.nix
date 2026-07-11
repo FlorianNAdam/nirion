@@ -47,7 +47,28 @@
             inherit workspace;
             module = pkgs.callPackage ./tests/module { inherit self; };
             vm-basic = pkgs.testers.runNixOSTest {
-              imports = [ (import ./tests/vm/basic.nix { inherit self; }) ];
+              imports = [
+                (import ./tests/vm {
+                  inherit self;
+                  test = "basic";
+                })
+              ];
+            };
+            vm-cli-lifecycle = pkgs.testers.runNixOSTest {
+              imports = [
+                (import ./tests/vm {
+                  inherit self;
+                  test = "cli-lifecycle";
+                })
+              ];
+            };
+            vm-multi-project = pkgs.testers.runNixOSTest {
+              imports = [
+                (import ./tests/vm {
+                  inherit self;
+                  test = "multi-project";
+                })
+              ];
             };
           };
 
