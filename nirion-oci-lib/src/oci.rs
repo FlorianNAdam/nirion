@@ -1,11 +1,11 @@
 use oci_client::{
-    Client, Reference,
     config::{Architecture, ConfigFile},
     manifest::OciManifest,
     secrets::RegistryAuth,
+    Client, Reference,
 };
 
-use crate::version::{NON_VERSION_TAGS, canonical_version_score, clean_tag};
+use crate::version::{canonical_version_score, clean_tag, NON_VERSION_TAGS};
 
 pub fn resolve_registry(registry: String) -> String {
     Reference::with_tag(registry, "dummy".to_string(), "dummy".to_string())
@@ -171,8 +171,11 @@ mod tests {
     use std::collections::HashMap;
 
     use oci_client::{
-        config::{Config, ConfigFile},
-        manifest::{OciImageManifest, OciManifest},
+        config::{Architecture, Config, ConfigFile, Os},
+        manifest::{
+            ImageIndexEntry, OciImageIndex, OciImageManifest, OciManifest,
+            Platform,
+        },
     };
 
     fn config_with_version(version: Option<&str>) -> ConfigFile {
@@ -227,5 +230,59 @@ mod tests {
             get_digest_from_manifest("sha256:abc", &manifest).unwrap(),
             "sha256:abc"
         );
+    }
+
+    #[test]
+    fn get_digest_from_manifest_returns_platform_digest_for_image_index() {
+        let manifest = OciManifest::ImageIndex(OciImageIndex {
+            schema_version: 2,
+            media_type: None,
+            manifests: vec![ImageIndexEntry {
+                media_type: String::new(),
+                digest: "sha256:platform".to_string(),
+                size: 0,
+                platform: Some(Platform {
+                    architecture: Architecture::default(),
+                    os: Os::default(),
+                    os_version: None,
+                    os_features: None,
+                    variant: None,
+                    features: None,
+                }),
+                annotations: None,
+            }],
+            artifact_type: None,
+            annotations: None,
+        });
+
+        assert_eq!(
+            get_digest_from_manifest("sha256:index", &manifest).unwrap(),
+            "sha256:platform"
+        );
+    }
+
+    #[test]
+    fn get_digest_from_manifest_errors_when_image_index_has_no_matching_platform(
+    ) {
+        let manifest = OciManifest::ImageIndex(OciImageIndex {
+            schema_version: 2,
+            media_type: None,
+            manifests: vec![ImageIndexEntry {
+                media_type: String::new(),
+                digest: "sha256:other".to_string(),
+                size: 0,
+                platform: None,
+                annotations: None,
+            }],
+            artifact_type: None,
+            annotations: None,
+        });
+
+        let err =
+            get_digest_from_manifest("sha256:index", &manifest).unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("No matching platform found"));
     }
 }
