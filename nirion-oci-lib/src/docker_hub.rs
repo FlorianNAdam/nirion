@@ -1,4 +1,4 @@
-use oci_client::{Reference, config::Architecture};
+use oci_client::{config::Architecture, Reference};
 use reqwest::StatusCode;
 use serde::Deserialize;
 use thiserror::Error;
@@ -228,39 +228,71 @@ pub async fn get_alias_dockerhub_tags(
     image: &Reference,
     digest: &str,
 ) -> anyhow::Result<Vec<String>> {
-    let arch = Architecture::default();
-
-    let mut tags = fetch_all_dockerhub_tags(&image, 100)
+    let tags = fetch_all_dockerhub_tags(&image, 100)
         .await?
         .results;
 
-    for tag in tags.iter_mut() {
-        tag.images
-            .retain(|image| image.architecture == arch);
-    }
+    Ok(alias_dockerhub_tags_from_tags(
+        tags,
+        digest,
+        Architecture::default(),
+    ))
+}
 
-    let other_tags = tags
-        .iter()
-        .filter(|t| {
-            t.images.iter().any(|i| {
-                i.digest
-                    .as_ref()
-                    .is_some_and(|d| d == digest)
+fn alias_dockerhub_tags_from_tags(
+    tags: Vec<Tag>,
+    digest: &str,
+    arch: Architecture,
+) -> Vec<String> {
+    tags.into_iter()
+        .filter(|tag| {
+            tag.images.iter().any(|image| {
+                image.architecture == arch
+                    && image.digest.as_deref() == Some(digest)
             })
         })
-        .collect::<Vec<_>>();
-
-    let candidates = other_tags
-        .into_iter()
-        .map(|tag| tag.name.clone())
-        .collect::<Vec<_>>();
-
-    Ok(candidates)
+        .map(|tag| tag.name)
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tag(
+        name: &str,
+        architecture: Architecture,
+        digest: Option<&str>,
+    ) -> Tag {
+        Tag {
+            id: 0,
+            images: vec![Image {
+                architecture,
+                features: String::new(),
+                variant: None,
+                digest: digest.map(str::to_string),
+                layers: None,
+                os: "linux".to_string(),
+                os_features: String::new(),
+                os_version: None,
+                size: 0,
+                status: String::new(),
+                last_pulled: None,
+                last_pushed: None,
+            }],
+            creator: 0,
+            last_updated: None,
+            last_updater: 0,
+            last_updater_username: String::new(),
+            name: name.to_string(),
+            repository: 0,
+            full_size: 0,
+            v2: true,
+            status: None,
+            tag_last_pulled: None,
+            tag_last_pushed: None,
+        }
+    }
 
     #[test]
     fn dockerhub_parts_uses_library_namespace_for_official_images() {
@@ -291,5 +323,41 @@ mod tests {
             dockerhub_parts(&reference),
             Err(DockerHubError::UnsupportedRegistry)
         ));
+    }
+
+    #[test]
+    fn alias_dockerhub_tags_from_tags_returns_matching_digest_and_architecture()
+    {
+        let arch = Architecture::default();
+        let tags = vec![
+            tag("latest", arch.clone(), Some("sha256:abc")),
+            tag("1.2.3", arch.clone(), Some("sha256:abc")),
+            tag("other", arch.clone(), Some("sha256:def")),
+        ];
+
+        assert_eq!(
+            alias_dockerhub_tags_from_tags(tags, "sha256:abc", arch),
+            vec!["latest".to_string(), "1.2.3".to_string()]
+        );
+    }
+
+    #[test]
+    fn alias_dockerhub_tags_from_tags_ignores_missing_digest() {
+        let arch = Architecture::default();
+        let tags = vec![tag("latest", arch.clone(), None)];
+
+        assert!(
+            alias_dockerhub_tags_from_tags(tags, "sha256:abc", arch).is_empty()
+        );
+    }
+
+    #[test]
+    fn alias_dockerhub_tags_from_tags_ignores_different_architecture() {
+        let arch = Architecture::default();
+        let tags = vec![tag("latest", Architecture::ARM64, Some("sha256:abc"))];
+
+        assert!(
+            alias_dockerhub_tags_from_tags(tags, "sha256:abc", arch).is_empty()
+        );
     }
 }
