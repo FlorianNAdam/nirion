@@ -145,3 +145,66 @@ pub fn canonical_version_tag(tags: &[String]) -> Option<String> {
         .max_by_key(|t| canonical_version_score(t))
         .map(|t| t.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clean_tag_trims_and_strips_known_prefixes_and_suffixes() {
+        assert_eq!(clean_tag(" refs/tags/v1.2.3 "), "v1.2.3");
+        assert_eq!(clean_tag("refs/tags/version/1.2.3"), "1.2.3");
+        assert_eq!(clean_tag("8-bookworm"), "8");
+    }
+
+    #[test]
+    fn strip_helpers_do_not_return_empty_values() {
+        assert_eq!(
+            strip_any_tag_prefix("refs/tags/", TAG_PREFIXES),
+            "refs/tags/"
+        );
+        assert_eq!(
+            strip_any_tag_suffix("-bookworm", TAG_SUFFIXES),
+            "-bookworm"
+        );
+    }
+
+    #[test]
+    fn canonical_score_rejects_floating_tags() {
+        assert!(canonical_version_score("latest") < 0);
+        assert!(
+            canonical_version_score("1.2.3")
+                > canonical_version_score("latest")
+        );
+    }
+
+    #[test]
+    fn canonical_score_prefers_more_specific_versions() {
+        assert!(
+            canonical_version_score("1.2.3") > canonical_version_score("1.2")
+        );
+        assert!(
+            canonical_version_score("1.2.3-r4")
+                > canonical_version_score("1.2.3")
+        );
+    }
+
+    #[test]
+    fn canonical_version_tag_ignores_non_versions_and_cleans_result() {
+        let tags = vec![
+            "latest".to_string(),
+            "refs/tags/version/1.4.0".to_string(),
+            "1.4.1-bookworm".to_string(),
+            "stable".to_string(),
+        ];
+
+        assert_eq!(canonical_version_tag(&tags), Some("1.4.1".to_string()));
+    }
+
+    #[test]
+    fn canonical_version_tag_returns_none_without_version_candidates() {
+        let tags = vec!["latest".to_string(), "stable".to_string()];
+
+        assert_eq!(canonical_version_tag(&tags), None);
+    }
+}

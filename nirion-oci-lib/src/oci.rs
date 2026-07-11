@@ -164,3 +164,68 @@ pub async fn get_version_from_oci_tags(
 
     Ok(None)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    use oci_client::{
+        config::{Config, ConfigFile},
+        manifest::{OciImageManifest, OciManifest},
+    };
+
+    fn config_with_version(version: Option<&str>) -> ConfigFile {
+        let labels = version.map(|version| {
+            HashMap::from([(
+                "org.opencontainers.image.version".to_string(),
+                version.to_string(),
+            )])
+        });
+
+        ConfigFile {
+            config: Some(Config {
+                labels,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn resolve_registry_normalizes_docker_hub() {
+        assert_eq!(
+            resolve_registry("docker.io".to_string()),
+            "index.docker.io"
+        );
+        assert_eq!(resolve_registry("ghcr.io".to_string()), "ghcr.io");
+    }
+
+    #[test]
+    fn get_version_from_config_extracts_and_cleans_label() {
+        let config =
+            config_with_version(Some("refs/tags/version/1.2.3-bookworm"));
+
+        assert_eq!(get_version_from_config(&config), Some("1.2.3".to_string()));
+    }
+
+    #[test]
+    fn get_version_from_config_ignores_missing_and_non_version_labels() {
+        assert_eq!(get_version_from_config(&ConfigFile::default()), None);
+        assert_eq!(get_version_from_config(&config_with_version(None)), None);
+        assert_eq!(
+            get_version_from_config(&config_with_version(Some("latest"))),
+            None
+        );
+    }
+
+    #[test]
+    fn get_digest_from_manifest_returns_manifest_digest_for_image_manifest() {
+        let manifest = OciManifest::Image(OciImageManifest::default());
+
+        assert_eq!(
+            get_digest_from_manifest("sha256:abc", &manifest).unwrap(),
+            "sha256:abc"
+        );
+    }
+}

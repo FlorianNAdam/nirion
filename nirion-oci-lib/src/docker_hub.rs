@@ -257,3 +257,39 @@ pub async fn get_alias_dockerhub_tags(
 
     Ok(candidates)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dockerhub_parts_uses_library_namespace_for_official_images() {
+        let reference = Reference::try_from("nginx:latest").unwrap();
+
+        assert_eq!(
+            dockerhub_parts(&reference).unwrap(),
+            ("library".to_string(), "nginx".to_string())
+        );
+    }
+
+    #[test]
+    fn dockerhub_parts_uses_explicit_namespace() {
+        let reference = Reference::try_from("traefik/whoami:latest").unwrap();
+
+        assert_eq!(
+            dockerhub_parts(&reference).unwrap(),
+            ("traefik".to_string(), "whoami".to_string())
+        );
+    }
+
+    #[test]
+    fn dockerhub_parts_rejects_non_dockerhub_references() {
+        let reference =
+            Reference::try_from("ghcr.io/example/image:latest").unwrap();
+
+        assert!(matches!(
+            dockerhub_parts(&reference),
+            Err(DockerHubError::UnsupportedRegistry)
+        ));
+    }
+}

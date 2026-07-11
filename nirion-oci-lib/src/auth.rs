@@ -34,7 +34,7 @@ impl RegistryAuth {
         use OciRegistryAuth::*;
         match auth {
             Anonymous => Self::anonymous(),
-            Basic(password, username) => Self::basic(username, password),
+            Basic(username, password) => Self::basic(username, password),
             Bearer(token) => Self::bearer(token),
         }
     }
@@ -49,6 +49,71 @@ impl RegistryAuth {
             Self::Bearer { token } => {
                 OciRegistryAuth::Bearer(token.to_string())
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn constructors_create_expected_auth_variants() {
+        assert!(matches!(RegistryAuth::anonymous(), RegistryAuth::Anonymous));
+
+        match RegistryAuth::basic("user", "pass") {
+            RegistryAuth::Basic { username, password } => {
+                assert_eq!(username, "user");
+                assert_eq!(password, "pass");
+            }
+            other => panic!("unexpected auth variant: {other:?}"),
+        }
+
+        match RegistryAuth::bearer("token") {
+            RegistryAuth::Bearer { token } => assert_eq!(token, "token"),
+            other => panic!("unexpected auth variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn converts_to_oci_auth() {
+        assert_eq!(
+            RegistryAuth::anonymous().to_oci_auth(),
+            OciRegistryAuth::Anonymous
+        );
+        assert_eq!(
+            RegistryAuth::basic("user", "pass").to_oci_auth(),
+            OciRegistryAuth::Basic("user".to_string(), "pass".to_string())
+        );
+        assert_eq!(
+            RegistryAuth::bearer("token").to_oci_auth(),
+            OciRegistryAuth::Bearer("token".to_string())
+        );
+    }
+
+    #[test]
+    fn converts_from_oci_auth() {
+        assert!(matches!(
+            RegistryAuth::from_oci_auth(&OciRegistryAuth::Anonymous),
+            RegistryAuth::Anonymous
+        ));
+
+        match RegistryAuth::from_oci_auth(&OciRegistryAuth::Basic(
+            "user".to_string(),
+            "pass".to_string(),
+        )) {
+            RegistryAuth::Basic { username, password } => {
+                assert_eq!(username, "user");
+                assert_eq!(password, "pass");
+            }
+            other => panic!("unexpected auth variant: {other:?}"),
+        }
+
+        match RegistryAuth::from_oci_auth(&OciRegistryAuth::Bearer(
+            "token".to_string(),
+        )) {
+            RegistryAuth::Bearer { token } => assert_eq!(token, "token"),
+            other => panic!("unexpected auth variant: {other:?}"),
         }
     }
 }
