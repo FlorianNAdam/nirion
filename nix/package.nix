@@ -3,9 +3,36 @@
   pkgs,
 }:
 
+let
+  inherit (pkgs) lib;
+  root = ../.;
+  rustSource = lib.cleanSourceWith {
+    src = root;
+    filter =
+      path: type:
+      let
+        rel = lib.removePrefix "${toString root}/" (toString path);
+      in
+      rel == "Cargo.toml"
+      || rel == "Cargo.lock"
+      || lib.hasPrefix "nirion-bin/" rel
+      || lib.hasPrefix "nirion-lib/" rel
+      || lib.hasPrefix "nirion-oci-lib/" rel
+      || lib.hasPrefix "nirion-tui-lib/" rel
+      || (
+        type == "directory"
+        && builtins.elem rel [
+          "nirion-bin"
+          "nirion-lib"
+          "nirion-oci-lib"
+          "nirion-tui-lib"
+        ]
+      );
+  };
+in
 naersk-lib.buildPackage {
   pname = "nirion";
-  src = pkgs.lib.cleanSource ../.;
+  src = rustSource;
   doCheck = false;
 
   buildInputs = with pkgs; [

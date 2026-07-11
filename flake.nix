@@ -29,9 +29,32 @@
           pkgs = import nixpkgs { inherit system; };
           naersk-lib = pkgs.callPackage naersk { };
           nirion = pkgs.callPackage ./nix/package.nix { inherit naersk-lib; };
+          rustSource = pkgs.lib.cleanSourceWith {
+            src = ./.;
+            filter =
+              path: type:
+              let
+                rel = pkgs.lib.removePrefix "${toString ./.}/" (toString path);
+              in
+              rel == "Cargo.toml"
+              || rel == "Cargo.lock"
+              || pkgs.lib.hasPrefix "nirion-bin/" rel
+              || pkgs.lib.hasPrefix "nirion-lib/" rel
+              || pkgs.lib.hasPrefix "nirion-oci-lib/" rel
+              || pkgs.lib.hasPrefix "nirion-tui-lib/" rel
+              || (
+                type == "directory"
+                && builtins.elem rel [
+                  "nirion-bin"
+                  "nirion-lib"
+                  "nirion-oci-lib"
+                  "nirion-tui-lib"
+                ]
+              );
+          };
           workspace = naersk-lib.buildPackage {
             pname = "nirion-workspace-tests";
-            src = pkgs.lib.cleanSource ./.;
+            src = rustSource;
             mode = "test";
             cargoTestOptions = options: options ++ [ "--workspace" ];
           };
