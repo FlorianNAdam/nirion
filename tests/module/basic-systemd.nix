@@ -9,11 +9,9 @@ let
   system = evalConfig [
     {
       virtualisation.nirion = {
-        lockFile = lockFile ''
-          {
-            "web.nginx": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          }
-        '';
+        lockFile = lockFile {
+          "web.nginx" = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        };
         lockFileOutput = "/var/lib/nirion/lock.json";
 
         projects.web = {

@@ -5,7 +5,7 @@
 }:
 
 let
-  lockFile = contents: builtins.toFile "nirion-lock.json" contents;
+  lockFile = attrs: builtins.toFile "nirion-lock.json" (builtins.toJSON attrs);
 
   common = {
     inherit
@@ -15,10 +15,10 @@ let
       lockFile
       ;
 
-    emptyLockFile = lockFile "{}";
+    emptyLockFile = lockFile { };
 
     baseNirionConfig = {
-      lockFile = lockFile "{}";
+      lockFile = lockFile { };
       lockFileOutput = "/var/lib/nirion/lock.json";
     };
 
@@ -38,7 +38,9 @@ let
     ./basic-systemd.nix
     ./compose-options.nix
     ./healthchecks.nix
+    ./lock-images.nix
     ./nix-eval.nix
+    ./service-shapes.nix
     ./sops.nix
   ];
 
