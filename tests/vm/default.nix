@@ -1,8 +1,7 @@
 {
+  pkgs,
   self,
-  test,
 }:
-
 let
   common = rec {
     inherit self;
@@ -62,6 +61,14 @@ let
     cli-lifecycle = ./cli-lifecycle.nix;
     multi-project = ./multi-project.nix;
     sops = ./sops.nix;
+    sops-compose-template = ./sops-compose-template.nix;
   };
 in
-import tests.${test} common
+builtins.listToAttrs (
+  map (test: {
+    name = "vm-${test}";
+    value = pkgs.testers.runNixOSTest {
+      imports = [ (import tests.${test} common) ];
+    };
+  }) (builtins.attrNames tests)
+)

@@ -1,10 +1,10 @@
 {
   pkgs,
-  lib,
   self,
 }:
-
 let
+  lib = pkgs.lib;
+
   lockFile = attrs: builtins.toFile "nirion-lock.json" (builtins.toJSON attrs);
 
   common = {
@@ -34,21 +34,31 @@ let
       };
   };
 
-  testFiles = [
-    ./basic-systemd.nix
-    ./compose-options.nix
-    ./healthchecks.nix
-    ./lock-images.nix
-    ./nix-eval.nix
-    ./service-shapes.nix
-    ./sops.nix
-  ];
+  tests = {
+    basic-systemd = ./basic-systemd.nix;
+    compose-options = ./compose-options.nix;
+    healthchecks = ./healthchecks.nix;
+    lock-images = ./lock-images.nix;
+    nix-eval = ./nix-eval.nix;
+    service-shapes = ./service-shapes.nix;
+    sops = ./sops.nix;
+  };
 
-  checks = lib.concatMap (testFile: import testFile common) testFiles;
+  mkModuleTest =
+    name: testFile:
+    let
+      checks = import testFile common;
+    in
+    pkgs.runCommand "nirion-module-${name}-tests" { } ''
+      ${lib.concatMapStringsSep "\n" (check: ''
+        ${if check.assertion then ":" else "echo ${lib.escapeShellArg check.message}; exit 1"}
+      '') checks}
+      touch $out
+    '';
 in
-pkgs.runCommand "nirion-module-tests" { } ''
-  ${lib.concatMapStringsSep "\n" (check: ''
-    ${if check.assertion then ":" else "echo ${lib.escapeShellArg check.message}; exit 1"}
-  '') checks}
-  touch $out
-''
+builtins.listToAttrs (
+  map (name: {
+    name = "module-${name}";
+    value = mkModuleTest name tests.${name};
+  }) (builtins.attrNames tests)
+)
