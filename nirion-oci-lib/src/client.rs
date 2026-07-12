@@ -4,18 +4,21 @@ use std::{
     time::Duration,
 };
 
+use oci_client::config::ConfigFile;
 use serde::Deserialize;
 
 use crate::{
     auth::RegistryAuth,
     docker_hub::DockerHubClient,
-    get_updated_versioned_image_with_auth, get_versioned_image_with_auth,
-    oci::resolve_registry,
+    oci::{
+        get_version_from_config, get_version_from_oci_tags, resolve_registry,
+    },
     oci_client::{
         Client, Reference,
         client::{Certificate, ClientConfig, ClientProtocol},
+        secrets::RegistryAuth as OciRegistryAuth,
     },
-    version::VersionedImage,
+    version::{VersionedImage, canonical_version_tag},
 };
 
 #[derive(Clone, Debug)]
@@ -171,13 +174,15 @@ impl NirionOciClient {
         let client = self.client_for(image, &auth).await;
         let oci_auth = auth.to_oci_auth();
 
-        get_versioned_image_with_auth(
-            &client,
-            &self.docker_hub,
-            image,
-            &oci_auth,
-        )
-        .await
+        let (version, digest) = self
+            .resolve_version_and_digest(&client, image, &oci_auth)
+            .await?;
+
+        Ok(VersionedImage {
+            image: image.to_string(),
+            version,
+            digest,
+        })
     }
 
     pub async fn get_updated_versioned_image(
@@ -189,13 +194,68 @@ impl NirionOciClient {
         let client = self.client_for(&image, &auth).await;
         let oci_auth = auth.to_oci_auth();
 
-        get_updated_versioned_image_with_auth(
-            &client,
-            &self.docker_hub,
-            versioned_image,
-            &oci_auth,
-        )
-        .await
+        let (_, current_digest, _) = client
+            .pull_manifest_and_config(&image, &oci_auth)
+            .await?;
+
+        if current_digest == versioned_image.digest {
+            return Ok(VersionedImage {
+                image: versioned_image.image.clone(),
+                version: versioned_image.version.clone(),
+                digest: versioned_image.digest.clone(),
+            });
+        }
+
+        let (version, digest) = self
+            .resolve_version_and_digest(&client, &image, &oci_auth)
+            .await?;
+
+        Ok(VersionedImage {
+            image: versioned_image.image.clone(),
+            version,
+            digest,
+        })
+    }
+
+    async fn resolve_version_and_digest(
+        &self,
+        client: &Client,
+        image: &Reference,
+        auth: &OciRegistryAuth,
+    ) -> anyhow::Result<(Option<String>, String)> {
+        let (_, digest, raw_config) = client
+            .pull_manifest_and_config(image, auth)
+            .await?;
+
+        let config: ConfigFile = serde_json::from_str(&raw_config)?;
+
+        if let Some(version) = get_version_from_config(&config) {
+            return Ok((Some(version), digest));
+        }
+
+        let version = self
+            .resolve_version_from_tags(client, image, &digest, auth)
+            .await?;
+
+        Ok((version, digest))
+    }
+
+    async fn resolve_version_from_tags(
+        &self,
+        client: &Client,
+        image: &Reference,
+        digest: &str,
+        auth: &OciRegistryAuth,
+    ) -> anyhow::Result<Option<String>> {
+        if self.docker_hub.supports(image) {
+            let alias_tags = self
+                .docker_hub
+                .get_alias_tags(image, digest)
+                .await?;
+            Ok(canonical_version_tag(&alias_tags))
+        } else {
+            get_version_from_oci_tags(client, image, digest, auth).await
+        }
     }
 
     async fn client_for(
