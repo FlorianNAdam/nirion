@@ -56,6 +56,7 @@ impl RegistryAuth {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reqwest::header::{AUTHORIZATION, HeaderValue};
 
     #[test]
     fn constructors_create_expected_auth_variants() {
@@ -115,6 +116,49 @@ mod tests {
             RegistryAuth::Bearer { token } => assert_eq!(token, "token"),
             other => panic!("unexpected auth variant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn applies_basic_authentication_to_request() {
+        let request = reqwest::Client::new()
+            .get("http://example.test")
+            .apply_authentication(&RegistryAuth::basic("user", "pass"))
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            request.headers().get(AUTHORIZATION),
+            Some(&HeaderValue::from_static("Basic dXNlcjpwYXNz"))
+        );
+    }
+
+    #[test]
+    fn applies_bearer_authentication_to_request() {
+        let request = reqwest::Client::new()
+            .get("http://example.test")
+            .apply_authentication(&RegistryAuth::bearer("token"))
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            request.headers().get(AUTHORIZATION),
+            Some(&HeaderValue::from_static("Bearer token"))
+        );
+    }
+
+    #[test]
+    fn anonymous_authentication_leaves_request_unchanged() {
+        let request = reqwest::Client::new()
+            .get("http://example.test")
+            .apply_authentication(&RegistryAuth::anonymous())
+            .build()
+            .unwrap();
+
+        assert!(
+            !request
+                .headers()
+                .contains_key(AUTHORIZATION)
+        );
     }
 }
 

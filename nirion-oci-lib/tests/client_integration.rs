@@ -4,6 +4,7 @@ use nirion_oci_lib::{
     auth::RegistryAuth as NirionRegistryAuth,
     client::{AuthConfig, NirionOciClient, NirionOciClientConfig},
     docker_hub::{DockerHubClient, DockerHubError},
+    oci::get_alias_oci_tags,
     oci_client::{
         Client, Reference,
         client::{ClientConfig, ClientProtocol, Config, ImageLayer},
@@ -492,6 +493,109 @@ async fn docker_hub_client_parses_api_errors() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn docker_hub_client_fetches_single_tag() -> anyhow::Result<()> {
+    let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let arch =
+        nirion_oci_lib::oci_client::config::Architecture::default().to_string();
+    let body = docker_hub_tag("1.2.3", &arch, digest);
+    let (base_url, server) =
+        start_single_response_mock_docker_hub(200, body).await?;
+    let reference = Reference::try_from("localhost:5000/nirion-test:1.2.3")?;
+    let client = DockerHubClient::with_base_url(base_url)
+        .with_registries(["localhost:5000".to_string()]);
+
+    let tag = client.fetch_tag(&reference).await?;
+
+    assert_eq!(tag.name, "1.2.3");
+    assert_eq!(tag.images[0].digest.as_deref(), Some(digest));
+
+    server.await??;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn docker_hub_client_rejects_digest_references() -> anyhow::Result<()> {
+    let client = DockerHubClient::default();
+    let digest_reference = Reference::try_from(
+        "nginx@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )?;
+
+    assert!(matches!(
+        client
+            .fetch_tag(&digest_reference)
+            .await,
+        Err(DockerHubError::DigestNotSupported)
+    ));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn docker_hub_client_reports_unparseable_error_status()
+-> anyhow::Result<()> {
+    let (base_url, server) =
+        start_single_response_mock_docker_hub(503, "not json".to_string())
+            .await?;
+    let reference = Reference::try_from("localhost:5000/nirion-test:1.2.3")?;
+    let client = DockerHubClient::with_base_url(base_url)
+        .with_registries(["localhost:5000".to_string()]);
+
+    let err = client
+        .fetch_tag(&reference)
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(err, DockerHubError::UnexpectedStatus(status) if status.as_u16() == 503)
+    );
+
+    server.await??;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn oci_alias_tags_return_tags_with_matching_digest() -> anyhow::Result<()>
+{
+    let Some(handle) = RegistryHandle::start(&[]).await? else {
+        return Ok(());
+    };
+
+    let latest = handle
+        .push(
+            "library/nirion-alias-test",
+            "latest",
+            &RegistryAuth::Anonymous,
+        )
+        .await?;
+    handle
+        .push(
+            "library/nirion-alias-test",
+            "1.2.3",
+            &RegistryAuth::Anonymous,
+        )
+        .await?;
+
+    let client = Client::new(ClientConfig {
+        protocol: ClientProtocol::Http,
+        ..Default::default()
+    });
+    let tags = get_alias_oci_tags(
+        &client,
+        &latest.reference,
+        &latest.digest,
+        &RegistryAuth::Anonymous,
+    )
+    .await?;
+
+    assert!(tags.contains(&"latest".to_string()));
+    assert!(tags.contains(&"1.2.3".to_string()));
+
+    Ok(())
+}
+
 fn registry_image() -> GenericImage {
     GenericImage::new("registry", "3")
         .with_exposed_port(5000.tcp())
@@ -581,6 +685,21 @@ async fn start_error_mock_docker_hub()
 
     let server = tokio::spawn(async move {
         serve_http_response(&listener, 500, &body).await?;
+        Ok(())
+    });
+
+    Ok((format!("http://{addr}"), server))
+}
+
+async fn start_single_response_mock_docker_hub(
+    status: u16,
+    body: String,
+) -> anyhow::Result<(String, tokio::task::JoinHandle<anyhow::Result<()>>)> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+
+    let server = tokio::spawn(async move {
+        serve_http_response(&listener, status, &body).await?;
         Ok(())
     });
 

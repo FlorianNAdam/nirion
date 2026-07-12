@@ -408,4 +408,20 @@ mod tests {
 
         assert!(matches!(config.auth_for(&image), RegistryAuth::Anonymous));
     }
+
+    #[test]
+    fn builder_add_auth_and_protocol_configures_client() {
+        let client = NirionOciClient::builder()
+            .add_auth("ghcr.io/example", auth("repo"))
+            .oci_client_protocol(ClientProtocol::Http)
+            .build();
+
+        let image = Reference::try_from("ghcr.io/example/app:latest").unwrap();
+
+        assert_eq!(
+            username(client.auth.auth_for(&image)),
+            Some("repo".to_string())
+        );
+        assert_eq!(client.oci_client_config.protocol, ClientProtocol::Http);
+    }
 }
