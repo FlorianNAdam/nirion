@@ -1,17 +1,18 @@
 use crate::commands::{Commands, handle_command};
-use anyhow::Context;
 use clap::{CommandFactory, Parser};
 use clap_complete::{ArgValueCompleter, CompletionCandidate};
 use crossterm::style::Stylize;
+use nirion_lib::config::{
+    build_nix_project_file, load_auth_config, load_locked_images,
+    load_projects, nix_config_target,
+};
 use nirion_lib::lock::LockedImages;
 use nirion_lib::projects::{
     Project, Projects, ServiceSelector, TargetSelector, parse_selector,
     parse_service_selector,
 };
-use nirion_oci_lib::client::AuthConfig;
+use std::path::PathBuf;
 use std::sync::OnceLock;
-use std::{fs, path::PathBuf};
-use tokio::process::Command;
 
 mod commands;
 mod docker;
@@ -211,17 +212,7 @@ impl FileCli {
 
     async fn get_locked_images(&self) -> anyhow::Result<LockedImages> {
         let lock_file = self.get_lock_file().await?;
-
-        let locked_images: LockedImages = if lock_file.exists() {
-            let lock_file_data = fs::read_to_string(&lock_file)
-                .with_context(|| anyhow::anyhow!("Failed to read lock file"))?;
-            serde_json::from_str(&lock_file_data)
-                .with_context(|| anyhow::anyhow!("Failed to parse lock file"))?
-        } else {
-            LockedImages::default()
-        };
-
-        Ok(locked_images)
+        load_locked_images(&lock_file)
     }
 
     async fn get_project_file(&self) -> anyhow::Result<PathBuf> {
@@ -230,7 +221,7 @@ impl FileCli {
                 .nix_target
                 .as_ref()
                 .map(&String::as_str)
-                .map(get_nix_target)
+                .map(nix_config_target)
                 .or_else(|| {
                     self.raw_nix_target
                         .as_ref()
@@ -251,15 +242,7 @@ impl FileCli {
 
     async fn get_projects(&self) -> anyhow::Result<Projects> {
         let project_file = self.get_project_file().await?;
-
-        let project_data = fs::read_to_string(&project_file)
-            .with_context(|| anyhow::anyhow!("Failed to read projects file"))?;
-        let projects: Projects = serde_json::from_str(&project_data)
-            .with_context(|| {
-                anyhow::anyhow!("Failed to parse projects file")
-            })?;
-
-        Ok(projects)
+        load_projects(&project_file)
     }
 }
 
@@ -277,58 +260,11 @@ struct Cli {
 }
 
 impl Cli {
-    async fn get_auth(&self) -> anyhow::Result<AuthConfig> {
-        if let Some(auth_file) = &self.auth_file {
-            let auth_data = fs::read_to_string(auth_file)
-                .with_context(|| anyhow::anyhow!("Failed to read auth file"))?;
-            let auth: AuthConfig = serde_json::from_str(&auth_data)
-                .with_context(|| {
-                    anyhow::anyhow!("Failed to parse auth file")
-                })?;
-
-            Ok(auth)
-        } else {
-            Ok(AuthConfig::default())
-        }
+    async fn get_auth(
+        &self,
+    ) -> anyhow::Result<nirion_oci_lib::client::AuthConfig> {
+        load_auth_config(self.auth_file.as_deref())
     }
-}
-
-pub fn get_nix_target(target: &str) -> String {
-    format!(
-        "{}.{}",
-        target,
-        [
-            "config",
-            "virtualisation",
-            "nirion",
-            "out",
-            "projectsFileStatic"
-        ]
-        .join(".")
-    )
-}
-
-pub async fn build_nix_project_file(
-    nix_eval_target: &str,
-) -> anyhow::Result<PathBuf> {
-    let output = Command::new("nix")
-        .args(["build", &nix_eval_target, "--no-link", "--print-out-paths"])
-        .output()
-        .await?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("{}", stderr);
-        anyhow::bail!("nix build failed with status {}", output.status);
-    }
-
-    let raw_path = str::from_utf8(&output.stdout)?
-        .trim()
-        .to_string();
-
-    let path = PathBuf::from(raw_path);
-
-    Ok(path)
 }
 
 #[tokio::main]
