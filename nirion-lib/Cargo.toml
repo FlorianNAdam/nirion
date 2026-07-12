@@ -13,4 +13,5 @@ tokio = { version = "1.52.3", features = ["io-util", "macros", "process", "rt", 
 serde_yaml_ng = "0.10.0"
 
 [dev-dependencies]
+nirion-oci-lib = { path = "../nirion-oci-lib", features = ["test-registry"] }
 tempfile = "3"
