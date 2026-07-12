@@ -16,7 +16,6 @@ use std::sync::OnceLock;
 
 mod commands;
 mod docker;
-mod lock;
 mod monitor;
 mod progress;
 mod status_display;

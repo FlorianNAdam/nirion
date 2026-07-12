@@ -1,14 +1,12 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, ValueEnum};
+use nirion_lib::{
+    lock::LockedImages,
+    patch::{patch_target, PatchTarget as LibPatchTarget},
+    projects::Projects,
+};
 use nirion_oci_lib::client::AuthConfig;
-use nirion_lib::lock::LockedImages;
-use nirion_lib::projects::Projects;
-use serde::Deserialize;
-use serde_yml as serde_yaml;
 use std::path::Path;
-use std::process::Stdio;
-use std::{collections::BTreeMap, fs};
-use tokio::process::Command;
 
 use crate::{ClapSelector, TargetSelector};
 
@@ -34,6 +32,15 @@ enum PatchTarget {
     Compose,
 }
 
+impl From<&PatchTarget> for LibPatchTarget {
+    fn from(value: &PatchTarget) -> Self {
+        match value {
+            PatchTarget::EnvFile => Self::EnvFile,
+            PatchTarget::Compose => Self::Compose,
+        }
+    }
+}
+
 pub async fn handle_patch(
     args: &PatchArgs,
     projects: &Projects,
@@ -41,96 +48,10 @@ pub async fn handle_patch(
     _lock_file: &Path,
     _auth: &AuthConfig,
 ) -> Result<()> {
-    match &args.target {
-        TargetSelector::All => {
-            anyhow::bail!("Only individual projects can be patched");
-        }
-
-        TargetSelector::Project(proj) => {
-            if args.patch_target == PatchTarget::EnvFile {
-                anyhow::bail!(
-                    "Only individual service env files can be patched"
-                );
-            }
-
-            let project = &projects[&proj.name];
-            patch(&project.docker_compose).await?;
-        }
-
-        TargetSelector::Service(img) => {
-            let project = &projects[&img.project];
-
-            match args.patch_target {
-                PatchTarget::Compose => {
-                    patch(&project.docker_compose).await?;
-                }
-
-                PatchTarget::EnvFile => {
-                    let compose = load_compose(&project.docker_compose)?;
-
-                    let service = compose
-                        .services
-                        .get(&img.service)
-                        .with_context(|| {
-                            format!(
-                                "Service `{}` not found in compose file for project `{}`",
-                                img.service, img.project
-                            )
-                        })?;
-
-                    let env_file =
-                        service
-                            .env_file
-                            .first()
-                            .with_context(|| {
-                                format!(
-                                    "No env_file found for `{}.{}`",
-                                    img.project, img.service
-                                )
-                            })?;
-
-                    patch(env_file).await?;
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn load_compose(path: &str) -> anyhow::Result<ComposeFile> {
-    let data = fs::read_to_string(path)
-        .with_context(|| format!("Failed reading {}", path))?;
-
-    serde_yaml::from_str::<ComposeFile>(&data)
-        .with_context(|| format!("Compose file parse error in {}", path))
-}
-
-#[derive(Debug, Deserialize)]
-struct ComposeFile {
-    services: BTreeMap<String, Service>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Service {
-    #[serde(default)]
-    env_file: Vec<String>,
-}
-
-pub async fn patch(file: &str) -> Result<()> {
-    let status = Command::new("sudo")
-        .arg("mirage-patch")
-        .arg(file)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .await
-        .context("failed to spawn mirage-patch")?;
-
-    if !status.success() {
-        anyhow::bail!("mirage-patch exited with status: {}", status);
-    }
-
-    Ok(())
+    patch_target(
+        &args.target,
+        projects,
+        &LibPatchTarget::from(&args.patch_target),
+    )
+    .await
 }

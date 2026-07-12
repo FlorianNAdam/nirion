@@ -1,8 +1,11 @@
-use anyhow::Context;
 use clap::{Parser, ValueHint};
-use nirion_lib::{lock::LockedImages, projects::Projects};
+use nirion_lib::{
+    exec::{exec, ExecRequest},
+    lock::LockedImages,
+    projects::Projects,
+};
 use nirion_oci_lib::client::AuthConfig;
-use std::{ops::Deref, path::Path, process::Command as ProcCommand};
+use std::path::Path;
 
 use crate::{ClapSelector, ServiceSelector};
 
@@ -56,66 +59,18 @@ pub async fn handle_exec(
     _lock_file: &Path,
     _auth: &AuthConfig,
 ) -> anyhow::Result<()> {
-    if args.cmd.is_empty() {
-        anyhow::bail!("No command specified for exec");
-    }
-
-    let mut common_args = vec![];
-    if args.detach {
-        common_args.push("-d".to_string());
-    }
-    if args.no_tty {
-        common_args.push("-T".to_string());
-    }
-    if let Some(user) = &args.user {
-        common_args.push("-u".to_string());
-        common_args.push(user.clone());
-    }
-    if let Some(workdir) = &args.workdir {
-        common_args.push("-w".to_string());
-        common_args.push(workdir.clone());
-    }
-    if let Some(idx) = args.index {
-        common_args.push("--index".to_string());
-        common_args.push(idx.to_string());
-    }
-    for e in &args.env {
-        common_args.push("-e".to_string());
-        common_args.push(e.clone());
-    }
-    if args.privileged {
-        common_args.push("--privileged".to_string());
-    }
-
-    let project_name = &args.target.project;
-    let service_name = &args.target.service;
-
-    let project = &projects[project_name];
-    let mut cmd_args = vec![
-        "--file".to_string(),
-        project.docker_compose.clone(),
-        "--project-name".to_string(),
-        project.name.deref().to_string(),
-        "exec".to_string(),
-    ];
-    cmd_args.extend(common_args);
-    cmd_args.push(service_name.clone());
-    cmd_args.extend(args.cmd.clone());
-
-    let status = ProcCommand::new("docker")
-        .arg("compose")
-        .args(&cmd_args)
-        .status()
-        .context("failed to execute docker compose exec")?;
-
-    if !status.success() {
-        anyhow::bail!(
-            "Command failed in {}.{} with status {}",
-            project_name,
-            service_name,
-            status
-        );
-    }
-
-    Ok(())
+    exec(
+        projects,
+        &ExecRequest {
+            target: args.target.clone(),
+            detach: args.detach,
+            no_tty: args.no_tty,
+            user: args.user.clone(),
+            workdir: args.workdir.clone(),
+            index: args.index,
+            env: args.env.clone(),
+            privileged: args.privileged,
+            cmd: args.cmd.clone(),
+        },
+    )
 }

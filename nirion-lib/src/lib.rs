@@ -1,6 +1,11 @@
 pub mod compose;
+pub mod compose_file;
 pub mod config;
 pub mod docker;
+pub mod exec;
+pub mod inspect;
 pub mod lock;
+pub mod lock_update;
+pub mod patch;
 pub mod projects;
 pub mod wait;

@@ -3,11 +3,12 @@ use std::path::Path;
 use clap::Parser;
 use nirion_lib::{
     lock::LockedImages,
+    lock_update::update_images,
     projects::{get_images, Projects, TargetSelector},
 };
 use nirion_oci_lib::client::AuthConfig;
 
-use crate::{lock::update_images, ClapSelector};
+use crate::ClapSelector;
 
 /// Update lock file entries
 #[derive(Parser, Debug, Clone)]

@@ -1,11 +1,11 @@
 use anyhow::Result;
 use clap::Parser;
+use nirion_lib::{
+    compose_file::{compose_to_string, full_compose, service_compose},
+    lock::LockedImages,
+    projects::{Projects, TargetSelector},
+};
 use nirion_oci_lib::client::AuthConfig;
-use nirion_lib::lock::LockedImages;
-use nirion_lib::projects::{Project, Projects, TargetSelector};
-use serde_yml as serde_yaml;
-use serde_yml::{Mapping, Value};
-use std::fs;
 use std::path::Path;
 
 use crate::ClapSelector;
@@ -33,87 +33,29 @@ pub async fn handle_cat(
         TargetSelector::All => {
             for (project_name, project) in projects.iter() {
                 println!("Project {}:", project_name);
-                print_full_compose(project_name, project)?;
+                print_compose(&full_compose(project)?)?;
             }
         }
         TargetSelector::Project(proj) => {
             let project = &projects[&proj.name];
-            print_full_compose(&proj.name, project)?;
+            print_compose(&full_compose(project)?)?;
         }
         TargetSelector::Service(img) => {
             let project = &projects[&img.project];
-            print_service_section(&img.project, project, &img.service)?;
+            print_compose(&service_compose(
+                &img.project,
+                project,
+                &img.service,
+            )?)?;
         }
     }
 
     Ok(())
 }
 
-fn load_compose(path: &str) -> Result<Value> {
-    let data = fs::read_to_string(path)
-        .map_err(|e| anyhow::anyhow!("Failed reading {}: {}", path, e))?;
-
-    serde_yaml::from_str::<Value>(&data).map_err(|e| {
-        anyhow::anyhow!("Compose file parse error in {}: {}", path, e)
-    })
-}
-
-fn print_full_compose(_project_name: &str, project: &Project) -> Result<()> {
-    let path = &project.docker_compose;
-
-    let compose = load_compose(path)?;
-    let pretty = serde_yaml::to_string(&compose).map_err(|e| {
-        anyhow::anyhow!("Failed to pretty-print compose file: {}", e)
-    })?;
-
+fn print_compose(compose: &serde_yml::Value) -> Result<()> {
+    let pretty = compose_to_string(compose)?;
     println!("{}", pretty);
     println!();
-
-    Ok(())
-}
-
-fn print_service_section(
-    project_name: &str,
-    project: &Project,
-    service_name: &str,
-) -> Result<()> {
-    let path = &project.docker_compose;
-
-    let compose = load_compose(path)?;
-
-    let services = compose.get("services").ok_or_else(|| {
-        anyhow::anyhow!("No `services:` section in compose file")
-    })?;
-
-    let services_map = services
-        .as_mapping()
-        .ok_or_else(|| anyhow::anyhow!("`services:` is not a mapping"))?;
-
-    let service_value = services_map
-        .get(&Value::String(service_name.to_string()))
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Service `{}` not found in compose file for project `{}`",
-                service_name,
-                project_name
-            )
-        })?;
-
-    let mut root_map = Mapping::new();
-    let mut svc_map = Mapping::new();
-    svc_map.insert(
-        Value::String(service_name.to_string()),
-        service_value.clone(),
-    );
-    root_map.insert(Value::String("services".into()), Value::Mapping(svc_map));
-
-    let pretty =
-        serde_yaml::to_string(&Value::Mapping(root_map)).map_err(|e| {
-            anyhow::anyhow!("Failed to pretty-print compose file: {}", e)
-        })?;
-
-    println!("{}", pretty);
-    println!();
-
     Ok(())
 }

@@ -1,8 +1,10 @@
 use crossterm::{cursor, execute, style::Stylize};
 use futures::{StreamExt, stream::FuturesUnordered};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use nirion_lib::lock::{LockedImages, VersionedImage};
-use nirion_oci_lib::client::{AuthConfig, NirionOciClient};
+use nirion_oci_lib::{
+    client::{AuthConfig, NirionOciClient},
+    oci_client::Reference,
+};
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
@@ -13,7 +15,7 @@ use std::{
 };
 use tokio::sync::RwLock;
 
-use nirion_oci_lib::oci_client::Reference;
+use crate::lock::{LockedImages, VersionedImage};
 
 pub async fn update_images(
     auth: &AuthConfig,
@@ -115,7 +117,7 @@ pub async fn update_images(
     }
 
     println!("\nChanges:");
-    print_diff(&locked_images, &new_locked_images);
+    print_diff(locked_images, &new_locked_images);
 
     println!("\nUpdating lock file...");
     let new_lock_file = serde_json::to_string_pretty(&new_locked_images)?;
@@ -128,7 +130,7 @@ pub async fn update_images(
 
 fn print_diff(old: &LockedImages, new: &LockedImages) {
     for entry in old.diff(new) {
-        use nirion_lib::lock::DiffEntry::*;
+        use crate::lock::DiffEntry::*;
         match entry {
             Added { service, new } => {
                 println!("  + {}:", service.to_string().green());
