@@ -31,7 +31,7 @@ jobs:
           restore-prefixes-first-match: |
             nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}-
             nix-${{ runner.os }}-
-          gc-max-store-size-linux: 8G
+          gc-max-store-size-linux: 6G
 
       - name: Validate PR title
         if: github.event_name == 'pull_request'
