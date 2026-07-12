@@ -3,12 +3,12 @@ use anyhow::Context;
 use clap::{CommandFactory, Parser};
 use clap_complete::{ArgValueCompleter, CompletionCandidate};
 use crossterm::style::Stylize;
-use nirion_lib::auth::AuthConfig;
 use nirion_lib::lock::LockedImages;
 use nirion_lib::projects::{
     Project, Projects, ServiceSelector, TargetSelector, parse_selector,
     parse_service_selector,
 };
+use nirion_oci_lib::client::AuthConfig;
 use std::sync::OnceLock;
 use std::{fs, path::PathBuf};
 use tokio::process::Command;

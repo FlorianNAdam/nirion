@@ -2,10 +2,10 @@ use std::path::Path;
 
 use clap::Parser;
 use nirion_lib::{
-    auth::AuthConfig,
     lock::LockedImages,
     projects::{get_images, Projects, TargetSelector},
 };
+use nirion_oci_lib::client::AuthConfig;
 
 use crate::{lock::update_images, ClapSelector};
 

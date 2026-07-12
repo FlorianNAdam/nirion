@@ -1,9 +1,153 @@
+use std::collections::HashSet;
+
 use oci_client::{Reference, config::Architecture};
 use reqwest::StatusCode;
 use serde::Deserialize;
 use thiserror::Error;
 
 const DOCKERHUB_BASE: &str = "https://hub.docker.com/v2";
+
+#[derive(Clone, Debug)]
+pub struct DockerHubClient {
+    http: reqwest::Client,
+    base_url: String,
+    registries: HashSet<String>,
+}
+
+impl Default for DockerHubClient {
+    fn default() -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            base_url: DOCKERHUB_BASE.to_string(),
+            registries: HashSet::from(["docker.io".to_string()]),
+        }
+    }
+}
+
+impl DockerHubClient {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_base_url(base_url: impl Into<String>) -> Self {
+        Self {
+            base_url: base_url.into(),
+            ..Self::default()
+        }
+    }
+
+    pub fn with_registries(
+        mut self,
+        registries: impl IntoIterator<Item = String>,
+    ) -> Self {
+        self.registries = registries.into_iter().collect();
+        self
+    }
+
+    pub fn supports(&self, reference: &Reference) -> bool {
+        self.registries
+            .contains(reference.registry())
+    }
+
+    pub async fn fetch_all_tags(
+        &self,
+        reference: &Reference,
+        page_size: u32,
+    ) -> Result<TagsResponse, DockerHubError> {
+        let (namespace, repository) = self.dockerhub_parts(reference)?;
+
+        let mut next_url = Some(format!(
+            "{base}/repositories/{namespace}/{repository}/tags?page_size={page_size}&page=1",
+            base = self.base_url
+        ));
+
+        let mut all_results = Vec::new();
+        let mut total_count = 0;
+
+        while let Some(url) = next_url {
+            let mut body = self.fetch_tags_url(&url).await?;
+            total_count = body.count;
+            all_results.append(&mut body.results);
+            next_url = body.next;
+        }
+
+        Ok(TagsResponse {
+            count: total_count,
+            next: None,
+            previous: None,
+            results: all_results,
+        })
+    }
+
+    pub async fn fetch_tag(
+        &self,
+        reference: &Reference,
+    ) -> Result<Tag, DockerHubError> {
+        let (namespace, repository) = self.dockerhub_parts(reference)?;
+
+        if reference.digest().is_some() {
+            return Err(DockerHubError::DigestNotSupported);
+        }
+
+        let tag = reference
+            .tag()
+            .ok_or(DockerHubError::MissingTag)?;
+
+        let url = format!(
+            "{base}/namespaces/{namespace}/repositories/{repository}/tags/{tag}",
+            base = self.base_url
+        );
+
+        let resp = self.http.get(&url).send().await?;
+
+        if resp.status().is_success() {
+            Ok(resp.json::<Tag>().await?)
+        } else {
+            parse_dockerhub_error(resp).await
+        }
+    }
+
+    pub async fn get_alias_tags(
+        &self,
+        image: &Reference,
+        digest: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        let tags = self
+            .fetch_all_tags(image, 100)
+            .await?
+            .results;
+
+        Ok(alias_dockerhub_tags_from_tags(
+            tags,
+            digest,
+            Architecture::default(),
+        ))
+    }
+
+    fn dockerhub_parts(
+        &self,
+        reference: &Reference,
+    ) -> Result<(String, String), DockerHubError> {
+        if !self.supports(reference) {
+            return Err(DockerHubError::UnsupportedRegistry);
+        }
+
+        dockerhub_repository_parts(reference)
+    }
+
+    async fn fetch_tags_url(
+        &self,
+        url: &str,
+    ) -> Result<TagsResponse, DockerHubError> {
+        let resp = self.http.get(url).send().await?;
+
+        if resp.status().is_success() {
+            Ok(resp.json::<TagsResponse>().await?)
+        } else {
+            parse_dockerhub_error(resp).await
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum DockerHubError {
@@ -92,15 +236,9 @@ pub struct ApiErrorResponse {
     pub message: Option<String>,
 }
 
-fn dockerhub_parts(
+fn dockerhub_repository_parts(
     reference: &Reference,
 ) -> Result<(String, String), DockerHubError> {
-    let registry = reference.registry();
-
-    if registry != "docker.io" {
-        return Err(DockerHubError::UnsupportedRegistry);
-    }
-
     let repo = reference.repository();
 
     let mut parts = repo.split('/');
@@ -114,129 +252,18 @@ fn dockerhub_parts(
     }
 }
 
-pub async fn fetch_dockerhub_tags_page(
-    reference: &Reference,
-    page_size: u32,
-    page: u32,
-) -> Result<TagsResponse, DockerHubError> {
-    let client = reqwest::Client::new();
-    let (namespace, repository) = dockerhub_parts(reference)?;
-
-    let url = format!(
-        "{base}/repositories/{namespace}/{repository}/tags?page_size={page_size}&page={page}",
-        base = DOCKERHUB_BASE
-    );
-
-    let resp = client.get(&url).send().await?;
-
-    if resp.status().is_success() {
-        Ok(resp.json::<TagsResponse>().await?)
+async fn parse_dockerhub_error<T>(
+    resp: reqwest::Response,
+) -> Result<T, DockerHubError> {
+    let status = resp.status();
+    if let Ok(api_err) = resp.json::<ApiErrorResponse>().await {
+        Err(DockerHubError::Api {
+            detail: api_err.detail,
+            message: api_err.message,
+        })
     } else {
-        let status = resp.status();
-        if let Ok(api_err) = resp.json::<ApiErrorResponse>().await {
-            Err(DockerHubError::Api {
-                detail: api_err.detail,
-                message: api_err.message,
-            })
-        } else {
-            Err(DockerHubError::UnexpectedStatus(status))
-        }
+        Err(DockerHubError::UnexpectedStatus(status))
     }
-}
-
-pub async fn fetch_all_dockerhub_tags(
-    reference: &Reference,
-    page_size: u32,
-) -> Result<TagsResponse, DockerHubError> {
-    let client = reqwest::Client::new();
-    let (namespace, repository) = dockerhub_parts(reference)?;
-
-    let mut next_url = Some(format!(
-        "{base}/repositories/{namespace}/{repository}/tags?page_size={page_size}&page=1",
-        base = DOCKERHUB_BASE
-    ));
-
-    let mut all_results = Vec::new();
-    let mut total_count = 0;
-
-    while let Some(url) = next_url {
-        let resp = client.get(&url).send().await?;
-
-        if resp.status().is_success() {
-            let mut body: TagsResponse = resp.json().await?;
-            total_count = body.count;
-            all_results.append(&mut body.results);
-            next_url = body.next;
-        } else {
-            let status = resp.status();
-            if let Ok(api_err) = resp.json::<ApiErrorResponse>().await {
-                return Err(DockerHubError::Api {
-                    detail: api_err.detail,
-                    message: api_err.message,
-                });
-            } else {
-                return Err(DockerHubError::UnexpectedStatus(status));
-            }
-        }
-    }
-
-    Ok(TagsResponse {
-        count: total_count,
-        next: None,
-        previous: None,
-        results: all_results,
-    })
-}
-
-pub async fn fetch_dockerhub_tag(
-    reference: &Reference,
-) -> Result<Tag, DockerHubError> {
-    let client = reqwest::Client::new();
-    let (namespace, repository) = dockerhub_parts(reference)?;
-
-    if reference.digest().is_some() {
-        return Err(DockerHubError::DigestNotSupported);
-    }
-
-    let tag = reference
-        .tag()
-        .ok_or(DockerHubError::MissingTag)?;
-
-    let url = format!(
-        "{base}/namespaces/{namespace}/repositories/{repository}/tags/{tag}",
-        base = DOCKERHUB_BASE
-    );
-
-    let resp = client.get(&url).send().await?;
-
-    if resp.status().is_success() {
-        Ok(resp.json::<Tag>().await?)
-    } else {
-        let status = resp.status();
-        if let Ok(api_err) = resp.json::<ApiErrorResponse>().await {
-            Err(DockerHubError::Api {
-                detail: api_err.detail,
-                message: api_err.message,
-            })
-        } else {
-            Err(DockerHubError::UnexpectedStatus(status))
-        }
-    }
-}
-
-pub async fn get_alias_dockerhub_tags(
-    image: &Reference,
-    digest: &str,
-) -> anyhow::Result<Vec<String>> {
-    let tags = fetch_all_dockerhub_tags(&image, 100)
-        .await?
-        .results;
-
-    Ok(alias_dockerhub_tags_from_tags(
-        tags,
-        digest,
-        Architecture::default(),
-    ))
 }
 
 fn alias_dockerhub_tags_from_tags(
@@ -299,7 +326,9 @@ mod tests {
         let reference = Reference::try_from("nginx:latest").unwrap();
 
         assert_eq!(
-            dockerhub_parts(&reference).unwrap(),
+            DockerHubClient::default()
+                .dockerhub_parts(&reference)
+                .unwrap(),
             ("library".to_string(), "nginx".to_string())
         );
     }
@@ -309,7 +338,9 @@ mod tests {
         let reference = Reference::try_from("traefik/whoami:latest").unwrap();
 
         assert_eq!(
-            dockerhub_parts(&reference).unwrap(),
+            DockerHubClient::default()
+                .dockerhub_parts(&reference)
+                .unwrap(),
             ("traefik".to_string(), "whoami".to_string())
         );
     }
@@ -320,9 +351,24 @@ mod tests {
             Reference::try_from("ghcr.io/example/image:latest").unwrap();
 
         assert!(matches!(
-            dockerhub_parts(&reference),
+            DockerHubClient::default().dockerhub_parts(&reference),
             Err(DockerHubError::UnsupportedRegistry)
         ));
+    }
+
+    #[test]
+    fn dockerhub_client_supports_configured_registry() {
+        let reference =
+            Reference::try_from("localhost:5000/nginx:latest").unwrap();
+        let client = DockerHubClient::default()
+            .with_registries(["localhost:5000".to_string()]);
+
+        assert_eq!(
+            client
+                .dockerhub_parts(&reference)
+                .unwrap(),
+            ("library".to_string(), "nginx".to_string())
+        );
     }
 
     #[test]

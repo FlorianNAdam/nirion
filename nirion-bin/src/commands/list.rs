@@ -1,5 +1,6 @@
 use clap::Parser;
-use nirion_lib::{auth::AuthConfig, lock::LockedImages, projects::Projects};
+use nirion_lib::{lock::LockedImages, projects::Projects};
+use nirion_oci_lib::client::AuthConfig;
 use std::path::Path;
 
 use crate::{ClapSelector, TargetSelector};

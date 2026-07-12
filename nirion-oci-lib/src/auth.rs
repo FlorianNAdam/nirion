@@ -1,7 +1,7 @@
 use oci_client::secrets::RegistryAuth as OciRegistryAuth;
 use serde::Deserialize;
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Hash)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum RegistryAuth {
     Anonymous,

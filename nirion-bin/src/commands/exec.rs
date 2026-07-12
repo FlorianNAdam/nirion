@@ -1,6 +1,7 @@
 use anyhow::Context;
 use clap::{Parser, ValueHint};
-use nirion_lib::{auth::AuthConfig, lock::LockedImages, projects::Projects};
+use nirion_lib::{lock::LockedImages, projects::Projects};
+use nirion_oci_lib::client::AuthConfig;
 use std::{ops::Deref, path::Path, process::Command as ProcCommand};
 
 use crate::{ClapSelector, ServiceSelector};

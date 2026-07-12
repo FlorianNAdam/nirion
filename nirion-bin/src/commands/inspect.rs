@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use nirion_lib::{
-    auth::AuthConfig,
     lock::LockedImages,
     projects::{ProjectSelector, Projects, ServiceSelector, TargetSelector},
 };
+use nirion_oci_lib::client::AuthConfig;
 use serde_json::Value;
 use std::path::Path;
 use tokio::process::Command;

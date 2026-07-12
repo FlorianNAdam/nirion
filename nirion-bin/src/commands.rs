@@ -1,6 +1,6 @@
-use nirion_lib::auth::AuthConfig;
 use nirion_lib::lock::LockedImages;
 use nirion_lib::projects::Projects;
+use nirion_oci_lib::client::AuthConfig;
 use paste::paste;
 use std::path::Path;
 

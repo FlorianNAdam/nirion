@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use nirion_lib::auth::AuthConfig;
+use nirion_oci_lib::client::AuthConfig;
 use nirion_lib::lock::LockedImages;
 use nirion_lib::projects::Projects;
 use std::path::Path;

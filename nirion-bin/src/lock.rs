@@ -1,10 +1,8 @@
 use crossterm::{cursor, execute, style::Stylize};
 use futures::{StreamExt, stream::FuturesUnordered};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use nirion_lib::{
-    auth::AuthConfig,
-    lock::{LockedImages, VersionedImage},
-};
+use nirion_lib::lock::{LockedImages, VersionedImage};
+use nirion_oci_lib::client::{AuthConfig, NirionOciClient};
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
@@ -15,10 +13,7 @@ use std::{
 };
 use tokio::sync::RwLock;
 
-use nirion_oci_lib::{
-    get_updated_versioned_image, get_versioned_image,
-    oci_client::{Client, Reference},
-};
+use nirion_oci_lib::oci_client::Reference;
 
 pub async fn update_images(
     auth: &AuthConfig,
@@ -54,7 +49,7 @@ pub async fn update_images(
 
     let digest_cache: Arc<RwLock<HashMap<String, VersionedImage>>> =
         Arc::new(RwLock::new(HashMap::new()));
-    let client = Arc::new(auth.get_oci_client().await);
+    let client = Arc::new(NirionOciClient::new(auth.clone()));
 
     let semaphore = Arc::new(tokio::sync::Semaphore::new(jobs));
 
@@ -167,7 +162,7 @@ fn print_diff(old: &LockedImages, new: &LockedImages) {
 }
 
 async fn get_cached_image(
-    client: &Client,
+    client: &NirionOciClient,
     image: &str,
     cache: &Arc<RwLock<HashMap<String, VersionedImage>>>,
 ) -> anyhow::Result<VersionedImage> {
@@ -179,7 +174,9 @@ async fn get_cached_image(
     }
 
     let reference = Reference::try_from(image)?;
-    let versioned_image = get_versioned_image(&client, &reference).await?;
+    let versioned_image = client
+        .get_versioned_image(&reference)
+        .await?;
 
     {
         let mut locked_cache = cache.write().await;
@@ -190,7 +187,7 @@ async fn get_cached_image(
 }
 
 async fn get_cached_updated_image(
-    client: &Client,
+    client: &NirionOciClient,
     versioned_image: &VersionedImage,
     cache: &Arc<RwLock<HashMap<String, VersionedImage>>>,
 ) -> anyhow::Result<VersionedImage> {
@@ -203,8 +200,9 @@ async fn get_cached_updated_image(
         return Ok(existing);
     }
 
-    let versioned_image =
-        get_updated_versioned_image(&client, &versioned_image).await?;
+    let versioned_image = client
+        .get_updated_versioned_image(versioned_image)
+        .await?;
 
     {
         let mut locked_cache = cache.write().await;

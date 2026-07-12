@@ -58,6 +58,7 @@ naersk-lib.buildPackage {
       pname = "nirion-rust-tests";
       src = rustSource;
       mode = "test";
+      nativeBuildInputs = [ pkgs.cacert ];
       cargoTestOptions = options: options ++ [ "--workspace" ];
     };
   };

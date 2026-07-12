@@ -26,8 +26,9 @@ pub async fn get_alias_oci_tags(
     client: &Client,
     image: &Reference,
     digest: &str,
+    auth: &RegistryAuth,
 ) -> anyhow::Result<Vec<String>> {
-    let tags = list_all_tags(&client, image).await?;
+    let tags = list_all_tags(client, image, auth).await?;
 
     let mut tag_refs = tags
         .into_iter()
@@ -42,7 +43,7 @@ pub async fn get_alias_oci_tags(
         .peekable();
 
     while let Some(image) = tag_refs.peek() {
-        let tag_digest = pull_platform_digest(&client, &image).await?;
+        let tag_digest = pull_platform_digest(client, image, auth).await?;
         if tag_digest == digest {
             break;
         } else {
@@ -53,7 +54,7 @@ pub async fn get_alias_oci_tags(
     let mut candidates = Vec::new();
 
     while let Some(image) = tag_refs.peek() {
-        let tag_digest = pull_platform_digest(&client, &image).await?;
+        let tag_digest = pull_platform_digest(client, image, auth).await?;
         if tag_digest != digest {
             break;
         } else {
@@ -70,15 +71,15 @@ pub async fn get_alias_oci_tags(
 pub async fn list_all_tags(
     client: &Client,
     image: &Reference,
+    auth: &RegistryAuth,
 ) -> anyhow::Result<Vec<String>> {
     let page_size = 1000; // reasonable default
     let mut all_tags = Vec::new();
     let mut last: Option<String> = None;
 
     loop {
-        let auth = RegistryAuth::Anonymous;
         let tags = client
-            .list_tags(image, &auth, Some(page_size), last.as_deref())
+            .list_tags(image, auth, Some(page_size), last.as_deref())
             .await?
             .tags;
 
@@ -97,10 +98,10 @@ pub async fn list_all_tags(
 pub async fn pull_platform_digest(
     client: &Client,
     image: &Reference,
+    auth: &RegistryAuth,
 ) -> anyhow::Result<String> {
-    let auth = RegistryAuth::Anonymous;
     let (manifest, digest) = client
-        .pull_manifest(image, &auth)
+        .pull_manifest(image, auth)
         .await?;
 
     get_digest_from_manifest(&digest, &manifest)
@@ -135,8 +136,9 @@ pub async fn get_version_from_oci_tags(
     client: &Client,
     image: &Reference,
     digest: &str,
+    auth: &RegistryAuth,
 ) -> anyhow::Result<Option<String>> {
-    let tags = list_all_tags(&client, image).await?;
+    let tags = list_all_tags(client, image, auth).await?;
 
     let mut tags = tags
         .into_iter()
@@ -155,7 +157,8 @@ pub async fn get_version_from_oci_tags(
             tag.clone(),
         );
 
-        let tag_digest = pull_platform_digest(&client, &tag_reference).await?;
+        let tag_digest =
+            pull_platform_digest(client, &tag_reference, auth).await?;
         if tag_digest == digest {
             let clean_tag = clean_tag(&tag).to_string();
             return Ok(Some(clean_tag));
