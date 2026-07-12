@@ -43,6 +43,7 @@
             '';
           };
           check-commit-messages = pkgs.callPackage ./nix/check-commit-messages.nix { };
+          check-message = pkgs.callPackage ./nix/check-message.nix { };
         in
         {
           packages = {
@@ -60,6 +61,12 @@
             type = "app";
             program = "${check-commit-messages}/bin/check-commit-messages";
             meta.description = "Check commit messages in a git revision range";
+          };
+
+          apps.check-message = {
+            type = "app";
+            program = "${check-message}/bin/check-message";
+            meta.description = "Check a single commit-style message";
           };
 
           checks = {
