@@ -31,7 +31,19 @@ jobs:
           restore-prefixes-first-match: |
             nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}-
             nix-${{ runner.os }}-
-          gc-max-store-size-linux: 8G
+          gc-max-store-size-linux: 6G
+
+      - name: Restore and save Rust coverage cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+        with:
+          workspaces: |
+            . -> target/tarpaulin
+          cache-targets: true
+          cache-on-failure: true
+          cache-bin: false
+          cmd-format: nix develop -c {0}
+          shared-key: coverage
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Upload coverage to Coveralls
         env:
