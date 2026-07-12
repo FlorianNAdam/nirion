@@ -49,7 +49,11 @@ pub async fn update_images(
 
     let digest_cache: Arc<RwLock<HashMap<String, VersionedImage>>> =
         Arc::new(RwLock::new(HashMap::new()));
-    let client = Arc::new(NirionOciClient::new(auth.clone()));
+    let client = Arc::new(
+        NirionOciClient::builder()
+            .auth(auth.clone())
+            .build(),
+    );
 
     let semaphore = Arc::new(tokio::sync::Semaphore::new(jobs));
 

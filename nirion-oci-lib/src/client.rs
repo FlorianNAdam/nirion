@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use serde::Deserialize;
@@ -10,9 +11,74 @@ use crate::{
     docker_hub::DockerHubClient,
     get_updated_versioned_image_with_auth, get_versioned_image_with_auth,
     oci::resolve_registry,
-    oci_client::{Client, Reference},
+    oci_client::{
+        Client, Reference,
+        client::{Certificate, ClientConfig, ClientProtocol},
+    },
     version::VersionedImage,
 };
+
+#[derive(Clone, Debug)]
+pub struct NirionOciClientConfig {
+    pub protocol: ClientProtocol,
+    pub accept_invalid_certificates: bool,
+    pub use_monolithic_push: bool,
+    pub tls_certs_only: Vec<Certificate>,
+    pub extra_root_certificates: Vec<Certificate>,
+    pub max_concurrent_upload: usize,
+    pub max_concurrent_download: usize,
+    pub default_token_expiration_secs: usize,
+    pub read_timeout: Option<Duration>,
+    pub connect_timeout: Option<Duration>,
+    pub user_agent: &'static str,
+    pub https_proxy: Option<String>,
+    pub http_proxy: Option<String>,
+    pub no_proxy: Option<String>,
+}
+
+impl Default for NirionOciClientConfig {
+    fn default() -> Self {
+        let config = ClientConfig::default();
+        Self {
+            protocol: config.protocol,
+            accept_invalid_certificates: config.accept_invalid_certificates,
+            use_monolithic_push: config.use_monolithic_push,
+            tls_certs_only: config.tls_certs_only,
+            extra_root_certificates: config.extra_root_certificates,
+            max_concurrent_upload: config.max_concurrent_upload,
+            max_concurrent_download: config.max_concurrent_download,
+            default_token_expiration_secs: config.default_token_expiration_secs,
+            read_timeout: config.read_timeout,
+            connect_timeout: config.connect_timeout,
+            user_agent: config.user_agent,
+            https_proxy: config.https_proxy,
+            http_proxy: config.http_proxy,
+            no_proxy: config.no_proxy,
+        }
+    }
+}
+
+impl NirionOciClientConfig {
+    fn to_oci_client_config(&self) -> ClientConfig {
+        ClientConfig {
+            protocol: self.protocol.clone(),
+            accept_invalid_certificates: self.accept_invalid_certificates,
+            use_monolithic_push: self.use_monolithic_push,
+            tls_certs_only: self.tls_certs_only.clone(),
+            extra_root_certificates: self.extra_root_certificates.clone(),
+            max_concurrent_upload: self.max_concurrent_upload,
+            max_concurrent_download: self.max_concurrent_download,
+            default_token_expiration_secs: self.default_token_expiration_secs,
+            read_timeout: self.read_timeout,
+            connect_timeout: self.connect_timeout,
+            user_agent: self.user_agent,
+            https_proxy: self.https_proxy.clone(),
+            http_proxy: self.http_proxy.clone(),
+            no_proxy: self.no_proxy.clone(),
+            ..Default::default()
+        }
+    }
+}
 
 #[derive(Default, Clone, Debug)]
 pub struct AuthConfig {
@@ -88,21 +154,13 @@ struct ClientKey {
 pub struct NirionOciClient {
     auth: AuthConfig,
     docker_hub: DockerHubClient,
+    oci_client_config: NirionOciClientConfig,
     clients: Mutex<HashMap<ClientKey, Arc<Client>>>,
 }
 
 impl NirionOciClient {
-    pub fn new(auth: AuthConfig) -> Self {
-        Self {
-            auth,
-            docker_hub: DockerHubClient::default(),
-            clients: Mutex::new(HashMap::new()),
-        }
-    }
-
-    pub fn with_docker_hub(mut self, docker_hub: DockerHubClient) -> Self {
-        self.docker_hub = docker_hub;
-        self
+    pub fn builder() -> NirionOciClientBuilder {
+        NirionOciClientBuilder::default()
     }
 
     pub async fn get_versioned_image(
@@ -160,7 +218,10 @@ impl NirionOciClient {
             return client;
         }
 
-        let client = Arc::new(Client::default());
+        let client = Arc::new(Client::new(
+            self.oci_client_config
+                .to_oci_client_config(),
+        ));
         client
             .store_auth_if_needed(&key.registry, &auth.to_oci_auth())
             .await;
@@ -171,6 +232,62 @@ impl NirionOciClient {
             .entry(key)
             .or_insert_with(|| Arc::clone(&client))
             .clone()
+    }
+}
+
+pub struct NirionOciClientBuilder {
+    auth: AuthConfig,
+    docker_hub: DockerHubClient,
+    oci_client_config: NirionOciClientConfig,
+}
+
+impl Default for NirionOciClientBuilder {
+    fn default() -> Self {
+        Self {
+            auth: AuthConfig::default(),
+            docker_hub: DockerHubClient::default(),
+            oci_client_config: NirionOciClientConfig::default(),
+        }
+    }
+}
+
+impl NirionOciClientBuilder {
+    pub fn auth(mut self, auth: AuthConfig) -> Self {
+        self.auth = auth;
+        self
+    }
+
+    pub fn add_auth(
+        mut self,
+        scope: impl Into<String>,
+        auth: RegistryAuth,
+    ) -> Self {
+        self.auth.add_auth(scope.into(), auth);
+        self
+    }
+
+    pub fn docker_hub(mut self, docker_hub: DockerHubClient) -> Self {
+        self.docker_hub = docker_hub;
+        self
+    }
+
+    pub fn oci_client_config(mut self, config: NirionOciClientConfig) -> Self {
+        self.oci_client_config = config;
+        self
+    }
+
+    pub fn oci_client_protocol(mut self, protocol: ClientProtocol) -> Self {
+        self.oci_client_config.protocol = protocol;
+        self
+    }
+
+    pub fn build(self) -> NirionOciClient {
+        NirionOciClient {
+            auth: self.auth,
+            docker_hub: self.docker_hub,
+            oci_client_config: self.oci_client_config,
+            clients: Mutex::new(HashMap::new()),
+        }
     }
 }
 
