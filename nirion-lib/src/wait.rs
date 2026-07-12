@@ -54,3 +54,154 @@ pub fn healthchecks_finished(
 
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        docker::{Port, ServiceStatus},
+        projects::{ProjectSelector, ServiceSelector},
+    };
+
+    fn projects() -> Projects {
+        serde_json::from_str(
+            r#"
+{
+  "myapp": {
+    "name": "myapp",
+    "dockerCompose": "compose.yml",
+    "services": {
+      "web": {"image": "nginx", "healthcheck": true, "restart": null},
+      "worker": {"image": "busybox", "healthcheck": false, "restart": null}
+    }
+  },
+  "api": {
+    "name": "api",
+    "dockerCompose": "compose.yml",
+    "services": {
+      "server": {"image": "node", "healthcheck": true, "restart": null}
+    }
+  }
+}
+"#,
+        )
+        .unwrap()
+    }
+
+    fn service_status(service: &str, state: ServiceState) -> ServiceStatus {
+        ServiceStatus {
+            id: format!("{service}-id"),
+            service: service.to_string(),
+            container_name: service.to_string(),
+            image: "image".to_string(),
+            state,
+            health: None,
+            exit_code: None,
+            running_for: None,
+            status: None,
+            ports: Vec::<Port>::new(),
+            networks: Vec::new(),
+        }
+    }
+
+    fn project_status(entries: Vec<(&str, ServiceState)>) -> ProjectStatus {
+        ProjectStatus {
+            services: entries
+                .into_iter()
+                .map(|(service, state)| {
+                    (service.to_string(), service_status(service, state))
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn all_target_finishes_when_healthchecks_are_terminal() {
+        let projects = projects();
+        let statuses = BTreeMap::from([
+            (
+                "myapp".to_string(),
+                project_status(vec![("web", ServiceState::Healthy)]),
+            ),
+            (
+                "api".to_string(),
+                project_status(vec![("server", ServiceState::Unhealthy)]),
+            ),
+        ]);
+
+        assert!(healthchecks_finished(
+            &TargetSelector::All,
+            &projects,
+            &statuses
+        ));
+    }
+
+    #[test]
+    fn all_target_waits_for_missing_project_status() {
+        let projects = projects();
+        let statuses = BTreeMap::from([(
+            "myapp".to_string(),
+            project_status(vec![("web", ServiceState::Healthy)]),
+        )]);
+
+        assert!(!healthchecks_finished(
+            &TargetSelector::All,
+            &projects,
+            &statuses
+        ));
+    }
+
+    #[test]
+    fn project_target_waits_for_non_terminal_healthcheck() {
+        let projects = projects();
+        let statuses = BTreeMap::from([(
+            "myapp".to_string(),
+            project_status(vec![("web", ServiceState::Starting)]),
+        )]);
+        let target = TargetSelector::Project(ProjectSelector {
+            name: "myapp".into(),
+        });
+
+        assert!(!healthchecks_finished(&target, &projects, &statuses));
+    }
+
+    #[test]
+    fn project_target_waits_for_missing_healthchecked_service() {
+        let projects = projects();
+        let statuses = BTreeMap::from([(
+            "myapp".to_string(),
+            project_status(vec![("worker", ServiceState::Running)]),
+        )]);
+        let target = TargetSelector::Project(ProjectSelector {
+            name: "myapp".into(),
+        });
+
+        assert!(!healthchecks_finished(&target, &projects, &statuses));
+    }
+
+    #[test]
+    fn service_target_ignores_other_services() {
+        let projects = projects();
+        let statuses = BTreeMap::from([(
+            "myapp".to_string(),
+            project_status(vec![("web", ServiceState::Healthy)]),
+        )]);
+        let target = TargetSelector::Service(ServiceSelector {
+            project: "myapp".into(),
+            service: "worker".into(),
+        });
+
+        assert!(healthchecks_finished(&target, &projects, &statuses));
+    }
+
+    #[test]
+    fn missing_project_in_config_is_treated_as_finished() {
+        let projects = projects();
+        let statuses = BTreeMap::new();
+        let target = TargetSelector::Project(ProjectSelector {
+            name: "missing".into(),
+        });
+
+        assert!(healthchecks_finished(&target, &projects, &statuses));
+    }
+}

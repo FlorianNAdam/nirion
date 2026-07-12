@@ -64,6 +64,7 @@ pub fn nix_config_target(target: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nirion_oci_lib::auth::RegistryAuth;
 
     #[test]
     fn nix_config_target_basic() {
@@ -110,6 +111,96 @@ mod tests {
         let path = dir.path().join("lock.json");
         std::fs::write(&path, "not json").unwrap();
         assert!(load_locked_images(&path).is_err());
+    }
+
+    #[test]
+    fn load_projects_valid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("projects.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "myapp": {
+                    "name": "myapp",
+                    "dockerCompose": "compose.yml",
+                    "services": {
+                        "web": {
+                            "image": "nginx",
+                            "healthcheck": true,
+                            "restart": null
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let result = load_projects(&path).unwrap();
+        assert!(result.contains_key("myapp"));
+        assert_eq!(
+            result["myapp"].services["web"]
+                .image
+                .as_deref(),
+            Some("nginx")
+        );
+    }
+
+    #[test]
+    fn load_projects_missing_file_errors() {
+        let result = load_projects(Path::new("/nonexistent/projects.json"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_projects_invalid_json_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("projects.json");
+        std::fs::write(&path, "not json").unwrap();
+        assert!(load_projects(&path).is_err());
+    }
+
+    #[test]
+    fn load_auth_config_none_returns_empty_config() {
+        let result = load_auth_config(None).unwrap();
+        assert!(result.sources.is_empty());
+    }
+
+    #[test]
+    fn load_auth_config_valid_json_normalizes_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "docker.io/library/nginx": {
+                    "type": "basic",
+                    "username": "user",
+                    "password": "pass"
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let result = load_auth_config(Some(&path)).unwrap();
+        assert_eq!(
+            result.sources["index.docker.io/library/nginx"],
+            RegistryAuth::basic("user", "pass")
+        );
+    }
+
+    #[test]
+    fn load_auth_config_missing_file_errors() {
+        let result =
+            load_auth_config(Some(Path::new("/nonexistent/auth.json")));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_auth_config_invalid_json_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.json");
+        std::fs::write(&path, "not json").unwrap();
+        assert!(load_auth_config(Some(&path)).is_err());
     }
 }
 
