@@ -12,6 +12,10 @@ use crate::{
     projects::{ProjectName, Projects, TargetSelector},
 };
 
+#[cfg(test)]
+static TEST_DOCKER_BIN: std::sync::Mutex<Option<String>> =
+    std::sync::Mutex::new(None);
+
 pub fn compose_target(
     target: TargetSelector,
     projects: Projects,
@@ -135,6 +139,14 @@ pub fn compose_cmd(
     project_name: ProjectName,
     args: Vec<String>,
 ) -> BoxStream<'static, anyhow::Result<ProcessEvent>> {
+    run_docker_compose(build_compose_args(compose_file, project_name, args))
+}
+
+fn build_compose_args(
+    compose_file: String,
+    project_name: ProjectName,
+    args: Vec<String>,
+) -> Vec<String> {
     let mut cmd_args = vec![
         "--file".to_string(),
         compose_file,
@@ -143,7 +155,7 @@ pub fn compose_cmd(
     ];
     cmd_args.extend(args);
 
-    run_docker_compose(cmd_args)
+    cmd_args
 }
 
 pub fn run_docker_compose(
@@ -152,7 +164,7 @@ pub fn run_docker_compose(
     let (tx, rx) = mpsc::unbounded();
 
     tokio::spawn(async move {
-        let mut child = match Command::new("docker")
+        let mut child = match docker_command()
             .arg("compose")
             .args(cmd_args)
             .stdout(Stdio::piped())
@@ -222,4 +234,167 @@ pub fn run_docker_compose(
     });
 
     rx.boxed()
+}
+
+fn docker_command() -> Command {
+    #[cfg(test)]
+    if let Some(bin) = TEST_DOCKER_BIN.lock().unwrap().clone() {
+        return Command::new(bin);
+    }
+
+    Command::new("docker")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+
+    static DOCKER_BIN_LOCK: tokio::sync::Mutex<()> =
+        tokio::sync::Mutex::const_new(());
+
+    struct DockerBinGuard;
+
+    impl DockerBinGuard {
+        fn set(bin: String) -> Self {
+            *TEST_DOCKER_BIN.lock().unwrap() = Some(bin);
+            Self
+        }
+    }
+
+    impl Drop for DockerBinGuard {
+        fn drop(&mut self) {
+            *TEST_DOCKER_BIN.lock().unwrap() = None;
+        }
+    }
+
+    async fn collect_events(
+        stream: BoxStream<'static, anyhow::Result<ProcessEvent>>,
+    ) -> Vec<anyhow::Result<ProcessEvent>> {
+        stream.collect::<Vec<_>>().await
+    }
+
+    fn write_fake_docker(
+        dir: &Path,
+        args_file: &Path,
+        exit_code: i32,
+    ) -> String {
+        let docker = dir.join("docker");
+        fs::write(
+            &docker,
+            format!(
+                r#"#!/bin/sh
+printf '%s\n' "$@" > '{}'
+echo stdout-line
+echo stderr-line >&2
+exit {exit_code}
+"#,
+                args_file.display()
+            ),
+        )
+        .unwrap();
+
+        let mut permissions = fs::metadata(&docker)
+            .unwrap()
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker, permissions).unwrap();
+
+        docker.to_string_lossy().to_string()
+    }
+
+    #[test]
+    fn build_compose_args_adds_file_and_project_name() {
+        let args = build_compose_args(
+            "compose.yml".into(),
+            ProjectName("myapp".into()),
+            vec!["up".into(), "-d".into()],
+        );
+
+        assert_eq!(
+            args,
+            vec![
+                "--file",
+                "compose.yml",
+                "--project-name",
+                "myapp",
+                "up",
+                "-d"
+            ]
+        );
+    }
+
+    #[test]
+    fn build_compose_args_keeps_empty_passthrough_args_empty() {
+        let args = build_compose_args(
+            "compose.json".into(),
+            ProjectName("api".into()),
+            Vec::new(),
+        );
+
+        assert_eq!(
+            args,
+            vec!["--file", "compose.json", "--project-name", "api"]
+        );
+    }
+
+    #[tokio::test]
+    async fn run_docker_compose_streams_output_and_exit_status() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker(dir.path(), &args_file, 0);
+        let _docker_bin_guard = DockerBinGuard::set(docker);
+
+        let events = collect_events(run_docker_compose(vec![
+            "ps".into(),
+            "--format".into(),
+            "json".into(),
+        ]))
+        .await;
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Ok(ProcessEvent::StdoutLine(line)) if line == "stdout-line"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Ok(ProcessEvent::StderrLine(line)) if line == "stderr-line"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Ok(ProcessEvent::Exited(status)) if status.code == Some(0) && status.success
+        )));
+        assert!(events.iter().all(Result::is_ok));
+
+        assert_eq!(
+            fs::read_to_string(args_file).unwrap(),
+            "compose\nps\n--format\njson\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_docker_compose_emits_error_for_failed_exit_status() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker(dir.path(), &args_file, 42);
+        let _docker_bin_guard = DockerBinGuard::set(docker);
+
+        let events =
+            collect_events(run_docker_compose(vec!["up".into()])).await;
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Ok(ProcessEvent::Exited(status)) if status.code == Some(42) && !status.success
+        )));
+        assert!(events.iter().any(|event| {
+            match event {
+                Err(err) => err
+                    .to_string()
+                    .contains("docker compose exited with status"),
+                Ok(_) => false,
+            }
+        }));
+    }
 }
