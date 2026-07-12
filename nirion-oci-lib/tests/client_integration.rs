@@ -20,9 +20,63 @@ use tokio::{
     net::TcpListener,
 };
 
+struct TestImage {
+    _registry: testcontainers::ContainerAsync<GenericImage>,
+    registry_addr: String,
+    reference: Reference,
+    digest: String,
+}
+
 #[tokio::test]
 async fn resolves_local_registry_image_with_mocked_docker_hub_metadata()
 -> anyhow::Result<()> {
+    let Some(test_image) = push_test_image("latest").await? else {
+        return Ok(());
+    };
+
+    let (hub_base_url, hub_server) =
+        start_mock_docker_hub(&test_image.digest).await?;
+    let docker_hub = DockerHubClient::with_base_url(hub_base_url)
+        .with_registries([test_image.registry_addr.clone()]);
+
+    let client = http_nirion_client()
+        .docker_hub(docker_hub)
+        .build();
+
+    let resolved = client
+        .get_versioned_image(&test_image.reference)
+        .await?;
+
+    assert_eq!(resolved.image, test_image.reference.to_string());
+    assert_eq!(resolved.digest, test_image.digest);
+    assert_eq!(resolved.version.as_deref(), Some("1.2.3"));
+
+    hub_server.await??;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn resolves_local_registry_image_with_generic_oci_tags()
+-> anyhow::Result<()> {
+    let Some(test_image) = push_test_image("1.2.3").await? else {
+        return Ok(());
+    };
+
+    let client = http_nirion_client().build();
+
+    let resolved = client
+        .get_versioned_image(&test_image.reference)
+        .await?;
+
+    assert_eq!(resolved.image, test_image.reference.to_string());
+    assert_eq!(resolved.digest, test_image.digest);
+    assert_eq!(resolved.version.as_deref(), Some("1.2.3"));
+
+    Ok(())
+}
+
+async fn push_test_image(tag: &str) -> anyhow::Result<Option<TestImage>> {
     let registry = match GenericImage::new("registry", "3")
         .with_exposed_port(5000.tcp())
         .with_wait_for(WaitFor::message_on_stderr("listening on"))
@@ -32,7 +86,7 @@ async fn resolves_local_registry_image_with_mocked_docker_hub_metadata()
         Ok(registry) => registry,
         Err(err) => {
             eprintln!("skipping Docker-backed OCI integration test: {err}");
-            return Ok(());
+            return Ok(None);
         }
     };
 
@@ -40,7 +94,7 @@ async fn resolves_local_registry_image_with_mocked_docker_hub_metadata()
         .get_host_port_ipv4(5000.tcp())
         .await?;
     let registry_addr = format!("127.0.0.1:{registry_port}");
-    let image = format!("{registry_addr}/library/nirion-test:latest");
+    let image = format!("{registry_addr}/library/nirion-test:{tag}");
     let reference = Reference::try_from(image.as_str())?;
 
     let oci_client = Client::new(ClientConfig {
@@ -59,30 +113,21 @@ async fn resolves_local_registry_image_with_mocked_docker_hub_metadata()
         .pull_manifest_and_config(&reference, &auth)
         .await?;
 
-    let (hub_base_url, hub_server) = start_mock_docker_hub(&digest).await?;
-    let docker_hub = DockerHubClient::with_base_url(hub_base_url)
-        .with_registries([registry_addr.clone()]);
+    Ok(Some(TestImage {
+        _registry: registry,
+        registry_addr,
+        reference,
+        digest,
+    }))
+}
 
-    let client = NirionOciClient::builder()
+fn http_nirion_client() -> nirion_oci_lib::client::NirionOciClientBuilder {
+    NirionOciClient::builder()
         .auth(AuthConfig::default())
-        .docker_hub(docker_hub)
         .oci_client_config(NirionOciClientConfig {
             protocol: ClientProtocol::Http,
             ..Default::default()
         })
-        .build();
-
-    let resolved = client
-        .get_versioned_image(&reference)
-        .await?;
-
-    assert_eq!(resolved.image, reference.to_string());
-    assert_eq!(resolved.digest, digest);
-    assert_eq!(resolved.version.as_deref(), Some("1.2.3"));
-
-    hub_server.await??;
-
-    Ok(())
 }
 
 async fn start_mock_docker_hub(
