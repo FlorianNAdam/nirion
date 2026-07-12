@@ -1,0 +1,9 @@
+[coverage]
+workspace = true
+exclude = ["nirion-bin", "nirion-tui-lib"]
+exclude-files = ["nirion-bin/*", "nirion-tui-lib/*"]
+skip-clean = true
+target-dir = "target/tarpaulin"
+timeout = "20m"
+locked = true
+out = ["Stdout"]

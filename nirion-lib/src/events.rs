@@ -56,3 +56,27 @@ impl From<std::process::ExitStatus> for ExitStatus {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::process::ExitStatusExt;
+
+    #[test]
+    fn converts_success_exit_status() {
+        let status = std::process::ExitStatus::from_raw(0);
+        let status = ExitStatus::from(status);
+
+        assert_eq!(status.code, Some(0));
+        assert!(status.success);
+    }
+
+    #[test]
+    fn converts_failed_exit_status() {
+        let status = std::process::ExitStatus::from_raw(1 << 8);
+        let status = ExitStatus::from(status);
+
+        assert_eq!(status.code, Some(1));
+        assert!(!status.success);
+    }
+}
