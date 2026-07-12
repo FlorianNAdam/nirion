@@ -44,6 +44,7 @@
           };
           check-commit-messages = pkgs.callPackage ./nix/check-commit-messages.nix { };
           check-message = pkgs.callPackage ./nix/check-message.nix { };
+          coverage = pkgs.callPackage ./nix/coverage.nix { };
         in
         {
           packages = {
@@ -67,6 +68,12 @@
             type = "app";
             program = "${check-message}/bin/check-message";
             meta.description = "Check a single commit-style message";
+          };
+
+          apps.coverage = {
+            type = "app";
+            program = "${coverage}/bin/coverage";
+            meta.description = "Run Tarpaulin coverage using tarpaulin.toml";
           };
 
           checks = {
