@@ -42,6 +42,22 @@ pub fn update_images(
     lock_file: PathBuf,
     jobs: usize,
 ) -> LockUpdateOperation {
+    let client = Arc::new(
+        NirionOciClient::builder()
+            .auth(auth)
+            .build(),
+    );
+
+    update_images_with_client(images, locked_images, lock_file, jobs, client)
+}
+
+fn update_images_with_client(
+    images: BTreeMap<String, String>,
+    locked_images: LockedImages,
+    lock_file: PathBuf,
+    jobs: usize,
+    client: Arc<NirionOciClient>,
+) -> LockUpdateOperation {
     let (event_tx, event_rx) = mpsc::unbounded();
 
     let report = tokio::spawn(async move {
@@ -56,11 +72,6 @@ pub fn update_images(
 
         let digest_cache: Arc<RwLock<HashMap<String, VersionedImage>>> =
             Arc::new(RwLock::new(HashMap::new()));
-        let client = Arc::new(
-            NirionOciClient::builder()
-                .auth(auth)
-                .build(),
-        );
         let semaphore = Arc::new(tokio::sync::Semaphore::new(jobs));
         let mut futures = FuturesUnordered::new();
 
@@ -172,6 +183,228 @@ async fn get_cached_image(
     }
 
     Ok(versioned_image)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::events::LockUpdateEvent;
+    use futures::StreamExt;
+    use nirion_oci_lib::{
+        oci_client::secrets::RegistryAuth,
+        test_registry::{RegistryHandle, http_nirion_client},
+    };
+
+    fn image(image: &str, version: &str, digest: &str) -> VersionedImage {
+        VersionedImage {
+            image: image.to_string(),
+            version: Some(version.to_string()),
+            digest: digest.to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn no_images_reports_no_images_without_writing() -> anyhow::Result<()>
+    {
+        let dir = tempfile::tempdir()?;
+        let lock_file = dir.path().join("nirion.lock");
+        let mut operation = update_images(
+            AuthConfig::default(),
+            BTreeMap::new(),
+            LockedImages::default(),
+            lock_file.clone(),
+            1,
+        );
+
+        assert!(matches!(
+            operation
+                .events
+                .next()
+                .await
+                .transpose()?,
+            Some(LockUpdateEvent::NoImages)
+        ));
+
+        let report = operation.finish().await?;
+        assert!(!report.written);
+        assert!(report.diffs.is_empty());
+        assert!(!lock_file.exists());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn adds_new_image_and_writes_lock_file() -> anyhow::Result<()> {
+        let Some(handle) = RegistryHandle::start_anonymous().await? else {
+            return Ok(());
+        };
+        let test_image = handle
+            .push(
+                "library/nirion-lock-update",
+                "1.2.3",
+                &RegistryAuth::Anonymous,
+            )
+            .await?;
+        let dir = tempfile::tempdir()?;
+        let lock_file = dir.path().join("nirion.lock");
+        let report = update_images_with_client(
+            BTreeMap::from([(
+                "app.web".to_string(),
+                test_image.reference.to_string(),
+            )]),
+            LockedImages::default(),
+            lock_file.clone(),
+            1,
+            Arc::new(http_nirion_client().build()),
+        )
+        .finish()
+        .await?;
+
+        assert!(report.written);
+        assert!(
+            matches!(report.diffs.as_slice(), [DiffEntry::Added { service, new }] if service == "app.web" && new.digest == test_image.digest)
+        );
+        assert_eq!(
+            report
+                .locked_images
+                .get("app.web")
+                .unwrap()
+                .digest,
+            test_image.digest
+        );
+
+        let written: LockedImages =
+            serde_json::from_str(&std::fs::read_to_string(lock_file)?)?;
+        assert_eq!(written.get("app.web").unwrap().digest, test_image.digest);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unchanged_locked_image_reports_up_to_date() -> anyhow::Result<()> {
+        let Some(handle) = RegistryHandle::start_anonymous().await? else {
+            return Ok(());
+        };
+        let test_image = handle
+            .push(
+                "library/nirion-lock-update",
+                "1.2.3",
+                &RegistryAuth::Anonymous,
+            )
+            .await?;
+        let dir = tempfile::tempdir()?;
+        let lock_file = dir.path().join("nirion.lock");
+        let mut locked_images = LockedImages::default();
+        locked_images.insert(
+            "app.web".to_string(),
+            image(
+                &test_image.reference.to_string(),
+                "1.2.3",
+                &test_image.digest,
+            ),
+        );
+
+        let report = update_images_with_client(
+            BTreeMap::from([(
+                "app.web".to_string(),
+                test_image.reference.to_string(),
+            )]),
+            locked_images,
+            lock_file.clone(),
+            1,
+            Arc::new(http_nirion_client().build()),
+        )
+        .finish()
+        .await?;
+
+        assert!(!report.written);
+        assert!(report.diffs.is_empty());
+        assert!(!lock_file.exists());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn stale_locked_image_updates_digest_and_writes_lock_file()
+    -> anyhow::Result<()> {
+        let Some(handle) = RegistryHandle::start_anonymous().await? else {
+            return Ok(());
+        };
+        let test_image = handle
+            .push(
+                "library/nirion-lock-update",
+                "1.2.3",
+                &RegistryAuth::Anonymous,
+            )
+            .await?;
+        let dir = tempfile::tempdir()?;
+        let lock_file = dir.path().join("nirion.lock");
+        let mut locked_images = LockedImages::default();
+        locked_images.insert(
+            "app.web".to_string(),
+            image(
+                &test_image.reference.to_string(),
+                "1.0.0",
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            ),
+        );
+
+        let report = update_images_with_client(
+            BTreeMap::from([(
+                "app.web".to_string(),
+                test_image.reference.to_string(),
+            )]),
+            locked_images,
+            lock_file,
+            1,
+            Arc::new(http_nirion_client().build()),
+        )
+        .finish()
+        .await?;
+
+        assert!(report.written);
+        assert!(
+            matches!(report.diffs.as_slice(), [DiffEntry::Updated { service, new, .. }] if service == "app.web" && new.digest == test_image.digest)
+        );
+        assert_eq!(
+            report
+                .locked_images
+                .get("app.web")
+                .unwrap()
+                .digest,
+            test_image.digest
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn invalid_image_reference_returns_error() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let lock_file = dir.path().join("nirion.lock");
+        let result = update_images_with_client(
+            BTreeMap::from([(
+                "app.web".to_string(),
+                "not a valid image".to_string(),
+            )]),
+            LockedImages::default(),
+            lock_file.clone(),
+            1,
+            Arc::new(http_nirion_client().build()),
+        )
+        .finish()
+        .await;
+
+        let err = match result {
+            Ok(_) => panic!("expected invalid image reference to fail"),
+            Err(err) => err,
+        };
+
+        assert!(!err.to_string().is_empty());
+        assert!(!lock_file.exists());
+
+        Ok(())
+    }
 }
 
 async fn get_cached_updated_image(
