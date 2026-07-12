@@ -2,6 +2,7 @@
 [![check](https://img.shields.io/github/actions/workflow/status/FlorianNAdam/nirion/check.yml?branch=main&style=flat-square&label=check)](https://github.com/FlorianNAdam/nirion/actions/workflows/check.yml)
 [![release](https://img.shields.io/github/v/release/FlorianNAdam/nirion?sort=semver&style=flat-square&label=release)](https://github.com/FlorianNAdam/nirion/releases)
 [![nix flake](https://img.shields.io/badge/nix-flake-5277C3?style=flat-square&logo=nixos&logoColor=white)](#installation)
+[![coverage](https://img.shields.io/coverallsCoverage/github/FlorianNAdam/nirion?branch=main&style=flat-square&label=coverage)](https://coveralls.io/github/FlorianNAdam/nirion?branch=main)
 
 **Nirion** is a Docker Compose manager for simpler Nix-based home lab Docker setups and management.  
 It streamlines container management, Nix evaluation, and service patching for reproducible and maintainable workflows.\
