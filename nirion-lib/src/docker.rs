@@ -378,6 +378,14 @@ impl DockerProjectMonitor {
     }
 }
 
+impl Drop for DockerProjectMonitor {
+    fn drop(&mut self) {
+        if let Some(handle) = &self.refresh_handle {
+            handle.abort();
+        }
+    }
+}
+
 async fn project_refresh_thread(
     project_status: Arc<RwLock<ProjectStatus>>,
     compose_file: String,
@@ -390,12 +398,7 @@ async fn project_refresh_thread(
                 let mut status = project_status.write().await;
                 *status = new_status;
             }
-            Err(e) => {
-                eprintln!(
-                    "Failed to refresh status for {}: {:?}",
-                    project_name, e
-                );
-            }
+            Err(_) => {}
         }
         tokio::time::sleep(interval).await;
     }

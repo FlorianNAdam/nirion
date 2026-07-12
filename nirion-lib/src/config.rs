@@ -71,8 +71,12 @@ pub async fn build_nix_project_file(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("{}", stderr);
-        anyhow::bail!("nix build failed with status {}", output.status);
+        anyhow::bail!(
+            "nix build failed with status {}{}{}",
+            output.status,
+            if stderr.trim().is_empty() { "" } else { ": " },
+            stderr.trim()
+        );
     }
 
     let raw_path = str::from_utf8(&output.stdout)?

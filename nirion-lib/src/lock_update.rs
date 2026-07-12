@@ -1,6 +1,5 @@
-use crossterm::{cursor, execute, style::Stylize};
-use futures::{StreamExt, stream::FuturesUnordered};
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use futures::{FutureExt, stream::FuturesUnordered};
+use futures::{StreamExt, channel::mpsc, stream::BoxStream};
 use nirion_oci_lib::{
     client::{AuthConfig, NirionOciClient},
     oci_client::Reference,
@@ -8,162 +7,145 @@ use nirion_oci_lib::{
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
-    io::stdout,
-    path::Path,
+    path::PathBuf,
     sync::Arc,
-    time::Duration,
 };
-use tokio::sync::RwLock;
+use tokio::{sync::RwLock, task::JoinHandle};
 
-use crate::lock::{LockedImages, VersionedImage};
+use crate::{
+    events::LockUpdateEvent,
+    lock::{DiffEntry, LockedImages, VersionedImage},
+};
 
-pub async fn update_images(
-    auth: &AuthConfig,
-    images: BTreeMap<String, String>,
-    locked_images: &LockedImages,
-    lock_file: &Path,
-    jobs: usize,
-) -> anyhow::Result<()> {
-    let total_images = images.len();
-
-    if total_images == 0 {
-        println!("No images found to update");
-        return Ok(());
-    }
-
-    let mut stdout = stdout();
-    execute!(stdout, cursor::Hide)?;
-
-    let multi_progress = MultiProgress::new();
-    let overall_pb = multi_progress.add(ProgressBar::new(total_images as u64));
-    overall_pb.set_style(
-        ProgressStyle::default_bar()
-            .template(
-                "[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}",
-            )
-            .unwrap()
-            .progress_chars("██"),
-    );
-
-    overall_pb.enable_steady_tick(Duration::from_millis(100));
-
-    overall_pb.set_message("Starting...");
-
-    let digest_cache: Arc<RwLock<HashMap<String, VersionedImage>>> =
-        Arc::new(RwLock::new(HashMap::new()));
-    let client = Arc::new(
-        NirionOciClient::builder()
-            .auth(auth.clone())
-            .build(),
-    );
-
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(jobs));
-
-    let mut futures = FuturesUnordered::new();
-
-    for (service, image) in images {
-        let client = Arc::clone(&client);
-        let semaphore = Arc::clone(&semaphore);
-        let digest_cache = Arc::clone(&digest_cache);
-        let overall_pb = overall_pb.clone();
-        let multi_progress = multi_progress.clone();
-
-        let current_versioned_image = locked_images.get(&service).cloned();
-
-        futures.push(async move {
-            let _permit = semaphore.acquire().await.unwrap();
-
-            let pb = multi_progress.add(ProgressBar::new_spinner());
-            pb.set_style(
-                ProgressStyle::default_spinner()
-                    .template("{spinner:.green} {msg}")
-                    .unwrap()
-                    .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
-            );
-            pb.enable_steady_tick(Duration::from_millis(100));
-            pb.set_message(format!("Checking {}", image));
-
-            let versioned_image =
-                if let Some(mut current) = current_versioned_image {
-                    let reference = Reference::try_from(image)?;
-                    current.image = reference.to_string();
-                    get_cached_updated_image(&client, &current, &digest_cache)
-                        .await?
-                } else {
-                    get_cached_image(&client, &image, &digest_cache).await?
-                };
-
-            pb.finish_and_clear();
-
-            overall_pb.inc(1);
-
-            Ok::<_, anyhow::Error>((service, versioned_image))
-        });
-    }
-
-    let mut new_locked_images = locked_images.clone();
-
-    while let Some(result) = futures.next().await {
-        let (service, versioned_image) = result?;
-        new_locked_images.insert(service, versioned_image);
-    }
-
-    overall_pb.finish_with_message("All images checked");
-    println!();
-
-    if locked_images == &new_locked_images {
-        println!("All images are already up-to-date");
-        return Ok(());
-    }
-
-    println!("\nChanges:");
-    print_diff(locked_images, &new_locked_images);
-
-    println!("\nUpdating lock file...");
-    let new_lock_file = serde_json::to_string_pretty(&new_locked_images)?;
-    fs::write(lock_file, new_lock_file)?;
-
-    println!("Lock file updated successfully");
-
-    Ok(())
+#[derive(Clone)]
+pub struct LockUpdateReport {
+    pub locked_images: LockedImages,
+    pub diffs: Vec<DiffEntry>,
+    pub written: bool,
 }
 
-fn print_diff(old: &LockedImages, new: &LockedImages) {
-    for entry in old.diff(new) {
-        use crate::lock::DiffEntry::*;
-        match entry {
-            Added { service, new } => {
-                println!("  + {}:", service.to_string().green());
-                if let Some(version) = &new.version {
-                    println!("      new version: {}", version);
-                }
-                println!("      new digest: {}", new.digest);
-            }
-            Updated { service, old, new } => {
-                println!("  ~ {}:", service.to_string().cyan());
-                if let Some(version) = &new.version {
-                    let old_version = old
-                        .version
-                        .as_ref()
-                        .map(|s| s.as_str())
-                        .unwrap_or("none");
+pub struct LockUpdateOperation {
+    pub events: BoxStream<'static, anyhow::Result<LockUpdateEvent>>,
+    report: JoinHandle<anyhow::Result<LockUpdateReport>>,
+}
 
-                    println!(
-                        "      new version: {} -> {}",
-                        old_version, version
-                    );
-                }
-                println!("      old digest: {}", old.digest);
-                println!("      new digest: {}", new.digest);
-            }
-            Removed { service, old } => {
-                println!("  - {}:", service.to_string().yellow());
-                if let Some(version) = &old.version {
-                    println!("      old version: {}", version);
-                }
-                println!("      old digest: {}", old.digest);
-            }
+impl LockUpdateOperation {
+    pub async fn finish(self) -> anyhow::Result<LockUpdateReport> {
+        self.report.await?
+    }
+}
+
+pub fn update_images(
+    auth: AuthConfig,
+    images: BTreeMap<String, String>,
+    locked_images: LockedImages,
+    lock_file: PathBuf,
+    jobs: usize,
+) -> LockUpdateOperation {
+    let (event_tx, event_rx) = mpsc::unbounded();
+
+    let report = tokio::spawn(async move {
+        if images.is_empty() {
+            let _ = event_tx.unbounded_send(Ok(LockUpdateEvent::NoImages));
+            return Ok(LockUpdateReport {
+                locked_images,
+                diffs: Vec::new(),
+                written: false,
+            });
         }
+
+        let digest_cache: Arc<RwLock<HashMap<String, VersionedImage>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+        let client = Arc::new(
+            NirionOciClient::builder()
+                .auth(auth)
+                .build(),
+        );
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(jobs));
+        let mut futures = FuturesUnordered::new();
+
+        for (service, image) in images {
+            let _ =
+                event_tx.unbounded_send(Ok(LockUpdateEvent::ImageStarted {
+                    service: service.clone(),
+                    image: image.clone(),
+                }));
+
+            let client = Arc::clone(&client);
+            let semaphore = Arc::clone(&semaphore);
+            let digest_cache = Arc::clone(&digest_cache);
+            let current_versioned_image = locked_images.get(&service).cloned();
+            let event_tx = event_tx.clone();
+
+            futures.push(
+                async move {
+                    let _permit = semaphore.acquire().await.unwrap();
+
+                    let versioned_image = if let Some(mut current) =
+                        current_versioned_image
+                    {
+                        let reference = Reference::try_from(image)?;
+                        current.image = reference.to_string();
+                        get_cached_updated_image(
+                            &client,
+                            &current,
+                            &digest_cache,
+                        )
+                        .await?
+                    } else {
+                        get_cached_image(&client, &image, &digest_cache).await?
+                    };
+
+                    let _ = event_tx.unbounded_send(Ok(
+                        LockUpdateEvent::ImageResolved {
+                            service: service.clone(),
+                        },
+                    ));
+
+                    Ok::<_, anyhow::Error>((service, versioned_image))
+                }
+                .boxed(),
+            );
+        }
+
+        let mut new_locked_images = locked_images.clone();
+
+        while let Some(result) = futures.next().await {
+            let (service, versioned_image) = result?;
+            new_locked_images.insert(service, versioned_image);
+        }
+
+        let diffs = locked_images.diff(&new_locked_images);
+
+        if diffs.is_empty() {
+            let _ = event_tx.unbounded_send(Ok(LockUpdateEvent::UpToDate));
+            return Ok(LockUpdateReport {
+                locked_images: new_locked_images,
+                diffs,
+                written: false,
+            });
+        }
+
+        let _ = event_tx.unbounded_send(Ok(LockUpdateEvent::ChangesDetected {
+            diffs: diffs.clone(),
+        }));
+        let _ = event_tx.unbounded_send(Ok(LockUpdateEvent::WritingLockFile));
+
+        let new_lock_file = serde_json::to_string_pretty(&new_locked_images)?;
+        fs::write(lock_file, new_lock_file)?;
+
+        let _ = event_tx.unbounded_send(Ok(LockUpdateEvent::LockFileWritten));
+
+        Ok(LockUpdateReport {
+            locked_images: new_locked_images,
+            diffs,
+            written: true,
+        })
+    });
+
+    LockUpdateOperation {
+        events: event_rx.boxed(),
+        report,
     }
 }
 

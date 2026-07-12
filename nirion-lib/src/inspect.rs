@@ -21,15 +21,16 @@ pub async fn inspect_project(
     locked_images: &LockedImages,
     format: &str,
     raw: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<String>> {
     let mut failures = Vec::new();
+    let mut outputs = Vec::new();
 
     for service in projects[&target.name].services.keys() {
         let service_selector = ServiceSelector {
             project: target.name.to_string(),
             service: service.to_string(),
         };
-        if let Err(e) = inspect_service(
+        match inspect_service(
             &service_selector,
             inspect_target,
             projects,
@@ -39,8 +40,11 @@ pub async fn inspect_project(
         )
         .await
         {
-            failures.push(format!("{}.{}: {}", target.name, service, e));
-        };
+            Ok(output) => outputs.push(output),
+            Err(e) => {
+                failures.push(format!("{}.{}: {}", target.name, service, e))
+            }
+        }
     }
 
     if !failures.is_empty() {
@@ -51,7 +55,7 @@ pub async fn inspect_project(
         );
     }
 
-    Ok(())
+    Ok(outputs)
 }
 
 pub async fn inspect_service(
@@ -61,16 +65,16 @@ pub async fn inspect_service(
     locked_images: &LockedImages,
     format: &str,
     raw: bool,
-) -> anyhow::Result<()> {
-    match inspect_target {
+) -> anyhow::Result<String> {
+    let output = match inspect_target {
         InspectTarget::Image => {
             inspect_image(target, projects, locked_images, format, raw).await?
         }
         InspectTarget::Container => {
             inspect_container(target, projects, format, raw).await?
         }
-    }
-    Ok(())
+    };
+    Ok(output)
 }
 
 async fn inspect_image(
@@ -79,7 +83,7 @@ async fn inspect_image(
     locked_images: &LockedImages,
     format: &str,
     raw: bool,
-) -> Result<()> {
+) -> Result<String> {
     let project = &projects[&target.project];
 
     let service = project
@@ -113,22 +117,21 @@ async fn inspect_image(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("{}", stderr);
         anyhow::bail!(
-            "docker image inspect failed with status {}",
-            output.status
+            "docker image inspect failed with status {}{}{}",
+            output.status,
+            if stderr.trim().is_empty() { "" } else { ": " },
+            stderr.trim()
         );
     }
 
     let output = str::from_utf8(&output.stdout)?.to_string();
 
-    if !raw {
-        pretty_print_json(&output);
+    if raw {
+        Ok(output)
     } else {
-        println!("{output}");
+        Ok(pretty_json(&output))
     }
-
-    Ok(())
 }
 
 async fn inspect_container(
@@ -136,7 +139,7 @@ async fn inspect_container(
     projects: &Projects,
     format: &str,
     raw: bool,
-) -> Result<()> {
+) -> Result<String> {
     let project = &projects.get(&target.project).unwrap();
 
     let project_status =
@@ -160,22 +163,24 @@ async fn inspect_container(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("{}", stderr);
-        anyhow::bail!("docker inspect failed with status {}", output.status);
+        anyhow::bail!(
+            "docker inspect failed with status {}{}{}",
+            output.status,
+            if stderr.trim().is_empty() { "" } else { ": " },
+            stderr.trim()
+        );
     }
 
     let output = str::from_utf8(&output.stdout)?.to_string();
 
-    if !raw {
-        pretty_print_json(&output);
+    if raw {
+        Ok(output)
     } else {
-        println!("{output}");
+        Ok(pretty_json(&output))
     }
-
-    Ok(())
 }
 
-fn pretty_print_json(string: &str) {
+fn pretty_json(string: &str) -> String {
     fn inner(string: &str) -> anyhow::Result<String> {
         let json = serde_json::from_str::<Value>(string)?;
         let raw = serde_json::to_string_pretty(&json)?;
@@ -183,7 +188,7 @@ fn pretty_print_json(string: &str) {
     }
 
     match inner(string) {
-        Ok(raw) => println!("{raw}"),
-        Err(_) => println!("{string}"),
+        Ok(raw) => raw,
+        Err(_) => string.to_string(),
     }
 }

@@ -66,7 +66,7 @@ pub async fn handle_inspect(
                 let project_selector = ProjectSelector {
                     name: project_name.to_string(),
                 };
-                inspect_project(
+                for output in inspect_project(
                     &project_selector,
                     &inspect_target,
                     projects,
@@ -75,10 +75,13 @@ pub async fn handle_inspect(
                     args.raw,
                 )
                 .await?
+                {
+                    println!("{output}");
+                }
             }
         }
         TargetSelector::Project(proj) => {
-            inspect_project(
+            for output in inspect_project(
                 proj,
                 &inspect_target,
                 projects,
@@ -87,9 +90,12 @@ pub async fn handle_inspect(
                 args.raw,
             )
             .await?
+            {
+                println!("{output}");
+            }
         }
         TargetSelector::Service(img) => {
-            inspect_service(
+            let output = inspect_service(
                 img,
                 &inspect_target,
                 projects,
@@ -97,7 +103,8 @@ pub async fn handle_inspect(
                 &args.format,
                 args.raw,
             )
-            .await?
+            .await?;
+            println!("{output}");
         }
     }
     Ok(())
