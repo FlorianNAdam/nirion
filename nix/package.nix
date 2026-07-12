@@ -52,4 +52,13 @@ naersk-lib.buildPackage {
     mkdir -p $out/share/fish/vendor_completions.d
     COMPLETE=fish $out/bin/nirion > $out/share/fish/vendor_completions.d/nirion.fish
   '';
+
+  passthru = {
+    tests.rust = naersk-lib.buildPackage {
+      pname = "nirion-rust-tests";
+      src = rustSource;
+      mode = "test";
+      cargoTestOptions = options: options ++ [ "--workspace" ];
+    };
+  };
 }
