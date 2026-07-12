@@ -1,6 +1,6 @@
 use std::fs;
 
-use serde_yml::{Mapping, Value};
+use serde_yaml_ng::{Mapping, Value};
 
 use crate::projects::Project;
 
@@ -8,7 +8,7 @@ pub fn load_compose(path: &str) -> anyhow::Result<Value> {
     let data = fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("Failed reading {}: {}", path, e))?;
 
-    serde_yml::from_str::<Value>(&data).map_err(|e| {
+    serde_yaml_ng::from_str::<Value>(&data).map_err(|e| {
         anyhow::anyhow!("Compose file parse error in {}: {}", path, e)
     })
 }
@@ -54,7 +54,7 @@ pub fn service_compose(
 }
 
 pub fn compose_to_string(compose: &Value) -> anyhow::Result<String> {
-    serde_yml::to_string(compose).map_err(|e| {
+    serde_yaml_ng::to_string(compose).map_err(|e| {
         anyhow::anyhow!("Failed to pretty-print compose file: {}", e)
     })
 }
@@ -169,7 +169,7 @@ services:
 
     #[test]
     fn compose_to_string_serializes_yaml() {
-        let compose = serde_yml::from_str::<Value>("services: {}").unwrap();
+        let compose = serde_yaml_ng::from_str::<Value>("services: {}").unwrap();
         let rendered = compose_to_string(&compose).unwrap();
         assert!(rendered.contains("services:"));
     }

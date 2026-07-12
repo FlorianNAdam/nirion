@@ -53,7 +53,7 @@ pub async fn handle_cat(
     Ok(())
 }
 
-fn print_compose(compose: &serde_yml::Value) -> Result<()> {
+fn print_compose(compose: &serde_yaml_ng::Value) -> Result<()> {
     let pretty = compose_to_string(compose)?;
     println!("{}", pretty);
     println!();

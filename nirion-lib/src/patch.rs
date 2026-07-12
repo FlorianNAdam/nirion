@@ -76,7 +76,7 @@ fn load_compose_env_files(path: &str) -> anyhow::Result<ComposeFile> {
     let data = fs::read_to_string(path)
         .with_context(|| format!("Failed reading {}", path))?;
 
-    serde_yml::from_str::<ComposeFile>(&data)
+    serde_yaml_ng::from_str::<ComposeFile>(&data)
         .with_context(|| format!("Compose file parse error in {}", path))
 }
 
