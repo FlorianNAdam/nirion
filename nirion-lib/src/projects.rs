@@ -388,4 +388,25 @@ mod tests {
         assert_eq!(images.len(), 3);
         assert!(!images.contains_key("myapp.worker"));
     }
+
+    #[test]
+    fn projects_serialize_as_project_map() {
+        let projects = test_projects();
+        let json = serde_json::to_value(&projects).unwrap();
+
+        assert_eq!(json["myapp"]["name"], "myapp");
+        assert_eq!(json["myapp"]["dockerCompose"], "docker-compose.yml");
+        assert_eq!(json["myapp"]["services"]["web"]["image"], "nginx:latest");
+    }
+
+    #[test]
+    fn project_name_behaves_like_string() {
+        let name = ProjectName("myapp".into());
+
+        assert_eq!(name.to_string(), "myapp");
+        assert_eq!(&*name, "myapp");
+
+        let string: String = name.into();
+        assert_eq!(string, "myapp");
+    }
 }

@@ -7,3 +7,4 @@ target-dir = "target/tarpaulin"
 timeout = "20m"
 locked = true
 out = ["Stdout"]
+engine = "Llvm"

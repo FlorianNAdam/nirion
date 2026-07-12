@@ -18,6 +18,32 @@ pub struct ExecRequest {
 }
 
 pub fn exec(projects: &Projects, request: &ExecRequest) -> anyhow::Result<()> {
+    let project_name = &request.target.project;
+    let service_name = &request.target.service;
+    let cmd_args = build_exec_args(projects, request)?;
+
+    let status = ProcCommand::new("docker")
+        .arg("compose")
+        .args(&cmd_args)
+        .status()
+        .context("failed to execute docker compose exec")?;
+
+    if !status.success() {
+        anyhow::bail!(
+            "Command failed in {}.{} with status {}",
+            project_name,
+            service_name,
+            status
+        );
+    }
+
+    Ok(())
+}
+
+fn build_exec_args(
+    projects: &Projects,
+    request: &ExecRequest,
+) -> anyhow::Result<Vec<String>> {
     if request.cmd.is_empty() {
         anyhow::bail!("No command specified for exec");
     }
@@ -64,20 +90,119 @@ pub fn exec(projects: &Projects, request: &ExecRequest) -> anyhow::Result<()> {
     cmd_args.push(service_name.clone());
     cmd_args.extend(request.cmd.clone());
 
-    let status = ProcCommand::new("docker")
-        .arg("compose")
-        .args(&cmd_args)
-        .status()
-        .context("failed to execute docker compose exec")?;
+    Ok(cmd_args)
+}
 
-    if !status.success() {
-        anyhow::bail!(
-            "Command failed in {}.{} with status {}",
-            project_name,
-            service_name,
-            status
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn projects() -> Projects {
+        serde_json::from_value(serde_json::json!({
+            "myapp": {
+                "name": "myapp",
+                "dockerCompose": "compose.yml",
+                "services": {
+                    "web": {
+                        "image": "nginx",
+                        "healthcheck": false,
+                        "restart": null
+                    }
+                }
+            }
+        }))
+        .unwrap()
+    }
+
+    fn request(cmd: Vec<&str>) -> ExecRequest {
+        ExecRequest {
+            target: ServiceSelector {
+                project: "myapp".into(),
+                service: "web".into(),
+            },
+            detach: false,
+            no_tty: false,
+            user: None,
+            workdir: None,
+            index: None,
+            env: Vec::new(),
+            privileged: false,
+            cmd: cmd
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn build_exec_args_rejects_empty_command() {
+        let projects = projects();
+        let err = build_exec_args(&projects, &request(Vec::new())).unwrap_err();
+
+        assert_eq!(err.to_string(), "No command specified for exec");
+    }
+
+    #[test]
+    fn build_exec_args_builds_minimal_command() {
+        let projects = projects();
+        let args =
+            build_exec_args(&projects, &request(vec!["sh", "-c", "uptime"]))
+                .unwrap();
+
+        assert_eq!(
+            args,
+            vec![
+                "--file",
+                "compose.yml",
+                "--project-name",
+                "myapp",
+                "exec",
+                "web",
+                "sh",
+                "-c",
+                "uptime"
+            ]
         );
     }
 
-    Ok(())
+    #[test]
+    fn build_exec_args_includes_all_options_in_order() {
+        let projects = projects();
+        let mut req = request(vec!["printenv"]);
+        req.detach = true;
+        req.no_tty = true;
+        req.user = Some("1000:1000".into());
+        req.workdir = Some("/srv".into());
+        req.index = Some(2);
+        req.env = vec!["FOO=bar".into(), "BAZ=qux".into()];
+        req.privileged = true;
+
+        let args = build_exec_args(&projects, &req).unwrap();
+
+        assert_eq!(
+            args,
+            vec![
+                "--file",
+                "compose.yml",
+                "--project-name",
+                "myapp",
+                "exec",
+                "-d",
+                "-T",
+                "-u",
+                "1000:1000",
+                "-w",
+                "/srv",
+                "--index",
+                "2",
+                "-e",
+                "FOO=bar",
+                "-e",
+                "BAZ=qux",
+                "--privileged",
+                "web",
+                "printenv"
+            ]
+        );
+    }
 }
