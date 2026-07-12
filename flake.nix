@@ -8,10 +8,15 @@
       url = "github:nix-community/naersk";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    git-hooks-nix = {
+      url = "github:cachix/git-hooks.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
     {
+      git-hooks-nix,
       self,
       nixpkgs,
       flake-utils,
@@ -29,6 +34,7 @@
           pkgs = import nixpkgs { inherit system; };
           naersk-lib = pkgs.callPackage naersk { };
           nirion = pkgs.callPackage ./nix/package.nix { inherit naersk-lib; };
+          pre-commit = import ./nix/pre-commit.nix { inherit git-hooks-nix pkgs system; };
         in
         {
           packages = {
@@ -43,7 +49,7 @@
           // import ./tests/module { inherit pkgs self; }
           // import ./tests/vm { inherit pkgs self; };
 
-          devShells.default = pkgs.callPackage ./nix/dev-shell.nix { };
+          devShells.default = pkgs.callPackage ./nix/dev-shell.nix { inherit pre-commit; };
         }
       )
     // {

@@ -1,11 +1,11 @@
 use oci_client::{
+    Client, Reference,
     config::{Architecture, ConfigFile},
     manifest::OciManifest,
     secrets::RegistryAuth,
-    Client, Reference,
 };
 
-use crate::version::{canonical_version_score, clean_tag, NON_VERSION_TAGS};
+use crate::version::{NON_VERSION_TAGS, canonical_version_score, clean_tag};
 
 pub fn resolve_registry(registry: String) -> String {
     Reference::with_tag(registry, "dummy".to_string(), "dummy".to_string())
@@ -262,8 +262,8 @@ mod tests {
     }
 
     #[test]
-    fn get_digest_from_manifest_errors_when_image_index_has_no_matching_platform(
-    ) {
+    fn get_digest_from_manifest_errors_when_image_index_has_no_matching_platform()
+     {
         let manifest = OciManifest::ImageIndex(OciImageIndex {
             schema_version: 2,
             media_type: None,
@@ -281,8 +281,9 @@ mod tests {
         let err =
             get_digest_from_manifest("sha256:index", &manifest).unwrap_err();
 
-        assert!(err
-            .to_string()
-            .contains("No matching platform found"));
+        assert!(
+            err.to_string()
+                .contains("No matching platform found")
+        );
     }
 }
