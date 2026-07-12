@@ -132,3 +132,121 @@ pub enum DiffEntry {
         new: VersionedImage,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn img(image: &str, version: &str, digest: &str) -> VersionedImage {
+        VersionedImage {
+            image: image.to_string(),
+            version: Some(version.to_string()),
+            digest: digest.to_string(),
+        }
+    }
+
+    #[test]
+    fn diff_empty_vs_empty() {
+        let a = LockedImages::default();
+        let b = LockedImages::default();
+        assert!(a.diff(&b).is_empty());
+    }
+
+    #[test]
+    fn diff_added() {
+        let a = LockedImages::default();
+        let mut b = LockedImages::default();
+        b.insert("myapp.web".into(), img("nginx", "1.0", "sha256:aaa"));
+        let diffs = a.diff(&b);
+        assert_eq!(diffs.len(), 1);
+        assert!(
+            matches!(&diffs[0], DiffEntry::Added { service, .. } if service == "myapp.web")
+        );
+    }
+
+    #[test]
+    fn diff_removed() {
+        let mut a = LockedImages::default();
+        a.insert("myapp.web".into(), img("nginx", "1.0", "sha256:aaa"));
+        let b = LockedImages::default();
+        let diffs = a.diff(&b);
+        assert_eq!(diffs.len(), 1);
+        assert!(
+            matches!(&diffs[0], DiffEntry::Removed { service, .. } if service == "myapp.web")
+        );
+    }
+
+    #[test]
+    fn diff_updated() {
+        let mut a = LockedImages::default();
+        a.insert("myapp.web".into(), img("nginx", "1.0", "sha256:aaa"));
+        let mut b = LockedImages::default();
+        b.insert("myapp.web".into(), img("nginx", "1.1", "sha256:bbb"));
+        let diffs = a.diff(&b);
+        assert_eq!(diffs.len(), 1);
+        assert!(
+            matches!(&diffs[0], DiffEntry::Updated { service, .. } if service == "myapp.web")
+        );
+    }
+
+    #[test]
+    fn diff_unchanged() {
+        let mut a = LockedImages::default();
+        a.insert("myapp.web".into(), img("nginx", "1.0", "sha256:aaa"));
+        let mut b = LockedImages::default();
+        b.insert("myapp.web".into(), img("nginx", "1.0", "sha256:aaa"));
+        assert!(a.diff(&b).is_empty());
+    }
+
+    #[test]
+    fn diff_mixed() {
+        let mut a = LockedImages::default();
+        a.insert("keep".into(), img("nginx", "1.0", "sha256:aaa"));
+        a.insert("remove".into(), img("postgres", "1.0", "sha256:bbb"));
+        a.insert("update".into(), img("redis", "1.0", "sha256:ccc"));
+
+        let mut b = LockedImages::default();
+        b.insert("keep".into(), img("nginx", "1.0", "sha256:aaa"));
+        b.insert("add".into(), img("node", "2.0", "sha256:ddd"));
+        b.insert("update".into(), img("redis", "2.0", "sha256:eee"));
+
+        let diffs = a.diff(&b);
+        assert_eq!(diffs.len(), 3);
+
+        let added: Vec<_> = diffs
+            .iter()
+            .filter(|d| matches!(d, DiffEntry::Added { .. }))
+            .collect();
+        let removed: Vec<_> = diffs
+            .iter()
+            .filter(|d| matches!(d, DiffEntry::Removed { .. }))
+            .collect();
+        let updated: Vec<_> = diffs
+            .iter()
+            .filter(|d| matches!(d, DiffEntry::Updated { .. }))
+            .collect();
+
+        assert_eq!(added.len(), 1);
+        assert_eq!(removed.len(), 1);
+        assert_eq!(updated.len(), 1);
+    }
+
+    #[test]
+    fn deserialize_full_format() {
+        let json = r#"{"myapp.web":{"image":"nginx","version":"1.0","digest":"sha256:aaa"}}"#;
+        let locked: LockedImages = serde_json::from_str(json).unwrap();
+        assert!(locked.contains_key("myapp.web"));
+        assert_eq!(locked.get("myapp.web").unwrap().digest, "sha256:aaa");
+    }
+
+    #[test]
+    fn deserialize_digest_only_format() {
+        let json = r#"{"myapp.web":"sha256:aaa"}"#;
+        let locked: LockedImages = serde_json::from_str(json).unwrap();
+        assert!(locked.contains_key("myapp.web"));
+        let img = locked.get("myapp.web").unwrap();
+        assert_eq!(img.image, "<unknown>");
+        assert_eq!(img.version, None);
+        assert_eq!(img.digest, "sha256:aaa");
+    }
+}

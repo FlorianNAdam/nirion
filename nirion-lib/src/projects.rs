@@ -207,3 +207,185 @@ pub fn get_images(
     }
     images
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_projects() -> Projects {
+        let mut projects = Projects::default();
+        projects.projects.insert(
+            "myapp".into(),
+            Project {
+                name: ProjectName("myapp".into()),
+                docker_compose: "docker-compose.yml".into(),
+                services: [
+                    (
+                        "web".into(),
+                        Service {
+                            image: Some("nginx:latest".into()),
+                            healthcheck: true,
+                            restart: None,
+                        },
+                    ),
+                    (
+                        "db".into(),
+                        Service {
+                            image: Some("postgres:16".into()),
+                            healthcheck: false,
+                            restart: None,
+                        },
+                    ),
+                ]
+                .into(),
+            },
+        );
+        projects.projects.insert(
+            "api".into(),
+            Project {
+                name: ProjectName("api".into()),
+                docker_compose: "docker-compose.yml".into(),
+                services: [(
+                    "server".into(),
+                    Service {
+                        image: Some("node:20".into()),
+                        healthcheck: true,
+                        restart: Some("always".into()),
+                    },
+                )]
+                .into(),
+            },
+        );
+        projects
+    }
+
+    #[test]
+    fn parse_selector_wildcard() {
+        let projects = test_projects();
+        let sel = parse_selector("*", &projects).unwrap();
+        assert!(matches!(sel, TargetSelector::All));
+    }
+
+    #[test]
+    fn parse_selector_project() {
+        let projects = test_projects();
+        let sel = parse_selector("myapp", &projects).unwrap();
+        match sel {
+            TargetSelector::Project(p) => assert_eq!(p.name, "myapp"),
+            _ => panic!("expected Project"),
+        }
+    }
+
+    #[test]
+    fn parse_selector_service() {
+        let projects = test_projects();
+        let sel = parse_selector("myapp.web", &projects).unwrap();
+        match sel {
+            TargetSelector::Service(s) => {
+                assert_eq!(s.project, "myapp");
+                assert_eq!(s.service, "web");
+            }
+            _ => panic!("expected Service"),
+        }
+    }
+
+    #[test]
+    fn parse_selector_project_not_found() {
+        let projects = test_projects();
+        assert!(parse_selector("nonexistent", &projects).is_err());
+    }
+
+    #[test]
+    fn parse_selector_service_not_found() {
+        let projects = test_projects();
+        assert!(parse_selector("myapp.nonexistent", &projects).is_err());
+    }
+
+    #[test]
+    fn parse_selector_project_not_found_for_service() {
+        let projects = test_projects();
+        assert!(parse_selector("nonexistent.web", &projects).is_err());
+    }
+
+    #[test]
+    fn parse_selector_trims_whitespace() {
+        let projects = test_projects();
+        let sel = parse_selector("  myapp  ", &projects).unwrap();
+        assert!(matches!(sel, TargetSelector::Project(_)));
+    }
+
+    #[test]
+    fn parse_service_selector_valid() {
+        let projects = test_projects();
+        let sel = parse_service_selector("myapp.web", &projects).unwrap();
+        assert_eq!(sel.project, "myapp");
+        assert_eq!(sel.service, "web");
+    }
+
+    #[test]
+    fn parse_service_selector_project_rejected() {
+        let projects = test_projects();
+        assert!(parse_service_selector("myapp", &projects).is_err());
+    }
+
+    #[test]
+    fn parse_service_selector_wildcard_rejected() {
+        let projects = test_projects();
+        assert!(parse_service_selector("*", &projects).is_err());
+    }
+
+    #[test]
+    fn get_images_all() {
+        let projects = test_projects();
+        let images = get_images(&TargetSelector::All, &projects);
+        assert_eq!(images.len(), 3);
+        assert_eq!(images["api.server"], "node:20");
+        assert_eq!(images["myapp.web"], "nginx:latest");
+        assert_eq!(images["myapp.db"], "postgres:16");
+    }
+
+    #[test]
+    fn get_images_project() {
+        let projects = test_projects();
+        let sel = TargetSelector::Project(ProjectSelector {
+            name: "myapp".into(),
+        });
+        let images = get_images(&sel, &projects);
+        assert_eq!(images.len(), 2);
+        assert!(images.contains_key("myapp.web"));
+        assert!(images.contains_key("myapp.db"));
+    }
+
+    #[test]
+    fn get_images_service() {
+        let projects = test_projects();
+        let sel = TargetSelector::Service(ServiceSelector {
+            project: "myapp".into(),
+            service: "web".into(),
+        });
+        let images = get_images(&sel, &projects);
+        assert_eq!(images.len(), 1);
+        assert_eq!(images["myapp.web"], "nginx:latest");
+    }
+
+    #[test]
+    fn get_images_skips_none() {
+        let mut projects = test_projects();
+        projects
+            .projects
+            .get_mut("myapp")
+            .unwrap()
+            .services
+            .insert(
+                "worker".into(),
+                Service {
+                    image: None,
+                    healthcheck: false,
+                    restart: None,
+                },
+            );
+        let images = get_images(&TargetSelector::All, &projects);
+        assert_eq!(images.len(), 3);
+        assert!(!images.contains_key("myapp.worker"));
+    }
+}

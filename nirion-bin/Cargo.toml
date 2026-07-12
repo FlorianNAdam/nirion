@@ -1,6 +1,6 @@
 [package]
 name = "nirion-bin"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 
 [[bin]]
@@ -8,9 +8,9 @@ name = "nirion"
 path = "src/main.rs"
 
 [dependencies]
-nirion-lib = { version = "0.3.0", path = "../nirion-lib" }
-nirion-oci-lib = {version= "0.3.0", path="../nirion-oci-lib"}
-nirion-tui-lib = {version= "0.3.0", path="../nirion-tui-lib"}
+nirion-lib = { path = "../nirion-lib" }
+nirion-oci-lib = { path = "../nirion-oci-lib" }
+nirion-tui-lib = { path = "../nirion-tui-lib" }
 anyhow = { version = "1.0.100", features = ["backtrace"] }
 clap = { version = "4.5.53", features = ["derive", "env"] }
 clap_complete = { version = "4.5.62", features = ["unstable-dynamic"] }

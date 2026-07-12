@@ -61,6 +61,58 @@ pub fn nix_config_target(target: &str) -> String {
     )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nix_config_target_basic() {
+        let result = nix_config_target("nixosConfigurations.myhost");
+        assert_eq!(
+            result,
+            "nixosConfigurations.myhost.config.virtualisation.nirion.out.projectsFileStatic"
+        );
+    }
+
+    #[test]
+    fn nix_config_target_simple() {
+        let result = nix_config_target("foo");
+        assert_eq!(
+            result,
+            "foo.config.virtualisation.nirion.out.projectsFileStatic"
+        );
+    }
+
+    #[test]
+    fn load_locked_images_missing_file() {
+        let result =
+            load_locked_images(Path::new("/nonexistent/path/lock.json"))
+                .unwrap();
+        assert!(result.iter().next().is_none());
+    }
+
+    #[test]
+    fn load_locked_images_valid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lock.json");
+        std::fs::write(
+            &path,
+            r#"{"myapp.web":{"image":"nginx","version":"1.0","digest":"sha256:aaa"}}"#,
+        )
+        .unwrap();
+        let result = load_locked_images(&path).unwrap();
+        assert!(result.contains_key("myapp.web"));
+    }
+
+    #[test]
+    fn load_locked_images_invalid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lock.json");
+        std::fs::write(&path, "not json").unwrap();
+        assert!(load_locked_images(&path).is_err());
+    }
+}
+
 pub async fn build_nix_project_file(
     nix_eval_target: &str,
 ) -> anyhow::Result<PathBuf> {
