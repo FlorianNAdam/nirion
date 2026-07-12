@@ -13,7 +13,7 @@ use nirion_oci_lib::{
     version::VersionedImage,
 };
 use testcontainers::{
-    GenericImage, ImageExt,
+    ContainerRequest, GenericImage, ImageExt,
     core::{IntoContainerPort, WaitFor},
     runners::AsyncRunner,
 };
@@ -23,21 +23,107 @@ use tokio::{
 };
 
 struct TestImage {
-    _registry: testcontainers::ContainerAsync<GenericImage>,
     registry_addr: String,
     reference: Reference,
     digest: String,
 }
 
-const HTPASSWD: &str =
-    "testuser:$2y$05$8/q2bfRcX74EuxGf0qOcSuhWDQJXrgWiy6Fi73/JM2tKC66qSrLve";
-const HTPASSWD_USERNAME: &str = "testuser";
-const HTPASSWD_PASSWORD: &str = "testpassword";
+struct TestAccount {
+    username: &'static str,
+    password: &'static str,
+    htpasswd_line: &'static str,
+}
+
+const ACCOUNT_A: TestAccount = TestAccount {
+    username: "testuser",
+    password: "testpassword",
+    htpasswd_line: "testuser:$2y$05$8/q2bfRcX74EuxGf0qOcSuhWDQJXrgWiy6Fi73/JM2tKC66qSrLve",
+};
+
+const ACCOUNT_B: TestAccount = TestAccount {
+    username: "testuser-b",
+    password: "testpassword2",
+    htpasswd_line: "testuser-b:$2b$05$3xL.QkaFDSxihClnY2VX1OrmHSsnlkkpJLB0zSiv.CWVYAoUJ6Y/u",
+};
+
+struct RegistryHandle {
+    _container: testcontainers::ContainerAsync<GenericImage>,
+    addr: String,
+}
+
+impl RegistryHandle {
+    async fn start(accounts: &[TestAccount]) -> anyhow::Result<Option<Self>> {
+        let image = if accounts.is_empty() {
+            ContainerRequest::from(registry_image())
+        } else {
+            let htpasswd = accounts
+                .iter()
+                .map(|a| a.htpasswd_line)
+                .collect::<Vec<_>>()
+                .join("\n");
+            ContainerRequest::from(registry_image())
+                .with_env_var("REGISTRY_AUTH", "htpasswd")
+                .with_env_var("REGISTRY_AUTH_HTPASSWD_REALM", "Registry Realm")
+                .with_env_var("REGISTRY_AUTH_HTPASSWD_PATH", "/auth/htpasswd")
+                .with_copy_to("/auth/htpasswd", htpasswd.into_bytes())
+        };
+
+        match image.start().await {
+            Ok(container) => {
+                let port = container
+                    .get_host_port_ipv4(5000.tcp())
+                    .await?;
+                Ok(Some(Self {
+                    _container: container,
+                    addr: format!("127.0.0.1:{port}"),
+                }))
+            }
+            Err(err) => {
+                eprintln!("skipping Docker-backed OCI integration test: {err}");
+                Ok(None)
+            }
+        }
+    }
+
+    async fn push(
+        &self,
+        repository: &str,
+        tag: &str,
+        auth: &RegistryAuth,
+    ) -> anyhow::Result<TestImage> {
+        let image = format!("{}/{repository}:{tag}", self.addr);
+        let reference = Reference::try_from(image.as_str())?;
+
+        let oci_client = Client::new(ClientConfig {
+            protocol: ClientProtocol::Http,
+            ..Default::default()
+        });
+
+        let layers = [ImageLayer::oci_v1(b"nirion-test-layer".to_vec(), None)];
+        let config =
+            Config::oci_v1_from_config_file(ConfigFile::default(), None)?;
+        oci_client
+            .push(&reference, &layers, config, auth, None)
+            .await?;
+
+        let (_, digest, _) = oci_client
+            .pull_manifest_and_config(&reference, auth)
+            .await?;
+
+        Ok(TestImage {
+            registry_addr: self.addr.clone(),
+            reference,
+            digest,
+        })
+    }
+}
 
 #[tokio::test]
 async fn resolves_local_registry_image_with_mocked_docker_hub_metadata()
 -> anyhow::Result<()> {
-    let Some(test_image) = push_test_image("latest").await? else {
+    let Some((_handle, test_image)) =
+        push_anonymous_test_image("latest").await?
+    else {
         return Ok(());
     };
 
@@ -66,7 +152,9 @@ async fn resolves_local_registry_image_with_mocked_docker_hub_metadata()
 #[tokio::test]
 async fn resolves_local_registry_image_with_generic_oci_tags()
 -> anyhow::Result<()> {
-    let Some(test_image) = push_test_image("1.2.3").await? else {
+    let Some((_handle, test_image)) =
+        push_anonymous_test_image("1.2.3").await?
+    else {
         return Ok(());
     };
 
@@ -86,7 +174,9 @@ async fn resolves_local_registry_image_with_generic_oci_tags()
 #[tokio::test]
 async fn updated_image_preserves_version_when_digest_is_unchanged()
 -> anyhow::Result<()> {
-    let Some(test_image) = push_test_image("1.2.3").await? else {
+    let Some((_handle, test_image)) =
+        push_anonymous_test_image("1.2.3").await?
+    else {
         return Ok(());
     };
 
@@ -109,7 +199,9 @@ async fn updated_image_preserves_version_when_digest_is_unchanged()
 #[tokio::test]
 async fn updated_image_resolves_version_when_digest_changes()
 -> anyhow::Result<()> {
-    let Some(test_image) = push_test_image("1.2.3").await? else {
+    let Some((_handle, test_image)) =
+        push_anonymous_test_image("1.2.3").await?
+    else {
         return Ok(());
     };
 
@@ -132,23 +224,219 @@ async fn updated_image_resolves_version_when_digest_changes()
 }
 
 #[tokio::test]
-async fn resolves_authenticated_registry_with_scoped_auth() -> anyhow::Result<()>
-{
-    let Some(test_image) =
-        push_authenticated_test_image("org-a/nirion-test", "1.2.3").await?
-    else {
+async fn resolves_repository_scoped_auth() -> anyhow::Result<()> {
+    let Some(handle) = RegistryHandle::start(&[ACCOUNT_A]).await? else {
         return Ok(());
     };
+
+    let test_image = handle
+        .push(
+            "org-a/nirion-test",
+            "1.2.3",
+            &RegistryAuth::Basic(
+                ACCOUNT_A.username.to_string(),
+                ACCOUNT_A.password.to_string(),
+            ),
+        )
+        .await?;
 
     let mut auth = AuthConfig::default();
     auth.add_auth(
         format!("{}/org-a", test_image.registry_addr),
-        NirionRegistryAuth::basic(HTPASSWD_USERNAME, HTPASSWD_PASSWORD),
+        NirionRegistryAuth::basic(ACCOUNT_A.username, ACCOUNT_A.password),
     );
 
     let client = http_nirion_client().auth(auth).build();
     let resolved = client
         .get_versioned_image(&test_image.reference)
+        .await?;
+
+    assert_eq!(resolved.image, test_image.reference.to_string());
+    assert_eq!(resolved.digest, test_image.digest);
+    assert_eq!(resolved.version.as_deref(), Some("1.2.3"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn falls_back_to_registry_scoped_auth() -> anyhow::Result<()> {
+    let Some(handle) = RegistryHandle::start(&[ACCOUNT_A]).await? else {
+        return Ok(());
+    };
+
+    let test_image = handle
+        .push(
+            "org-a/nirion-test",
+            "1.2.3",
+            &RegistryAuth::Basic(
+                ACCOUNT_A.username.to_string(),
+                ACCOUNT_A.password.to_string(),
+            ),
+        )
+        .await?;
+
+    let mut auth = AuthConfig::default();
+    auth.add_auth(
+        test_image.registry_addr.clone(),
+        NirionRegistryAuth::basic(ACCOUNT_A.username, ACCOUNT_A.password),
+    );
+
+    let client = http_nirion_client().auth(auth).build();
+    let resolved = client
+        .get_versioned_image(&test_image.reference)
+        .await?;
+
+    assert_eq!(resolved.image, test_image.reference.to_string());
+    assert_eq!(resolved.digest, test_image.digest);
+    assert_eq!(resolved.version.as_deref(), Some("1.2.3"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn different_scopes_on_same_registry() -> anyhow::Result<()> {
+    let Some(handle) = RegistryHandle::start(&[ACCOUNT_A, ACCOUNT_B]).await?
+    else {
+        return Ok(());
+    };
+
+    let image_a = handle
+        .push(
+            "org-a/nirion-test",
+            "1.0.0",
+            &RegistryAuth::Basic(
+                ACCOUNT_A.username.to_string(),
+                ACCOUNT_A.password.to_string(),
+            ),
+        )
+        .await?;
+
+    let image_b = handle
+        .push(
+            "org-b/nirion-test",
+            "2.0.0",
+            &RegistryAuth::Basic(
+                ACCOUNT_B.username.to_string(),
+                ACCOUNT_B.password.to_string(),
+            ),
+        )
+        .await?;
+
+    let mut auth = AuthConfig::default();
+    auth.add_auth(
+        format!("{}/org-a", image_a.registry_addr),
+        NirionRegistryAuth::basic(ACCOUNT_A.username, ACCOUNT_A.password),
+    );
+    auth.add_auth(
+        format!("{}/org-b", image_b.registry_addr),
+        NirionRegistryAuth::basic(ACCOUNT_B.username, ACCOUNT_B.password),
+    );
+
+    let client = http_nirion_client().auth(auth).build();
+
+    let resolved_a = client
+        .get_versioned_image(&image_a.reference)
+        .await?;
+    assert_eq!(resolved_a.digest, image_a.digest);
+
+    let resolved_b = client
+        .get_versioned_image(&image_b.reference)
+        .await?;
+    assert_eq!(resolved_b.digest, image_b.digest);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn scoped_auth_isolation_across_registries() -> anyhow::Result<()> {
+    let Some(handle_a) = RegistryHandle::start(&[ACCOUNT_A]).await? else {
+        return Ok(());
+    };
+    let Some(handle_b) = RegistryHandle::start(&[ACCOUNT_B]).await? else {
+        return Ok(());
+    };
+
+    let image_a = handle_a
+        .push(
+            "org/nirion-test",
+            "1.0.0",
+            &RegistryAuth::Basic(
+                ACCOUNT_A.username.to_string(),
+                ACCOUNT_A.password.to_string(),
+            ),
+        )
+        .await?;
+
+    let image_b = handle_b
+        .push(
+            "org/nirion-test",
+            "2.0.0",
+            &RegistryAuth::Basic(
+                ACCOUNT_B.username.to_string(),
+                ACCOUNT_B.password.to_string(),
+            ),
+        )
+        .await?;
+
+    let mut auth = AuthConfig::default();
+    auth.add_auth(
+        image_a.registry_addr.clone(),
+        NirionRegistryAuth::basic(ACCOUNT_A.username, ACCOUNT_A.password),
+    );
+    auth.add_auth(
+        image_b.registry_addr.clone(),
+        NirionRegistryAuth::basic(ACCOUNT_B.username, ACCOUNT_B.password),
+    );
+
+    let client = http_nirion_client().auth(auth).build();
+
+    let resolved_a = client
+        .get_versioned_image(&image_a.reference)
+        .await?;
+    assert_eq!(resolved_a.digest, image_a.digest);
+
+    let resolved_b = client
+        .get_versioned_image(&image_b.reference)
+        .await?;
+    assert_eq!(resolved_b.digest, image_b.digest);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn updated_image_resolves_version_with_scoped_auth() -> anyhow::Result<()>
+{
+    let Some(handle) = RegistryHandle::start(&[ACCOUNT_A]).await? else {
+        return Ok(());
+    };
+
+    let test_image = handle
+        .push(
+            "org-a/nirion-test",
+            "1.2.3",
+            &RegistryAuth::Basic(
+                ACCOUNT_A.username.to_string(),
+                ACCOUNT_A.password.to_string(),
+            ),
+        )
+        .await?;
+
+    let mut auth = AuthConfig::default();
+    auth.add_auth(
+        format!("{}/org-a", test_image.registry_addr),
+        NirionRegistryAuth::basic(ACCOUNT_A.username, ACCOUNT_A.password),
+    );
+
+    let client = http_nirion_client().auth(auth).build();
+
+    let stale = VersionedImage {
+        image: test_image.reference.to_string(),
+        version: Some("1.0.0".to_string()),
+        digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+    };
+
+    let resolved = client
+        .get_updated_versioned_image(&stale)
         .await?;
 
     assert_eq!(resolved.image, test_image.reference.to_string());
@@ -204,97 +492,23 @@ async fn docker_hub_client_parses_api_errors() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn push_test_image(tag: &str) -> anyhow::Result<Option<TestImage>> {
-    let registry = match registry_image().start().await {
-        Ok(registry) => registry,
-        Err(err) => {
-            eprintln!("skipping Docker-backed OCI integration test: {err}");
-            return Ok(None);
-        }
-    };
-
-    push_image_to_registry(
-        registry,
-        "library/nirion-test",
-        tag,
-        &RegistryAuth::Anonymous,
-    )
-    .await
-}
-
-async fn push_authenticated_test_image(
-    repository: &str,
-    tag: &str,
-) -> anyhow::Result<Option<TestImage>> {
-    let registry = match registry_image()
-        .with_env_var("REGISTRY_AUTH", "htpasswd")
-        .with_env_var("REGISTRY_AUTH_HTPASSWD_REALM", "Registry Realm")
-        .with_env_var("REGISTRY_AUTH_HTPASSWD_PATH", "/auth/htpasswd")
-        .with_copy_to("/auth/htpasswd", HTPASSWD.as_bytes().to_vec())
-        .start()
-        .await
-    {
-        Ok(registry) => registry,
-        Err(err) => {
-            eprintln!(
-                "skipping Docker-backed authenticated OCI integration test: {err}"
-            );
-            return Ok(None);
-        }
-    };
-
-    push_image_to_registry(
-        registry,
-        repository,
-        tag,
-        &RegistryAuth::Basic(
-            HTPASSWD_USERNAME.to_string(),
-            HTPASSWD_PASSWORD.to_string(),
-        ),
-    )
-    .await
-}
-
 fn registry_image() -> GenericImage {
     GenericImage::new("registry", "3")
         .with_exposed_port(5000.tcp())
         .with_wait_for(WaitFor::message_on_stderr("listening on"))
 }
 
-async fn push_image_to_registry(
-    registry: testcontainers::ContainerAsync<GenericImage>,
-    repository: &str,
+async fn push_anonymous_test_image(
     tag: &str,
-    auth: &RegistryAuth,
-) -> anyhow::Result<Option<TestImage>> {
-    let registry_port = registry
-        .get_host_port_ipv4(5000.tcp())
+) -> anyhow::Result<Option<(RegistryHandle, TestImage)>> {
+    let Some(handle) = RegistryHandle::start(&[]).await? else {
+        return Ok(None);
+    };
+
+    let image = handle
+        .push("library/nirion-test", tag, &RegistryAuth::Anonymous)
         .await?;
-    let registry_addr = format!("127.0.0.1:{registry_port}");
-    let image = format!("{registry_addr}/{repository}:{tag}");
-    let reference = Reference::try_from(image.as_str())?;
-
-    let oci_client = Client::new(ClientConfig {
-        protocol: ClientProtocol::Http,
-        ..Default::default()
-    });
-
-    let layers = [ImageLayer::oci_v1(b"nirion-test-layer".to_vec(), None)];
-    let config = Config::oci_v1_from_config_file(ConfigFile::default(), None)?;
-    oci_client
-        .push(&reference, &layers, config, auth, None)
-        .await?;
-
-    let (_, digest, _) = oci_client
-        .pull_manifest_and_config(&reference, auth)
-        .await?;
-
-    Ok(Some(TestImage {
-        _registry: registry,
-        registry_addr,
-        reference,
-        digest,
-    }))
+    Ok(Some((handle, image)))
 }
 
 fn http_nirion_client() -> nirion_oci_lib::client::NirionOciClientBuilder {
