@@ -303,6 +303,40 @@ exit {exit_code}
         docker.to_string_lossy().to_string()
     }
 
+    fn projects() -> Projects {
+        serde_json::from_value(serde_json::json!({
+            "api": {
+                "name": "api",
+                "dockerCompose": "api.yml",
+                "services": {
+                    "web": {
+                        "image": "nginx",
+                        "healthcheck": false,
+                        "restart": null
+                    }
+                }
+            },
+            "worker": {
+                "name": "worker",
+                "dockerCompose": "worker.yml",
+                "services": {
+                    "jobs": {
+                        "image": "busybox",
+                        "healthcheck": false,
+                        "restart": null
+                    }
+                }
+            }
+        }))
+        .unwrap()
+    }
+
+    async fn collect_compose_events(
+        stream: BoxStream<'static, anyhow::Result<ComposeEvent>>,
+    ) -> Vec<anyhow::Result<ComposeEvent>> {
+        stream.collect::<Vec<_>>().await
+    }
+
     #[test]
     fn build_compose_args_adds_file_and_project_name() {
         let args = build_compose_args(
@@ -393,6 +427,147 @@ exit {exit_code}
                 Err(err) => err
                     .to_string()
                     .contains("docker compose exited with status"),
+                Ok(_) => false,
+            }
+        }));
+    }
+
+    #[tokio::test]
+    async fn compose_target_project_wraps_process_events() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker(dir.path(), &args_file, 0);
+        let _docker_bin_guard = DockerBinGuard::set(docker);
+
+        let events = collect_compose_events(compose_target(
+            TargetSelector::Project(crate::projects::ProjectSelector {
+                name: "api".into(),
+            }),
+            projects(),
+            vec!["up".into(), "-d".into()],
+        ))
+        .await;
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Ok(ComposeEvent::Process {
+                project: Some(project),
+                event: ProcessEvent::StdoutLine(line),
+            }) if project == "api" && line == "stdout-line"
+        )));
+        assert!(events.iter().all(Result::is_ok));
+        assert_eq!(
+            fs::read_to_string(args_file).unwrap(),
+            "compose\n--file\napi.yml\n--project-name\napi\nup\n-d\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn compose_target_service_appends_service_name() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker(dir.path(), &args_file, 0);
+        let _docker_bin_guard = DockerBinGuard::set(docker);
+
+        let events = collect_compose_events(compose_target(
+            TargetSelector::Service(crate::projects::ServiceSelector {
+                project: "api".into(),
+                service: "web".into(),
+            }),
+            projects(),
+            vec!["restart".into()],
+        ))
+        .await;
+
+        assert!(events.iter().all(Result::is_ok));
+        assert_eq!(
+            fs::read_to_string(args_file).unwrap(),
+            "compose\n--file\napi.yml\n--project-name\napi\nrestart\nweb\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn compose_target_all_emits_project_boundaries() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker(dir.path(), &args_file, 0);
+        let _docker_bin_guard = DockerBinGuard::set(docker);
+
+        let events = collect_compose_events(compose_target(
+            TargetSelector::All,
+            projects(),
+            vec!["pull".into()],
+        ))
+        .await;
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Ok(ComposeEvent::ProjectStarted { project }) if project == "api"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Ok(ComposeEvent::ProjectStarted { project }) if project == "worker"
+        )));
+        assert!(events.iter().all(Result::is_ok));
+    }
+
+    #[tokio::test]
+    async fn compose_target_project_reports_failure() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker(dir.path(), &args_file, 2);
+        let _docker_bin_guard = DockerBinGuard::set(docker);
+
+        let events = collect_compose_events(compose_target(
+            TargetSelector::Project(crate::projects::ProjectSelector {
+                name: "api".into(),
+            }),
+            projects(),
+            vec!["up".into()],
+        ))
+        .await;
+
+        assert!(events.iter().any(|event| {
+            match event {
+                Err(err) => err
+                    .to_string()
+                    .contains("Project 'api' failed"),
+                Ok(_) => false,
+            }
+        }));
+    }
+
+    #[tokio::test]
+    async fn compose_target_all_collects_failures_and_continues() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker(dir.path(), &args_file, 5);
+        let _docker_bin_guard = DockerBinGuard::set(docker);
+
+        let events = collect_compose_events(compose_target(
+            TargetSelector::All,
+            projects(),
+            vec!["up".into()],
+        ))
+        .await;
+
+        let project_failures = events
+            .iter()
+            .filter(|event| {
+                matches!(event, Ok(ComposeEvent::ProjectFailed { .. }))
+            })
+            .count();
+        assert_eq!(project_failures, 2);
+        assert!(events.iter().any(|event| {
+            match event {
+                Err(err) => err
+                    .to_string()
+                    .contains("docker compose failed for 2 project(s)"),
                 Ok(_) => false,
             }
         }));

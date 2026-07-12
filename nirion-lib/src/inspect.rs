@@ -461,4 +461,99 @@ exit {exit_code}
         assert!(err.contains("docker image inspect failed with status"));
         assert!(err.contains("image not found"));
     }
+
+    #[tokio::test]
+    async fn inspect_service_dispatches_image_inspect() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker =
+            write_fake_docker(dir.path(), &args_file, r#"{"Id":"abc"}"#, "", 0);
+        let _docker_bin_guard = DockerBinGuard::set(docker);
+
+        let output = inspect_service(
+            &target("web"),
+            &InspectTarget::Image,
+            &projects(),
+            &LockedImages::default(),
+            "{{json .}}",
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            output,
+            r#"{
+  "Id": "abc"
+}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn inspect_project_collects_outputs_for_services() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker =
+            write_fake_docker(dir.path(), &args_file, r#"{"ok":true}"#, "", 0);
+        let _docker_bin_guard = DockerBinGuard::set(docker);
+        let projects: Projects = serde_json::from_value(serde_json::json!({
+            "myapp": {
+                "name": "myapp",
+                "dockerCompose": "compose.yml",
+                "services": {
+                    "web": {
+                        "image": "nginx:latest",
+                        "healthcheck": false,
+                        "restart": null
+                    }
+                }
+            }
+        }))
+        .unwrap();
+
+        let outputs = inspect_project(
+            &crate::projects::ProjectSelector {
+                name: "myapp".into(),
+            },
+            &InspectTarget::Image,
+            &projects,
+            &LockedImages::default(),
+            "{{json .}}",
+            true,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outputs, vec![r#"{"ok":true}"#.to_string() + "\n"]);
+    }
+
+    #[tokio::test]
+    async fn inspect_project_reports_service_failures() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker(dir.path(), &args_file, "{}", "", 0);
+        let _docker_bin_guard = DockerBinGuard::set(docker);
+
+        let err = inspect_project(
+            &crate::projects::ProjectSelector {
+                name: "myapp".into(),
+            },
+            &InspectTarget::Image,
+            &projects(),
+            &LockedImages::default(),
+            "{{json .}}",
+            true,
+        )
+        .await
+        .unwrap_err();
+
+        let err = err.to_string();
+        assert!(err.contains("failed to inspect 1 service(s)"));
+        assert!(
+            err.contains("myapp.worker: Image missing from service worker")
+        );
+    }
 }
