@@ -1,3 +1,4 @@
+pub mod compose;
 pub mod config;
 pub mod docker;
 pub mod lock;
