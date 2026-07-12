@@ -27,10 +27,10 @@ jobs:
       - name: Restore and save Nix store
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}-${{ github.sha }}
+          primary-key: nix-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}-${{ github.sha }}
           restore-prefixes-first-match: |
-            nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}-
-            nix-${{ runner.os }}-
+            nix-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}-
+            nix-${{ runner.os }}-check-
           gc-max-store-size-linux: 6G
 
       - name: Validate PR title
