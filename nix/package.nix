@@ -6,6 +6,20 @@
 let
   inherit (pkgs) lib;
   root = ../.;
+
+  workspace = fromTOML (builtins.readFile (root + "/Cargo.toml"));
+  crates = workspace.workspace.members;
+
+  crateVersions = map (
+    name: (fromTOML (builtins.readFile (root + "/${name}/Cargo.toml"))).package.version
+  ) crates;
+
+  version =
+    assert lib.assertMsg (lib.all (v: v == lib.head crateVersions)
+      crateVersions
+    ) "all crate versions must be equal, got: ${lib.concatStringsSep ", " crateVersions}";
+    lib.head crateVersions;
+
   rustSource = lib.cleanSourceWith {
     src = root;
     filter =
@@ -15,24 +29,15 @@ let
       in
       rel == "Cargo.toml"
       || rel == "Cargo.lock"
-      || lib.hasPrefix "nirion-bin/" rel
-      || lib.hasPrefix "nirion-lib/" rel
-      || lib.hasPrefix "nirion-oci-lib/" rel
-      || lib.hasPrefix "nirion-tui-lib/" rel
-      || (
-        type == "directory"
-        && builtins.elem rel [
-          "nirion-bin"
-          "nirion-lib"
-          "nirion-oci-lib"
-          "nirion-tui-lib"
-        ]
-      );
+      || lib.any (crate: lib.hasPrefix "${crate}/" rel) crates
+      || (type == "directory" && builtins.elem rel crates);
   };
 in
 naersk-lib.buildPackage {
   pname = "nirion";
+  inherit version;
   src = rustSource;
+
   doCheck = false;
 
   buildInputs = with pkgs; [
