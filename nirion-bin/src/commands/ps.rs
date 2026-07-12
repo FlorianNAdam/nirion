@@ -1,14 +1,17 @@
 use anyhow::Result;
 use clap::Parser;
 use crossterm::style::Stylize;
-use nirion_lib::{lock::LockedImages, projects::Projects};
+use nirion_lib::{
+    docker::{query_project_status, Port, ServiceStatus},
+    lock::LockedImages,
+    projects::Projects,
+};
 use nirion_oci_lib::client::AuthConfig;
 use nirion_tui_lib::table::print_table;
 use std::{collections::HashSet, path::Path};
 
 use crate::{
-    docker::{compose_target_cmd, query_project_status},
-    ClapSelector, Project, TargetSelector,
+    docker::compose_target_cmd, ClapSelector, Project, TargetSelector,
 };
 
 //
@@ -201,7 +204,7 @@ fn print_header(project_name: &str) -> String {
     )
 }
 
-fn print_row(svc: &crate::docker::ServiceStatus) -> anyhow::Result<String> {
+fn print_row(svc: &ServiceStatus) -> anyhow::Result<String> {
     let unhealthy_token = "PS_REPLACE_TOKEN1";
     let healthy_token = "PS_REPLACE_TOKEN2";
 
@@ -230,7 +233,7 @@ fn print_row(svc: &crate::docker::ServiceStatus) -> anyhow::Result<String> {
     ))
 }
 
-fn collapsed_ports(ports: &[crate::docker::Port]) -> Vec<String> {
+fn collapsed_ports(ports: &[Port]) -> Vec<String> {
     let mut ports = ports.iter().collect::<Vec<_>>();
     ports.sort_by_key(|p| {
         (
@@ -264,10 +267,7 @@ fn collapsed_ports(ports: &[crate::docker::Port]) -> Vec<String> {
     collapsed
 }
 
-fn consecutive_external(
-    previous: &crate::docker::Port,
-    next: &crate::docker::Port,
-) -> bool {
+fn consecutive_external(previous: &Port, next: &Port) -> bool {
     match (&previous.external, &next.external) {
         (None, None) => true,
         (Some(previous), Some(next)) => next.port == previous.port + 1,
@@ -275,10 +275,7 @@ fn consecutive_external(
     }
 }
 
-fn format_port_range(
-    start: &crate::docker::Port,
-    end: &crate::docker::Port,
-) -> String {
+fn format_port_range(start: &Port, end: &Port) -> String {
     let internal = if start.port == end.port {
         start.port.to_string()
     } else {

@@ -13,6 +13,8 @@ use std::io::Write;
 use std::io::stdout;
 use tokio::time::{Duration, sleep};
 
+use crate::status_display::{project_state_icon, project_status_segments};
+
 pub async fn create_status(
     monitors: &BTreeMap<String, DockerProjectMonitor>,
     projects: &Projects,
@@ -24,13 +26,13 @@ pub async fn create_status(
         let project = &projects[name];
 
         let state = project_status.project_state();
-        let icon = state.icon();
+        let icon = project_state_icon(&state);
 
         let prefix = format!("{icon} {name}");
 
         let progressing = project_status.progressing();
         let num_services = project.services.len();
-        let mut segments = project_status.segments();
+        let mut segments = project_status_segments(&project_status);
 
         for _ in 0..(num_services.saturating_sub(segments.len())) {
             segments.push(Color::Grey);

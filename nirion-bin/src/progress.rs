@@ -3,7 +3,7 @@ use crossterm::{
     execute,
     style::{Color, Stylize},
 };
-use nirion_lib::projects::Projects;
+use nirion_lib::{projects::Projects, wait::healthchecks_finished};
 use nirion_tui_lib::{
     spinner::Spinner,
     status::{Status, StatusEntry},
@@ -13,7 +13,8 @@ use std::io::{Write, stdout};
 use tokio::time::{Duration, sleep};
 
 use crate::TargetSelector;
-use crate::docker::{DockerMonitoredProcess, ProjectStatus, ServiceState};
+use crate::docker::DockerMonitoredProcess;
+use crate::status_display::{project_state_icon, project_status_segments};
 
 async fn create_status(
     spinner: &Spinner,
@@ -27,8 +28,7 @@ async fn create_status(
         let project = &projects[name];
 
         let icon = if proc.finished().await {
-            let project_state = project_status.project_state();
-            project_state.icon()
+            project_state_icon(&project_status.project_state())
         } else {
             spinner.get().yellow().to_string()
         };
@@ -37,7 +37,7 @@ async fn create_status(
 
         let progressing = project_status.progressing();
         let num_services = project.services.len();
-        let mut segments = project_status.segments();
+        let mut segments = project_status_segments(&project_status);
 
         for _ in 0..(num_services.saturating_sub(segments.len())) {
             segments.push(Color::Grey);
@@ -199,54 +199,4 @@ async fn fail_on_process_errors(
     }
 
     Ok(())
-}
-
-pub fn healthchecks_finished(
-    target: &TargetSelector,
-    projects: &Projects,
-    statuses: &BTreeMap<String, ProjectStatus>,
-) -> bool {
-    let project_names: Vec<&str> = match target {
-        TargetSelector::All => projects
-            .iter()
-            .map(|(n, _)| n)
-            .collect(),
-        TargetSelector::Project(p) => vec![p.name.as_str()],
-        TargetSelector::Service(s) => vec![s.project.as_str()],
-    };
-
-    for project_name in project_names {
-        let project = match projects.get(project_name) {
-            Some(p) => p,
-            None => continue,
-        };
-
-        let status = match statuses.get(project_name) {
-            Some(s) => s,
-            None => return false,
-        };
-
-        for (service_name, service) in &project.services {
-            if let TargetSelector::Service(sel) = target {
-                if sel.project == project_name && sel.service != *service_name {
-                    continue;
-                }
-            }
-
-            if !service.healthcheck {
-                continue;
-            }
-
-            let Some(service_status) = status.services.get(service_name) else {
-                return false;
-            };
-
-            match service_status.state {
-                ServiceState::Healthy | ServiceState::Unhealthy => {}
-                _ => return false,
-            }
-        }
-    }
-
-    true
 }

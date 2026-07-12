@@ -18,6 +18,7 @@ mod docker;
 mod lock;
 mod monitor;
 mod progress;
+mod status_display;
 
 pub static PROJECTS: OnceLock<Projects> = OnceLock::new();
 

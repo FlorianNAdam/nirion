@@ -8,3 +8,4 @@ nirion-oci-lib = { version = "0.3.0", path = "../nirion-oci-lib" }
 anyhow = "1.0.101"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+tokio = { version = "1.52.3", features = ["process"] }

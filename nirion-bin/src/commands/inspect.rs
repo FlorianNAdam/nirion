@@ -9,7 +9,8 @@ use serde_json::Value;
 use std::path::Path;
 use tokio::process::Command;
 
-use crate::{docker::query_project_status, ClapSelector};
+use crate::ClapSelector;
+use nirion_lib::docker::query_project_status;
 
 /// Patch service files using mirage-patch
 #[derive(Parser, Debug, Clone)]

@@ -5,10 +5,8 @@ use std::{
 };
 use tokio::{process::Command, sync::RwLock, task::JoinHandle};
 
-use crate::{
-    Project,
-    docker::{ProjectStatus, query_project_status},
-};
+use crate::Project;
+use nirion_lib::docker::{ProjectStatus, query_project_status};
 
 pub struct DockerProjectMonitor {
     project_name: ProjectName,

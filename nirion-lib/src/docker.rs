@@ -1,10 +1,10 @@
 use std::{collections::BTreeMap, ops::Deref};
 
 use anyhow::Context;
-use crossterm::style::{Color, Stylize};
-use nirion_lib::projects::ProjectName;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::process::Command;
+
+use crate::projects::ProjectName;
 
 pub async fn query_project_status(
     compose_file: &str,
@@ -39,37 +39,28 @@ pub async fn query_project_status(
     ProjectStatus::from_json(&json)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServiceState {
-    // Life Cycle
-    Created,    // Container exists but not started
-    Starting,   // In the process of starting up
-    Running,    // Actively running
-    Paused,     // Temporarily suspended
-    Restarting, // Automatically restarting
-    // Exited
-    Succeeded, // exited with code 0
-    Failed,    // exited with non-zero code
-    // Health checks
-    Healthy,   // Passed health checks
-    Unhealthy, // Failed health checks
-    //
-    Unknown, // Docker cannot determine state
+    Created,
+    Starting,
+    Running,
+    Paused,
+    Restarting,
+    Succeeded,
+    Failed,
+    Healthy,
+    Unhealthy,
+    Unknown,
 }
 
 #[allow(unused)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceStatus {
     pub id: String,
-
     pub service: String,
-
     pub container_name: String,
-
     pub image: String,
-
     pub state: ServiceState,
-
     pub health: Option<String>,
     pub exit_code: Option<i64>,
     pub running_for: Option<String>,
@@ -78,7 +69,7 @@ pub struct ServiceStatus {
     pub networks: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Port {
     pub external: Option<ExternalPort>,
     pub port: u16,
@@ -86,49 +77,50 @@ pub struct Port {
 }
 
 #[allow(unused)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExternalPort {
     pub ip: String,
     pub port: u16,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectStatus {
     pub services: BTreeMap<String, ServiceStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProjectState {
+    Empty,
+    Healthy,
+    Running,
+    Paused,
+    Starting,
+    Degraded,
+    Unknown,
 }
 
 #[derive(Debug, Deserialize)]
 struct ContainerInfo {
     #[serde(rename = "ID")]
     id: String,
-
     #[serde(rename = "Name")]
     name: String,
-
     #[serde(rename = "Service")]
     service: String,
-
     #[serde(rename = "Image")]
     image: String,
-
     #[serde(rename = "State")]
     state: String,
-
     #[serde(rename = "Health")]
     health: Option<String>,
-
     #[serde(rename = "ExitCode")]
     exit_code: Option<i64>,
-
     #[serde(rename = "RunningFor")]
     running_for: Option<String>,
-
     #[serde(rename = "Status")]
     status: Option<String>,
-
     #[serde(rename = "Ports")]
     ports: Option<String>,
-
     #[serde(rename = "Networks")]
     networks: Option<String>,
 }
@@ -152,11 +144,10 @@ impl ProjectStatus {
                 .filter_map(|line| serde_json::from_str(line).ok())
                 .collect()
         };
+
         for c in containers {
             let ports_c = c.ports.clone();
-
             let state = ServiceState::from_container(&c);
-
             let networks = c
                 .networks
                 .unwrap_or_default()
@@ -168,7 +159,7 @@ impl ProjectStatus {
             let ports = c
                 .ports
                 .unwrap_or_default()
-                .split(",")
+                .split(',')
                 .map(|s| s.trim())
                 .filter(|s| !s.is_empty())
                 .map(parse_port_mapping)
@@ -201,7 +192,7 @@ impl ProjectStatus {
         self.services
             .values()
             .filter(|s| {
-                use crate::docker::ServiceState::*;
+                use ServiceState::*;
                 matches!(
                     s.state,
                     Healthy
@@ -213,41 +204,6 @@ impl ProjectStatus {
                 )
             })
             .count()
-    }
-
-    pub fn segments(&self) -> Vec<Color> {
-        fn order(state: &ServiceState) -> usize {
-            let order = [
-                // Good states
-                ServiceState::Healthy,
-                ServiceState::Succeeded,
-                // Neutral / transitional states
-                ServiceState::Running,
-                ServiceState::Paused,
-                ServiceState::Starting,
-                ServiceState::Restarting,
-                // Bad states
-                ServiceState::Failed,
-                ServiceState::Unhealthy,
-                // Remaining / unknown
-                ServiceState::Created,
-                ServiceState::Unknown,
-            ];
-            order
-                .iter()
-                .position(|s| s == state)
-                .unwrap_or_default()
-        }
-
-        let mut services: Vec<&ServiceStatus> =
-            self.services.values().collect();
-
-        services.sort_by_key(|s| order(&s.state));
-
-        services
-            .into_iter()
-            .map(|s| s.state.color())
-            .collect()
     }
 
     pub fn project_state(&self) -> ProjectState {
@@ -269,7 +225,7 @@ impl ProjectStatus {
                 ProjectState::Unknown
             })()};
             (@inner $predicate:ident, $states:expr, $pat:pat,$result:expr) => {
-                if $states.iter().all(|s| matches!(s, $pat)) {
+                if $states.iter().$predicate(|s| matches!(s, $pat)) {
                     return $result;
                 }
             };
@@ -287,12 +243,12 @@ impl ProjectStatus {
 
 fn parse_port_mapping(port_str: &str) -> anyhow::Result<Vec<Port>> {
     let (port_str, proto) = port_str
-        .split_once("/")
+        .split_once('/')
         .ok_or_else(|| {
             anyhow::anyhow!("Failed to split port by '/': {port_str}")
         })?;
 
-    if let Some((ip, port_str)) = port_str.rsplit_once(":") {
+    if let Some((ip, port_str)) = port_str.rsplit_once(':') {
         let (external, internal) =
             port_str
                 .split_once("->")
@@ -336,7 +292,7 @@ fn parse_port_mapping(port_str: &str) -> anyhow::Result<Vec<Port>> {
 }
 
 fn parse_port_range(port_str: &str) -> anyhow::Result<Vec<u16>> {
-    if let Some((start, end)) = port_str.split_once("-") {
+    if let Some((start, end)) = port_str.split_once('-') {
         let start = start.parse::<u16>()?;
         let end = end.parse::<u16>()?;
 
@@ -347,33 +303,6 @@ fn parse_port_range(port_str: &str) -> anyhow::Result<Vec<u16>> {
         Ok((start..=end).collect())
     } else {
         Ok(vec![port_str.parse()?])
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProjectState {
-    Empty,    // No services
-    Healthy,  // All services are Healthy or Succeeded
-    Running,  // All services are Healthy/Succeeded/Running
-    Paused,   // All services are Healthy/Succeeded/Running/Paused
-    Starting, // At least one service Starting/Restarting, none failed/unhealthy
-    Degraded, // At least one service Failed or Unhealthy
-    Unknown,  // Cannot determine / Docker Unknown
-}
-
-impl ProjectState {
-    pub fn icon(&self) -> String {
-        use ProjectState::*;
-
-        match self {
-            Empty => "-".grey().to_string(),
-            Healthy => "✓".green().to_string(),
-            Running => "✓".yellow().to_string(),
-            Paused => "=".blue().to_string(),
-            Starting => "↗".cyan().to_string(),
-            Degraded => "✗".red().to_string(),
-            Unknown => "?".grey().to_string(),
-        }
     }
 }
 
@@ -394,25 +323,6 @@ impl ServiceState {
                 None => ServiceState::Failed,
             },
             _ => ServiceState::Unknown,
-        }
-    }
-
-    pub fn color(&self) -> Color {
-        match self {
-            // Lifecycle
-            ServiceState::Created => Color::Grey,
-            ServiceState::Starting => Color::DarkGrey,
-            ServiceState::Running => Color::Yellow,
-            ServiceState::Paused => Color::Blue,
-            ServiceState::Restarting => Color::DarkGrey,
-            // Exited
-            ServiceState::Succeeded => Color::Cyan,
-            ServiceState::Failed => Color::Magenta,
-            // Health
-            ServiceState::Healthy => Color::Green,
-            ServiceState::Unhealthy => Color::Red,
-            // Fallback
-            ServiceState::Unknown => Color::Grey,
         }
     }
 }
