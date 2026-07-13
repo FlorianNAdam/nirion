@@ -8,11 +8,15 @@ use tokio::{process::Command, sync::RwLock, task::JoinHandle};
 
 use crate::projects::{Project, ProjectName};
 
+#[cfg(test)]
+pub(crate) static TEST_DOCKER_CMD: std::sync::Mutex<Option<Vec<String>>> =
+    std::sync::Mutex::new(None);
+
 pub async fn query_project_status(
     compose_file: &str,
     project_name: &ProjectName,
 ) -> anyhow::Result<ProjectStatus> {
-    let output = Command::new("docker")
+    let output = docker_command()
         .arg("compose")
         .arg("-f")
         .arg(compose_file)
@@ -39,6 +43,17 @@ pub async fn query_project_status(
     let json = String::from_utf8_lossy(&output.stdout).to_string();
 
     ProjectStatus::from_json(&json)
+}
+
+fn docker_command() -> Command {
+    #[cfg(test)]
+    if let Some(cmd) = TEST_DOCKER_CMD.lock().unwrap().clone() {
+        let mut command = Command::new(&cmd[0]);
+        command.args(&cmd[1..]);
+        return command;
+    }
+
+    Command::new("docker")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
