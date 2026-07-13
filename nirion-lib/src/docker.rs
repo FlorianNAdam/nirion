@@ -1,12 +1,14 @@
 use std::{collections::BTreeMap, ops::Deref, time::Duration};
 
 use anyhow::Context;
-use futures::{StreamExt, channel::mpsc, stream::BoxStream};
+use futures::{
+    StreamExt, channel::mpsc, stream::BoxStream, stream::select_all,
+};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 use crate::projects::{
-    ProjectName, Projects, TargetSelector, selected_project_names,
+    Project, ProjectName, Projects, TargetSelector, selected_project_names,
 };
 
 #[cfg(test)]
@@ -52,49 +54,56 @@ pub struct ProjectStatusEvent {
     pub status: ProjectStatus,
 }
 
-pub fn project_status_stream(
+pub fn status_stream(
     target: TargetSelector,
     projects: Projects,
+    refresh_interval: Duration,
+) -> BoxStream<'static, anyhow::Result<ProjectStatusEvent>> {
+    let selected = selected_project_names(&target, &projects);
+    let streams = selected
+        .into_iter()
+        .filter_map(|name| {
+            let project = projects.get(&name)?.clone();
+            Some(project_status_stream(name, project, refresh_interval))
+        })
+        .collect::<Vec<_>>();
+
+    select_all(streams).boxed()
+}
+
+pub fn project_status_stream(
+    name: String,
+    project: Project,
     refresh_interval: Duration,
 ) -> BoxStream<'static, anyhow::Result<ProjectStatusEvent>> {
     let (tx, rx) = mpsc::unbounded();
 
     tokio::spawn(async move {
-        let selected = selected_project_names(&target, &projects);
         let mut first_poll = true;
 
         loop {
-            for name in &selected {
-                let Some(project) = projects.get(name) else {
-                    continue;
-                };
-
-                match query_project_status(
-                    &project.docker_compose,
-                    &project.name,
-                )
+            match query_project_status(&project.docker_compose, &project.name)
                 .await
-                {
-                    Ok(status) => {
-                        if tx
-                            .unbounded_send(Ok(ProjectStatusEvent {
-                                project: name.clone(),
-                                status,
-                            }))
-                            .is_err()
-                        {
-                            return;
-                        }
+            {
+                Ok(status) => {
+                    if tx
+                        .unbounded_send(Ok(ProjectStatusEvent {
+                            project: name.clone(),
+                            status,
+                        }))
+                        .is_err()
+                    {
+                        return;
                     }
-                    Err(error) if first_poll => {
-                        if tx.unbounded_send(Err(error)).is_err() {
-                            return;
-                        }
+                }
+                Err(error) if first_poll => {
+                    if tx.unbounded_send(Err(error)).is_err() {
+                        return;
                     }
-                    Err(_) => {
-                        if tx.is_closed() {
-                            return;
-                        }
+                }
+                Err(_) => {
+                    if tx.is_closed() {
+                        return;
                     }
                 }
             }

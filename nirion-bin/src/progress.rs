@@ -6,7 +6,7 @@ use crossterm::{
 use futures::StreamExt;
 use nirion_lib::{
     compose::{ComposeConcurrency, compose_target_with_concurrency},
-    docker::{ProjectStatus, project_status_stream, query_project_status},
+    docker::{ProjectStatus, query_project_status, status_stream},
     events::{ComposeEvent, ProcessEvent},
     projects::{Projects, selected_project_names},
     wait::{WaitTarget, wait_finished},
@@ -134,11 +134,8 @@ pub async fn run_command_with_progress(
         args,
         ComposeConcurrency::Parallel,
     );
-    let mut status_stream = project_status_stream(
-        target.clone(),
-        projects.clone(),
-        refresh_interval,
-    );
+    let mut status_stream =
+        status_stream(target.clone(), projects.clone(), refresh_interval);
     let spinner = Spinner::default();
     let mut running = selected
         .iter()

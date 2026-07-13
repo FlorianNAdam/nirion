@@ -7,7 +7,7 @@ use crossterm::{
 };
 use futures::StreamExt;
 use nirion_lib::{
-    docker::{ProjectStatus, project_status_stream},
+    docker::{ProjectStatus, status_stream},
     projects::{Projects, selected_project_names},
 };
 use nirion_tui_lib::status::{Status, StatusEntry};
@@ -84,11 +84,8 @@ pub async fn monitor(
 ) -> anyhow::Result<()> {
     let selected = selected_project_names(target, projects);
     let mut statuses = BTreeMap::new();
-    let mut stream = project_status_stream(
-        target.clone(),
-        projects.clone(),
-        refresh_interval,
-    );
+    let mut stream =
+        status_stream(target.clone(), projects.clone(), refresh_interval);
     let _cursor = CursorGuard::hide()?;
 
     render_status(&statuses, &selected, projects, true).await?;
