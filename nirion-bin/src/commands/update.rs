@@ -32,7 +32,7 @@ pub async fn handle_update(
 ) -> anyhow::Result<()> {
     let images = get_images(&args.target, &context.projects);
     let mut operation = update_images(
-        context.auth.clone(),
+        context.oci_client.clone(),
         images,
         context.locked_images.clone(),
         context.lock_file.clone(),

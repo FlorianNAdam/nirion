@@ -1,4 +1,8 @@
-use std::{ops::Deref, process::Stdio};
+use std::{
+    ops::Deref,
+    path::{Path, PathBuf},
+    process::Stdio,
+};
 
 use anyhow::Context;
 use futures::{StreamExt, channel::mpsc, stream::BoxStream};
@@ -27,7 +31,17 @@ pub fn compose_target(
     projects: Projects,
     args: Vec<String>,
 ) -> BoxStream<'static, anyhow::Result<ComposeEvent>> {
+    compose_target_with_docker(PathBuf::from("docker"), target, projects, args)
+}
+
+pub fn compose_target_with_docker(
+    docker_binary: PathBuf,
+    target: TargetSelector,
+    projects: Projects,
+    args: Vec<String>,
+) -> BoxStream<'static, anyhow::Result<ComposeEvent>> {
     compose_target_with_concurrency(
+        docker_binary,
         target,
         projects,
         args,
@@ -36,6 +50,7 @@ pub fn compose_target(
 }
 
 pub fn compose_target_with_concurrency(
+    docker_binary: PathBuf,
     target: TargetSelector,
     projects: Projects,
     args: Vec<String>,
@@ -43,16 +58,21 @@ pub fn compose_target_with_concurrency(
 ) -> BoxStream<'static, anyhow::Result<ComposeEvent>> {
     match concurrency {
         ComposeConcurrency::Sequential => {
-            compose_target_sequential(target, projects, args)
+            compose_target_sequential(docker_binary, target, projects, args)
         }
         ComposeConcurrency::Parallel => match target {
-            TargetSelector::All => compose_target_all_parallel(projects, args),
-            target => compose_target_sequential(target, projects, args),
+            TargetSelector::All => {
+                compose_target_all_parallel(docker_binary, projects, args)
+            }
+            target => {
+                compose_target_sequential(docker_binary, target, projects, args)
+            }
         },
     }
 }
 
 fn compose_target_sequential(
+    docker_binary: PathBuf,
     target: TargetSelector,
     projects: Projects,
     args: Vec<String>,
@@ -71,6 +91,7 @@ fn compose_target_sequential(
                         }));
 
                     let mut stream = compose_cmd(
+                        docker_binary.clone(),
                         project.docker_compose.clone(),
                         project.name.clone(),
                         args.clone(),
@@ -103,6 +124,7 @@ fn compose_target_sequential(
             TargetSelector::Project(proj) => {
                 let project = projects[&proj.name].clone();
                 let mut stream = compose_cmd(
+                    docker_binary.clone(),
                     project.docker_compose,
                     project.name,
                     args.clone(),
@@ -132,8 +154,12 @@ fn compose_target_sequential(
                 let mut cmd_args = args.clone();
                 cmd_args.push(sel.service.clone());
 
-                let mut stream =
-                    compose_cmd(project.docker_compose, project.name, cmd_args);
+                let mut stream = compose_cmd(
+                    docker_binary,
+                    project.docker_compose,
+                    project.name,
+                    cmd_args,
+                );
 
                 while let Some(event) = stream.next().await {
                     match event {
@@ -171,6 +197,7 @@ fn compose_target_sequential(
 }
 
 fn compose_target_all_parallel(
+    docker_binary: PathBuf,
     projects: Projects,
     args: Vec<String>,
 ) -> BoxStream<'static, anyhow::Result<ComposeEvent>> {
@@ -183,6 +210,7 @@ fn compose_target_all_parallel(
             let name = name.to_string();
             let project = project.clone();
             let args = args.clone();
+            let docker_binary = docker_binary.clone();
             let tx = tx.clone();
 
             let _ = tx.unbounded_send(Ok(ComposeEvent::ProjectStarted {
@@ -190,8 +218,12 @@ fn compose_target_all_parallel(
             }));
 
             handles.push(tokio::spawn(async move {
-                let mut stream =
-                    compose_cmd(project.docker_compose, project.name, args);
+                let mut stream = compose_cmd(
+                    docker_binary,
+                    project.docker_compose,
+                    project.name,
+                    args,
+                );
 
                 while let Some(event) = stream.next().await {
                     match event {
@@ -241,11 +273,15 @@ fn compose_target_all_parallel(
 }
 
 pub fn compose_cmd(
+    docker_binary: PathBuf,
     compose_file: String,
     project_name: ProjectName,
     args: Vec<String>,
 ) -> BoxStream<'static, anyhow::Result<ProcessEvent>> {
-    run_docker_compose(build_compose_args(compose_file, project_name, args))
+    run_docker_compose(
+        docker_binary,
+        build_compose_args(compose_file, project_name, args),
+    )
 }
 
 fn build_compose_args(
@@ -265,12 +301,13 @@ fn build_compose_args(
 }
 
 pub fn run_docker_compose(
+    docker_binary: PathBuf,
     cmd_args: Vec<String>,
 ) -> BoxStream<'static, anyhow::Result<ProcessEvent>> {
     let (tx, rx) = mpsc::unbounded();
 
     tokio::spawn(async move {
-        let mut child = match docker_command()
+        let mut child = match docker_command(&docker_binary)
             .arg("compose")
             .args(cmd_args)
             .stdout(Stdio::piped())
@@ -353,7 +390,7 @@ pub fn run_docker_compose(
     rx.boxed()
 }
 
-fn docker_command() -> Command {
+fn docker_command(docker_binary: &Path) -> Command {
     #[cfg(test)]
     if let Some(cmd) = TEST_DOCKER_CMD.lock().unwrap().clone() {
         let mut command = Command::new(&cmd[0]);
@@ -361,7 +398,7 @@ fn docker_command() -> Command {
         return command;
     }
 
-    Command::new("docker")
+    Command::new(docker_binary)
 }
 
 #[cfg(test)]
@@ -505,11 +542,10 @@ exit {exit_code}
         let docker = write_fake_docker(dir.path(), &args_file, 0);
         let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
-        let events = collect_events(run_docker_compose(vec![
-            "ps".into(),
-            "--format".into(),
-            "json".into(),
-        ]))
+        let events = collect_events(run_docker_compose(
+            PathBuf::from("docker"),
+            vec!["ps".into(), "--format".into(), "json".into()],
+        ))
         .await;
 
         assert!(events.iter().any(|event| matches!(
@@ -540,8 +576,11 @@ exit {exit_code}
         let docker = write_fake_docker(dir.path(), &args_file, 42);
         let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
-        let events =
-            collect_events(run_docker_compose(vec!["up".into()])).await;
+        let events = collect_events(run_docker_compose(
+            PathBuf::from("docker"),
+            vec!["up".into()],
+        ))
+        .await;
 
         assert!(events.iter().any(|event| matches!(
             event,
@@ -568,8 +607,11 @@ exit {exit_code}
                 .to_string(),
         );
 
-        let events =
-            collect_events(run_docker_compose(vec!["ps".into()])).await;
+        let events = collect_events(run_docker_compose(
+            PathBuf::from("docker"),
+            vec!["ps".into()],
+        ))
+        .await;
 
         assert_eq!(events.len(), 1);
         assert!(
@@ -586,6 +628,7 @@ exit {exit_code}
         let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
         let events = collect_events(compose_cmd(
+            PathBuf::from("docker"),
             "compose.yml".into(),
             ProjectName("myapp".into()),
             vec!["logs".into()],
@@ -718,6 +761,7 @@ exit {exit_code}
         let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
         let events = collect_compose_events(compose_target_with_concurrency(
+            PathBuf::from("docker"),
             TargetSelector::All,
             projects(),
             vec!["pull".into()],
@@ -804,6 +848,7 @@ exit {exit_code}
         let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
         let events = collect_compose_events(compose_target_with_concurrency(
+            PathBuf::from("docker"),
             TargetSelector::All,
             projects(),
             vec!["up".into()],

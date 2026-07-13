@@ -24,6 +24,12 @@ pub async fn handle_monitor(
     args: &MonitorArgs,
     context: &NirionContext,
 ) -> anyhow::Result<()> {
-    monitor(&args.target, &context.projects, args.refresh).await?;
+    monitor(
+        &context.docker_binary,
+        &args.target,
+        &context.projects,
+        args.refresh,
+    )
+    .await?;
     Ok(())
 }

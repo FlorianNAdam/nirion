@@ -30,5 +30,11 @@ pub async fn handle_compose_exec(
         .map(|s| s.as_str())
         .collect();
 
-    compose_target_cmd(&args.target, &context.projects, &cmd_slices).await
+    compose_target_cmd(
+        &context.docker_binary,
+        &args.target,
+        &context.projects,
+        &cmd_slices,
+    )
+    .await
 }

@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, ops::Deref, time::Duration};
+use std::{
+    collections::BTreeMap,
+    ops::Deref,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use anyhow::Context;
 use futures::{
@@ -19,7 +24,20 @@ pub async fn query_project_status(
     compose_file: &str,
     project_name: &ProjectName,
 ) -> anyhow::Result<ProjectStatus> {
-    let output = docker_command()
+    query_project_status_with_docker(
+        Path::new("docker"),
+        compose_file,
+        project_name,
+    )
+    .await
+}
+
+pub async fn query_project_status_with_docker(
+    docker_binary: &Path,
+    compose_file: &str,
+    project_name: &ProjectName,
+) -> anyhow::Result<ProjectStatus> {
+    let output = docker_command(docker_binary)
         .arg("compose")
         .arg("-f")
         .arg(compose_file)
@@ -59,12 +77,31 @@ pub fn status_stream(
     projects: Projects,
     refresh_interval: Duration,
 ) -> BoxStream<'static, anyhow::Result<ProjectStatusEvent>> {
+    status_stream_with_docker(
+        PathBuf::from("docker"),
+        target,
+        projects,
+        refresh_interval,
+    )
+}
+
+pub fn status_stream_with_docker(
+    docker_binary: PathBuf,
+    target: TargetSelector,
+    projects: Projects,
+    refresh_interval: Duration,
+) -> BoxStream<'static, anyhow::Result<ProjectStatusEvent>> {
     let selected = selected_project_names(&target, &projects);
     let streams = selected
         .into_iter()
         .filter_map(|name| {
             let project = projects.get(&name)?.clone();
-            Some(project_status_stream(name, project, refresh_interval))
+            Some(project_status_stream_with_docker(
+                docker_binary.clone(),
+                name,
+                project,
+                refresh_interval,
+            ))
         })
         .collect::<Vec<_>>();
 
@@ -76,14 +113,32 @@ pub fn project_status_stream(
     project: Project,
     refresh_interval: Duration,
 ) -> BoxStream<'static, anyhow::Result<ProjectStatusEvent>> {
+    project_status_stream_with_docker(
+        PathBuf::from("docker"),
+        name,
+        project,
+        refresh_interval,
+    )
+}
+
+pub fn project_status_stream_with_docker(
+    docker_binary: PathBuf,
+    name: String,
+    project: Project,
+    refresh_interval: Duration,
+) -> BoxStream<'static, anyhow::Result<ProjectStatusEvent>> {
     let (tx, rx) = mpsc::unbounded();
 
     tokio::spawn(async move {
         let mut first_poll = true;
 
         loop {
-            match query_project_status(&project.docker_compose, &project.name)
-                .await
+            match query_project_status_with_docker(
+                &docker_binary,
+                &project.docker_compose,
+                &project.name,
+            )
+            .await
             {
                 Ok(status) => {
                     if tx
@@ -116,7 +171,7 @@ pub fn project_status_stream(
     rx.boxed()
 }
 
-fn docker_command() -> Command {
+fn docker_command(docker_binary: &Path) -> Command {
     #[cfg(test)]
     if let Some(cmd) = TEST_DOCKER_CMD.lock().unwrap().clone() {
         let mut command = Command::new(&cmd[0]);
@@ -124,7 +179,7 @@ fn docker_command() -> Command {
         return command;
     }
 
-    Command::new("docker")
+    Command::new(docker_binary)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,9 +1,6 @@
 use futures::{FutureExt, stream::FuturesUnordered};
 use futures::{StreamExt, channel::mpsc, stream::BoxStream};
-use nirion_oci_lib::{
-    client::{AuthConfig, NirionOciClient},
-    oci_client::Reference,
-};
+use nirion_oci_lib::{client::NirionOciClient, oci_client::Reference};
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
@@ -36,27 +33,11 @@ impl LockUpdateOperation {
 }
 
 pub fn update_images(
-    auth: AuthConfig,
-    images: BTreeMap<String, String>,
-    locked_images: LockedImages,
-    lock_file: PathBuf,
-    jobs: usize,
-) -> LockUpdateOperation {
-    let client = Arc::new(
-        NirionOciClient::builder()
-            .auth(auth)
-            .build(),
-    );
-
-    update_images_with_client(images, locked_images, lock_file, jobs, client)
-}
-
-fn update_images_with_client(
-    images: BTreeMap<String, String>,
-    locked_images: LockedImages,
-    lock_file: PathBuf,
-    jobs: usize,
     client: Arc<NirionOciClient>,
+    images: BTreeMap<String, String>,
+    locked_images: LockedImages,
+    lock_file: PathBuf,
+    jobs: usize,
 ) -> LockUpdateOperation {
     let (event_tx, event_rx) = mpsc::unbounded();
 
@@ -209,7 +190,7 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let lock_file = dir.path().join("nirion.lock");
         let mut operation = update_images(
-            AuthConfig::default(),
+            Arc::new(NirionOciClient::builder().build()),
             BTreeMap::new(),
             LockedImages::default(),
             lock_file.clone(),
@@ -247,7 +228,8 @@ mod tests {
             .await?;
         let dir = tempfile::tempdir()?;
         let lock_file = dir.path().join("nirion.lock");
-        let report = update_images_with_client(
+        let report = update_images(
+            Arc::new(http_nirion_client().build()),
             BTreeMap::from([(
                 "app.web".to_string(),
                 test_image.reference.to_string(),
@@ -255,7 +237,6 @@ mod tests {
             LockedImages::default(),
             lock_file.clone(),
             1,
-            Arc::new(http_nirion_client().build()),
         )
         .finish()
         .await?;
@@ -304,7 +285,8 @@ mod tests {
             ),
         );
 
-        let report = update_images_with_client(
+        let report = update_images(
+            Arc::new(http_nirion_client().build()),
             BTreeMap::from([(
                 "app.web".to_string(),
                 test_image.reference.to_string(),
@@ -312,7 +294,6 @@ mod tests {
             locked_images,
             lock_file.clone(),
             1,
-            Arc::new(http_nirion_client().build()),
         )
         .finish()
         .await?;
@@ -349,7 +330,8 @@ mod tests {
             ),
         );
 
-        let report = update_images_with_client(
+        let report = update_images(
+            Arc::new(http_nirion_client().build()),
             BTreeMap::from([(
                 "app.web".to_string(),
                 test_image.reference.to_string(),
@@ -357,7 +339,6 @@ mod tests {
             locked_images,
             lock_file,
             1,
-            Arc::new(http_nirion_client().build()),
         )
         .finish()
         .await?;
@@ -382,7 +363,8 @@ mod tests {
     async fn invalid_image_reference_returns_error() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
         let lock_file = dir.path().join("nirion.lock");
-        let result = update_images_with_client(
+        let result = update_images(
+            Arc::new(http_nirion_client().build()),
             BTreeMap::from([(
                 "app.web".to_string(),
                 "not a valid image".to_string(),
@@ -390,7 +372,6 @@ mod tests {
             LockedImages::default(),
             lock_file.clone(),
             1,
-            Arc::new(http_nirion_client().build()),
         )
         .finish()
         .await;

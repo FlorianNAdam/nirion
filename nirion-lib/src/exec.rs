@@ -1,4 +1,4 @@
-use std::{ops::Deref, process::Command as ProcCommand};
+use std::{ops::Deref, path::Path, process::Command as ProcCommand};
 
 use anyhow::Context;
 
@@ -22,11 +22,19 @@ pub struct ExecRequest {
 }
 
 pub fn exec(projects: &Projects, request: &ExecRequest) -> anyhow::Result<()> {
+    exec_with_docker(Path::new("docker"), projects, request)
+}
+
+pub fn exec_with_docker(
+    docker_binary: &Path,
+    projects: &Projects,
+    request: &ExecRequest,
+) -> anyhow::Result<()> {
     let project_name = &request.target.project;
     let service_name = &request.target.service;
     let cmd_args = build_exec_args(projects, request)?;
 
-    let status = docker_command()
+    let status = docker_command(docker_binary)
         .arg("compose")
         .args(&cmd_args)
         .status()
@@ -97,7 +105,7 @@ fn build_exec_args(
     Ok(cmd_args)
 }
 
-fn docker_command() -> ProcCommand {
+fn docker_command(docker_binary: &Path) -> ProcCommand {
     #[cfg(test)]
     if let Some(cmd) = TEST_DOCKER_CMD.lock().unwrap().clone() {
         let mut command = ProcCommand::new(&cmd[0]);
@@ -105,7 +113,7 @@ fn docker_command() -> ProcCommand {
         return command;
     }
 
-    ProcCommand::new("docker")
+    ProcCommand::new(docker_binary)
 }
 
 #[cfg(test)]

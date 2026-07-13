@@ -34,7 +34,7 @@ pub async fn handle_lock(
     images.retain(|name, _| !context.locked_images.contains_key(name));
 
     let mut operation = update_images(
-        context.auth.clone(),
+        context.oci_client.clone(),
         images,
         context.locked_images.clone(),
         context.lock_file.clone(),
