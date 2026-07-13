@@ -54,7 +54,9 @@
           nix-coverage = pkgs.callPackage ./nix/coverage/nix.nix {
             nixcovProgram = nixcov.apps.${system}.default.program;
           };
+          merge-coverage = pkgs.callPackage ./nix/coverage/merge.nix { };
           full-coverage = pkgs.callPackage ./nix/coverage/full.nix {
+            mergeCoverage = merge-coverage;
             nixCoverage = nix-coverage;
             rustCoverage = rust-coverage;
           };
@@ -105,6 +107,12 @@
             type = "app";
             program = "${full-coverage}/bin/full-coverage";
             meta.description = "Run Rust and Nix coverage and write coverage-merged.info";
+          };
+
+          apps.merge-coverage = {
+            type = "app";
+            program = "${merge-coverage}/bin/merge-coverage";
+            meta.description = "Merge Rust and Nix coverage into coverage-merged.info";
           };
 
           checks = {
