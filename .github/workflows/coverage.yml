@@ -12,13 +12,14 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 concurrency:
   group: coverage-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  rust-coverage:
+  coverage-gate:
     if: |
       github.event_name == 'workflow_dispatch' ||
       (
@@ -26,6 +27,32 @@ jobs:
         github.event.workflow_run.event == 'push' &&
         github.event.workflow_run.head_branch == 'main'
       )
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Allow coverage
+        run: "true"
+
+  coverage-status-pending:
+    needs: coverage-gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set coverage status pending
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh api repos/${{ github.repository }}/statuses "$SHA" \
+            -f state=pending \
+            -f context=Coverage \
+            -f description="Coverage is running" \
+            -f target_url="$TARGET_URL"
+
+  rust-coverage:
+    needs: coverage-status-pending
     runs-on: ubuntu-latest
 
     steps:
@@ -70,13 +97,7 @@ jobs:
           if-no-files-found: error
 
   nix-coverage:
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.event == 'push' &&
-        github.event.workflow_run.head_branch == 'main'
-      )
+    needs: coverage-status-pending
     runs-on: ubuntu-latest
 
     steps:
@@ -153,3 +174,30 @@ jobs:
           format: lcov
           base-path: ${{ github.workspace }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  coverage-status-final:
+    needs:
+      - coverage-gate
+      - coverage-status-pending
+      - rust-coverage
+      - nix-coverage
+      - upload-coverage
+    if: |
+      always() &&
+      needs.coverage-gate.result == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set final coverage status
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          STATE: ${{ contains(needs.*.result, 'failure') && 'failure' || contains(needs.*.result, 'cancelled') && 'error' || 'success' }}
+        run: |
+          set -euo pipefail
+          gh api repos/${{ github.repository }}/statuses "$SHA" \
+            -f state="$STATE" \
+            -f context=Coverage \
+            -f description="Coverage $STATE" \
+            -f target_url="$TARGET_URL"
