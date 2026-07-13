@@ -103,3 +103,41 @@ fn optimal_sublist_length(width: usize, n: usize, i: usize) -> usize {
 
     if i < extra { base + 1 } else { base }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use console::strip_ansi_codes;
+
+    #[test]
+    fn render_status_bar_returns_spaces_for_no_segments() {
+        assert_eq!(render_status_bar(vec![], 4), "    ");
+    }
+
+    #[test]
+    fn render_status_bar_preserves_requested_visible_width() {
+        let bar =
+            render_status_bar(vec![Color::Green, Color::Red, Color::Blue], 8);
+
+        assert_eq!(strip_ansi_codes(&bar).chars().count(), 8);
+        assert_eq!(strip_ansi_codes(&bar), "██▊██▊█▊");
+    }
+
+    #[test]
+    fn optimal_sublist_length_distributes_remainder_to_first_segments() {
+        assert_eq!(optimal_sublist_length(8, 3, 0), 3);
+        assert_eq!(optimal_sublist_length(8, 3, 1), 3);
+        assert_eq!(optimal_sublist_length(8, 3, 2), 2);
+    }
+
+    #[test]
+    fn render_status_line_pads_prefix_to_visible_width() {
+        let entry = StatusEntry {
+            prefix: "db".to_string(),
+            segments: vec![],
+            suffix: "ready".to_string(),
+        };
+
+        assert_eq!(render_status_line(entry, 4, 3), "db   │     │ ready");
+    }
+}
