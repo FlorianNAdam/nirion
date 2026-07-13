@@ -3,7 +3,10 @@ use crossterm::{
     execute,
     style::{Color, Stylize},
 };
-use nirion_lib::{projects::Projects, wait::healthchecks_finished};
+use nirion_lib::{
+    projects::{Projects, selected_project_names},
+    wait::healthchecks_finished,
+};
 use nirion_tui_lib::{
     spinner::Spinner,
     status::{Status, StatusEntry},
@@ -75,14 +78,7 @@ pub async fn run_command_with_progress(
     refresh_interval: Duration,
     wait_for_healthchecks: bool,
 ) -> anyhow::Result<()> {
-    let selected: Vec<String> = match target {
-        TargetSelector::All => projects
-            .iter()
-            .map(|(n, _)| n.to_string())
-            .collect(),
-        TargetSelector::Project(p) => vec![p.name.clone()],
-        TargetSelector::Service(img) => vec![img.project.clone()],
-    };
+    let selected = selected_project_names(target, projects);
 
     let mut map = BTreeMap::new();
 

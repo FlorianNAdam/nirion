@@ -6,7 +6,7 @@ use crossterm::{
     execute,
     style::Color,
 };
-use nirion_lib::projects::Projects;
+use nirion_lib::projects::{Projects, selected_project_names};
 use nirion_tui_lib::status::{Status, StatusEntry};
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -90,14 +90,7 @@ pub async fn create_monitors(
     projects: &Projects,
     refresh_interval: Duration,
 ) -> anyhow::Result<BTreeMap<String, DockerProjectMonitor>> {
-    let selected: Vec<String> = match target {
-        TargetSelector::All => projects
-            .iter()
-            .map(|(n, _)| n.to_string())
-            .collect(),
-        TargetSelector::Project(p) => vec![p.name.clone()],
-        TargetSelector::Service(s) => vec![s.project.clone()],
-    };
+    let selected = selected_project_names(target, projects);
 
     let mut monitors = BTreeMap::new();
 
