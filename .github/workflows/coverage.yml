@@ -19,19 +19,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@c5a866b6ab867e88becbed4467b93592bce69f8a # v21
-
-      - name: Restore and save Nix store
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
-        with:
-          primary-key: nix-${{ runner.os }}-coverage-${{ hashFiles('flake.lock') }}-${{ github.sha }}
-          restore-prefixes-first-match: |
-            nix-${{ runner.os }}-coverage-${{ hashFiles('flake.lock') }}-
-            nix-${{ runner.os }}-coverage-
-          gc-max-store-size-linux: 6G
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
       - name: Restore and save Rust coverage cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
@@ -45,7 +36,7 @@ jobs:
           shared-key: coverage
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Upload coverage to Coveralls
+      - name: Generate and upload coverage to Coveralls
         env:
           COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
         run: |
