@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  coverage:
+  rust-coverage:
     if: |
       github.event_name == 'workflow_dispatch' ||
       (
@@ -57,10 +57,94 @@ jobs:
           shared-key: coverage
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Generate coverage
+      - name: Generate Rust coverage
         run: |
           set -euo pipefail
-          nix run .#full-coverage
+          nix run .#rust-coverage
+
+      - name: Upload Rust coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-coverage
+          path: coverage-rust.info
+          if-no-files-found: error
+
+  nix-coverage:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Restore Nix store
+        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}-${{ github.event.workflow_run.head_sha || github.sha }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}-
+            nix-${{ runner.os }}-check-
+
+      - name: Generate Nix coverage
+        run: |
+          set -euo pipefail
+          nix run .#nix-coverage
+
+      - name: Upload Nix coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nix-coverage
+          path: coverage-nix.info
+          if-no-files-found: error
+
+  upload-coverage:
+    needs:
+      - rust-coverage
+      - nix-coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Restore Nix store
+        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}-${{ github.event.workflow_run.head_sha || github.sha }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}-
+            nix-${{ runner.os }}-check-
+
+      - name: Download Rust coverage artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-coverage
+
+      - name: Download Nix coverage artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: nix-coverage
+
+      - name: Merge coverage
+        run: |
+          set -euo pipefail
+          nix run .#merge-coverage
 
       - name: Upload coverage to Coveralls
         uses: coverallsapp/github-action@648a8eb78e6d50909eff900e4ec85cab4524a45b # v2.3.6
