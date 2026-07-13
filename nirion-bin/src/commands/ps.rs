@@ -292,3 +292,149 @@ fn format_port_range(start: &Port, end: &Port) -> String {
 
     format!("{}{} /{}", prefix, internal, start.proto).replace(" /", "/")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use console::strip_ansi_codes;
+    use nirion_lib::docker::{ExternalPort, ServiceState};
+
+    fn port(port: u16, proto: &str) -> Port {
+        Port {
+            external: None,
+            port,
+            proto: proto.to_string(),
+        }
+    }
+
+    fn mapped_port(external: u16, internal: u16, proto: &str) -> Port {
+        Port {
+            external: Some(ExternalPort {
+                ip: "127.0.0.1".to_string(),
+                port: external,
+            }),
+            port: internal,
+            proto: proto.to_string(),
+        }
+    }
+
+    fn service_status(status: Option<&str>, ports: Vec<Port>) -> ServiceStatus {
+        ServiceStatus {
+            id: "id".to_string(),
+            service: "web".to_string(),
+            container_name: "web-1".to_string(),
+            image: "image".to_string(),
+            state: ServiceState::Running,
+            health: None,
+            exit_code: None,
+            running_for: Some("2 minutes".to_string()),
+            status: status.map(str::to_string),
+            ports,
+            networks: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn collapsed_ports_collapses_consecutive_internal_ports() {
+        assert_eq!(
+            collapsed_ports(&[
+                port(81, "tcp"),
+                port(80, "tcp"),
+                port(82, "tcp")
+            ]),
+            vec!["80-82/tcp"]
+        );
+    }
+
+    #[test]
+    fn collapsed_ports_collapses_consecutive_external_mappings() {
+        assert_eq!(
+            collapsed_ports(&[
+                mapped_port(8081, 81, "tcp"),
+                mapped_port(8080, 80, "tcp"),
+            ]),
+            vec!["8080-8081->80-81/tcp"]
+        );
+    }
+
+    #[test]
+    fn collapsed_ports_keeps_protocols_separate() {
+        assert_eq!(
+            collapsed_ports(&[port(80, "udp"), port(80, "tcp")]),
+            vec!["80/tcp", "80/udp"]
+        );
+    }
+
+    #[test]
+    fn collapsed_ports_splits_internal_ranges_at_gaps() {
+        assert_eq!(
+            collapsed_ports(&[
+                port(80, "tcp"),
+                port(81, "tcp"),
+                port(83, "tcp"),
+                port(84, "tcp"),
+            ]),
+            vec!["80-81/tcp", "83-84/tcp"]
+        );
+    }
+
+    #[test]
+    fn collapsed_ports_does_not_merge_mapped_and_unmapped_ports() {
+        assert_eq!(
+            collapsed_ports(&[mapped_port(8080, 80, "tcp"), port(81, "tcp"),]),
+            vec!["81/tcp", "8080->80/tcp"]
+        );
+    }
+
+    #[test]
+    fn collapsed_ports_requires_consecutive_external_ports() {
+        assert_eq!(
+            collapsed_ports(&[
+                mapped_port(8080, 80, "tcp"),
+                mapped_port(8082, 81, "tcp"),
+            ]),
+            vec!["8080->80/tcp", "8082->81/tcp"]
+        );
+    }
+
+    #[test]
+    fn collapsed_ports_requires_consecutive_internal_ports() {
+        assert_eq!(
+            collapsed_ports(&[
+                mapped_port(8080, 80, "tcp"),
+                mapped_port(8081, 82, "tcp"),
+            ]),
+            vec!["8080->80/tcp", "8081->82/tcp"]
+        );
+    }
+
+    #[test]
+    fn print_row_deduplicates_rendered_ports() {
+        let row = print_row(&service_status(
+            Some("running"),
+            vec![port(80, "tcp"), port(80, "tcp")],
+        ))
+        .unwrap();
+
+        assert_eq!(
+            strip_ansi_codes(&row),
+            " - web-1\t2 minutes\trunning\t80/tcp"
+        );
+    }
+
+    #[test]
+    fn print_row_colors_healthy_and_unhealthy_independently() {
+        let row = print_row(&service_status(
+            Some("running (healthy), running (unhealthy)"),
+            vec![],
+        ))
+        .unwrap();
+
+        assert_eq!(
+            strip_ansi_codes(&row),
+            " - web-1\t2 minutes\trunning (healthy), running (unhealthy)\t"
+        );
+        assert!(row.contains("healthy"));
+        assert!(row.contains("unhealthy"));
+    }
+}

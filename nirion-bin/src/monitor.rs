@@ -128,3 +128,86 @@ async fn render_status(
     stdout.flush()?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nirion_lib::docker::{Port, ServiceState, ServiceStatus};
+
+    fn projects() -> Projects {
+        serde_json::from_str(
+            r#"
+{
+  "app": {
+    "name": "app",
+    "dockerCompose": "compose.yml",
+    "services": {
+      "web": {"image": "nginx", "healthcheck": true, "restart": null},
+      "db": {"image": "postgres", "healthcheck": true, "restart": null}
+    }
+  }
+}
+"#,
+        )
+        .unwrap()
+    }
+
+    fn service_status(service: &str, state: ServiceState) -> ServiceStatus {
+        ServiceStatus {
+            id: format!("{service}-id"),
+            service: service.to_string(),
+            container_name: service.to_string(),
+            image: "image".to_string(),
+            state,
+            health: None,
+            exit_code: None,
+            running_for: None,
+            status: None,
+            ports: Vec::<Port>::new(),
+            networks: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_status_uses_empty_status_when_project_has_no_status() {
+        let projects = projects();
+        let selected = vec!["app".to_string()];
+        let statuses = BTreeMap::new();
+
+        let status = create_status(&statuses, &selected, &projects)
+            .await
+            .unwrap();
+
+        assert_eq!(status.entries.len(), 1);
+        assert_eq!(status.entries[0].segments, vec![Color::Grey, Color::Grey]);
+        assert_eq!(status.entries[0].suffix, "(0/2)    ");
+    }
+
+    #[tokio::test]
+    async fn create_status_pads_segments_to_project_service_count() {
+        let projects = projects();
+        let selected = vec!["app".to_string()];
+        let statuses = BTreeMap::from([(
+            "app".to_string(),
+            ProjectStatus {
+                services: BTreeMap::from([(
+                    "web".to_string(),
+                    service_status("web", ServiceState::Healthy),
+                )]),
+            },
+        )]);
+
+        let status = create_status(&statuses, &selected, &projects)
+            .await
+            .unwrap();
+
+        assert_eq!(status.entries.len(), 1);
+        assert_eq!(status.entries[0].segments.len(), 2);
+        assert_eq!(
+            status.entries[0].segments[0],
+            project_status_segments(&statuses["app"])[0]
+        );
+        assert_eq!(status.entries[0].segments[1], Color::Grey);
+        assert_eq!(status.entries[0].suffix, "(1/2)    ");
+    }
+}

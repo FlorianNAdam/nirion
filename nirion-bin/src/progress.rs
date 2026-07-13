@@ -293,3 +293,132 @@ async fn refresh_statuses(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nirion_lib::{
+        docker::{Port, ServiceState, ServiceStatus},
+        events::ExitStatus,
+    };
+    use std::collections::BTreeMap;
+
+    fn projects() -> Projects {
+        serde_json::from_str(
+            r#"
+{
+  "app": {
+    "name": "app",
+    "dockerCompose": "compose.yml",
+    "services": {
+      "web": {"image": "nginx", "healthcheck": true, "restart": null},
+      "db": {"image": "postgres", "healthcheck": true, "restart": null}
+    }
+  }
+}
+"#,
+        )
+        .unwrap()
+    }
+
+    fn service_status(service: &str, state: ServiceState) -> ServiceStatus {
+        ServiceStatus {
+            id: format!("{service}-id"),
+            service: service.to_string(),
+            container_name: service.to_string(),
+            image: "image".to_string(),
+            state,
+            health: None,
+            exit_code: None,
+            running_for: None,
+            status: None,
+            ports: Vec::<Port>::new(),
+            networks: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn handle_compose_event_updates_running_state() {
+        let mut running = BTreeMap::new();
+
+        handle_compose_event(
+            ComposeEvent::ProjectStarted {
+                project: "app".to_string(),
+            },
+            &mut running,
+        );
+        assert_eq!(running.get("app"), Some(&true));
+
+        handle_compose_event(
+            ComposeEvent::Process {
+                project: Some("app".to_string()),
+                event: ProcessEvent::Exited(ExitStatus {
+                    code: Some(0),
+                    success: true,
+                }),
+            },
+            &mut running,
+        );
+        assert_eq!(running.get("app"), Some(&false));
+
+        handle_compose_event(
+            ComposeEvent::ProjectFailed {
+                project: "app".to_string(),
+                error: "failed".to_string(),
+            },
+            &mut running,
+        );
+        assert_eq!(running.get("app"), Some(&false));
+    }
+
+    #[test]
+    fn handle_compose_event_ignores_unscoped_process_events() {
+        let mut running = BTreeMap::from([("app".to_string(), true)]);
+
+        handle_compose_event(
+            ComposeEvent::Process {
+                project: None,
+                event: ProcessEvent::Exited(ExitStatus {
+                    code: Some(0),
+                    success: true,
+                }),
+            },
+            &mut running,
+        );
+
+        assert_eq!(running.get("app"), Some(&true));
+    }
+
+    #[test]
+    fn create_status_pads_missing_service_segments() {
+        let projects = projects();
+        let selected = vec!["app".to_string()];
+        let running = BTreeMap::from([("app".to_string(), false)]);
+        let statuses = BTreeMap::from([(
+            "app".to_string(),
+            ProjectStatus {
+                services: BTreeMap::from([(
+                    "web".to_string(),
+                    service_status("web", ServiceState::Healthy),
+                )]),
+            },
+        )]);
+
+        let status = create_status(
+            &Spinner::default(),
+            &selected,
+            &running,
+            &statuses,
+            &projects,
+        );
+
+        assert_eq!(status.entries.len(), 1);
+        assert_eq!(status.entries[0].segments.len(), 2);
+        assert_eq!(
+            status.entries[0].segments[0],
+            project_status_segments(&statuses["app"])[0]
+        );
+        assert_eq!(status.entries[0].segments[1], Color::Grey);
+        assert_eq!(status.entries[0].suffix, "(1/2)    ");
+    }
+}
