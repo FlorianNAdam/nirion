@@ -36,15 +36,15 @@ jobs:
           shared-key: coverage
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Generate and upload coverage to Coveralls
-        env:
-          COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
+      - name: Generate coverage
         run: |
           set -euo pipefail
+          nix run .#full-coverage
 
-          if [ -z "$COVERALLS_REPO_TOKEN" ]; then
-            echo "COVERALLS_REPO_TOKEN is not configured" >&2
-            exit 1
-          fi
-
-          nix run .#coverage -- --coveralls "$COVERALLS_REPO_TOKEN"
+      - name: Upload coverage to Coveralls
+        uses: coverallsapp/github-action@648a8eb78e6d50909eff900e4ec85cab4524a45b # v2.3.6
+        with:
+          file: coverage-merged.info
+          format: lcov
+          base-path: ${{ github.workspace }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}

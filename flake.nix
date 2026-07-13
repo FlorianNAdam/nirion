@@ -12,6 +12,11 @@
       url = "github:cachix/git-hooks.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    nixcov = {
+      url = "github:FlorianNAdam/nixcov";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.naersk.follows = "naersk";
+    };
   };
 
   outputs =
@@ -21,6 +26,7 @@
       nixpkgs,
       flake-utils,
       naersk,
+      nixcov,
     }:
 
     flake-utils.lib.eachSystem
@@ -44,7 +50,14 @@
           };
           check-commit-messages = pkgs.callPackage ./nix/check-commit-messages.nix { };
           check-message = pkgs.callPackage ./nix/check-message.nix { };
-          coverage = pkgs.callPackage ./nix/coverage.nix { };
+          rust-coverage = pkgs.callPackage ./nix/coverage/rust.nix { };
+          nix-coverage = pkgs.callPackage ./nix/coverage/nix.nix {
+            nixcovProgram = nixcov.apps.${system}.default.program;
+          };
+          full-coverage = pkgs.callPackage ./nix/coverage/full.nix {
+            nixCoverage = nix-coverage;
+            rustCoverage = rust-coverage;
+          };
         in
         {
           packages = {
@@ -72,8 +85,26 @@
 
           apps.coverage = {
             type = "app";
-            program = "${coverage}/bin/coverage";
-            meta.description = "Run Tarpaulin coverage using tarpaulin.toml";
+            program = "${rust-coverage}/bin/rust-coverage";
+            meta.description = "Run Rust coverage using Tarpaulin";
+          };
+
+          apps.rust-coverage = {
+            type = "app";
+            program = "${rust-coverage}/bin/rust-coverage";
+            meta.description = "Run Rust coverage using Tarpaulin and write coverage-rust.info";
+          };
+
+          apps.nix-coverage = {
+            type = "app";
+            program = "${nix-coverage}/bin/nix-coverage";
+            meta.description = "Run Nix coverage using nixcov and write coverage-nix.info";
+          };
+
+          apps.full-coverage = {
+            type = "app";
+            program = "${full-coverage}/bin/full-coverage";
+            meta.description = "Run Rust and Nix coverage and write coverage-merged.info";
           };
 
           checks = {
