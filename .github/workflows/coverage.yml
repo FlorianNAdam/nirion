@@ -2,7 +2,11 @@ name: Coverage
 
 on:
   workflow_dispatch:
-  push:
+  workflow_run:
+    workflows:
+      - Check
+    types:
+      - completed
     branches:
       - main
 
@@ -15,14 +19,31 @@ concurrency:
 
 jobs:
   coverage:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Restore Nix store
+        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}-${{ github.event.workflow_run.head_sha || github.sha }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}-
+            nix-${{ runner.os }}-check-
 
       - name: Restore and save Rust coverage cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
