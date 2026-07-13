@@ -1,4 +1,7 @@
-{ pkgs }:
+{
+  normalizeCoverage,
+  pkgs,
+}:
 
 let
   tarpaulinConfig = (pkgs.formats.toml { }).generate "tarpaulin.toml" {
@@ -22,7 +25,6 @@ pkgs.writeShellApplication {
     cargo
     cargo-tarpaulin
     coreutils
-    gawk
     openssl
     pkg-config
     rustc
@@ -49,15 +51,6 @@ pkgs.writeShellApplication {
     fi
 
     cp target/coverage/rust/lcov.info coverage-rust.info
-
-    awk -v prefix="SF:$PWD/" '
-      index($0, prefix) == 1 {
-        $0 = "SF:" substr($0, length(prefix) + 1)
-      }
-
-      { print }
-    ' coverage-rust.info > coverage-rust.info.tmp
-
-    mv coverage-rust.info.tmp coverage-rust.info
+    ${normalizeCoverage}/bin/normalize-coverage coverage-rust.info
   '';
 }
