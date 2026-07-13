@@ -434,6 +434,28 @@ exit {exit_code}
     }
 
     #[tokio::test]
+    async fn inspect_image_reports_missing_service_before_running_docker() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker(dir.path(), &args_file, "{}", "", 0);
+        let _docker_bin_guard = DockerBinGuard::set(docker);
+
+        let err = inspect_image(
+            &target("missing"),
+            &projects(),
+            &LockedImages::default(),
+            "{{json .}}",
+            true,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err.to_string(), "Service missing missing from project");
+        assert!(!args_file.exists());
+    }
+
+    #[tokio::test]
     async fn inspect_image_reports_docker_failure_with_stderr() {
         let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();

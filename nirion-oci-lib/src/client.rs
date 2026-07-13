@@ -424,4 +424,32 @@ mod tests {
         );
         assert_eq!(client.oci_client_config.protocol, ClientProtocol::Http);
     }
+
+    #[test]
+    fn builder_auth_docker_hub_and_config_configure_client() {
+        let mut auth_config = AuthConfig::default();
+        auth_config.add_auth("ghcr.io".to_string(), auth("registry"));
+        let docker_hub = DockerHubClient::default()
+            .with_registries(["localhost:5000".to_string()]);
+        let config = NirionOciClientConfig {
+            protocol: ClientProtocol::Http,
+            ..NirionOciClientConfig::default()
+        };
+
+        let client = NirionOciClient::builder()
+            .auth(auth_config)
+            .docker_hub(docker_hub)
+            .oci_client_config(config)
+            .build();
+
+        let ghcr = Reference::try_from("ghcr.io/example/app:latest").unwrap();
+        let local = Reference::try_from("localhost:5000/nginx:latest").unwrap();
+
+        assert_eq!(
+            username(client.auth.auth_for(&ghcr)),
+            Some("registry".to_string())
+        );
+        assert!(client.docker_hub.supports(&local));
+        assert_eq!(client.oci_client_config.protocol, ClientProtocol::Http);
+    }
 }
