@@ -50,11 +50,16 @@
           };
           check-commit-messages = pkgs.callPackage ./nix/check-commit-messages.nix { };
           check-message = pkgs.callPackage ./nix/check-message.nix { };
-          rust-coverage = pkgs.callPackage ./nix/coverage/rust.nix { };
+          normalize-coverage = pkgs.callPackage ./nix/coverage/normalize.nix { };
+          rust-coverage = pkgs.callPackage ./nix/coverage/rust.nix {
+            normalizeCoverage = normalize-coverage;
+          };
           nix-coverage = pkgs.callPackage ./nix/coverage/nix.nix {
             nixcovProgram = nixcov.apps.${system}.default.program;
           };
-          merge-coverage = pkgs.callPackage ./nix/coverage/merge.nix { };
+          merge-coverage = pkgs.callPackage ./nix/coverage/merge.nix {
+            normalizeCoverage = normalize-coverage;
+          };
           full-coverage = pkgs.callPackage ./nix/coverage/full.nix {
             mergeCoverage = merge-coverage;
             nixCoverage = nix-coverage;
@@ -83,12 +88,6 @@
             type = "app";
             program = "${check-message}/bin/check-message";
             meta.description = "Check a single commit-style message";
-          };
-
-          apps.coverage = {
-            type = "app";
-            program = "${rust-coverage}/bin/rust-coverage";
-            meta.description = "Run Rust coverage using Tarpaulin";
           };
 
           apps.rust-coverage = {
