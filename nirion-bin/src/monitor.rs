@@ -1,28 +1,55 @@
 use crate::TargetSelector;
-use crate::docker::DockerProjectMonitor;
 use crossterm::terminal::Clear;
 use crossterm::{
     cursor::{self, MoveUp},
     execute,
     style::Color,
 };
-use nirion_lib::projects::{Projects, selected_project_names};
+use futures::StreamExt;
+use nirion_lib::{
+    docker::{ProjectStatus, project_status_stream},
+    projects::{Projects, selected_project_names},
+};
 use nirion_tui_lib::status::{Status, StatusEntry};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::io::stdout;
-use tokio::time::{Duration, sleep};
+use tokio::time::Duration;
 
 use crate::status_display::{project_state_icon, project_status_segments};
 
+struct CursorGuard;
+
+impl CursorGuard {
+    fn hide() -> anyhow::Result<Self> {
+        let mut stdout = stdout();
+        execute!(stdout, cursor::Hide)?;
+        Ok(Self)
+    }
+}
+
+impl Drop for CursorGuard {
+    fn drop(&mut self) {
+        let mut stdout = stdout();
+        let _ = execute!(stdout, cursor::Show);
+        let _ = stdout.flush();
+    }
+}
+
 pub async fn create_status(
-    monitors: &BTreeMap<String, DockerProjectMonitor>,
+    statuses: &BTreeMap<String, ProjectStatus>,
+    selected: &[String],
     projects: &Projects,
 ) -> anyhow::Result<Status> {
     let mut entries = Vec::new();
 
-    for (name, monitor) in monitors {
-        let project_status = monitor.project_status().await;
+    for name in selected {
+        let project_status = statuses
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| ProjectStatus {
+                services: BTreeMap::new(),
+            });
         let project = &projects[name];
 
         let state = project_status.project_state();
@@ -51,56 +78,56 @@ pub async fn create_status(
 }
 
 pub async fn monitor(
-    monitors: &BTreeMap<String, DockerProjectMonitor>,
+    target: &TargetSelector,
     projects: &Projects,
+    refresh_interval: Duration,
 ) -> anyhow::Result<()> {
-    let mut stdout = stdout();
-    execute!(stdout, cursor::Hide)?;
+    let selected = selected_project_names(target, projects);
+    let mut statuses = BTreeMap::new();
+    let mut stream = project_status_stream(
+        target.clone(),
+        projects.clone(),
+        refresh_interval,
+    );
+    let _cursor = CursorGuard::hide()?;
 
-    let ctrl_c = tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
-    });
+    render_status(&statuses, &selected, projects, true).await?;
 
     loop {
-        let status: Status = create_status(monitors, projects).await?;
-        status.print()?;
-
-        execute!(stdout, MoveUp((monitors.len() * 2 + 1) as u16))?;
-        stdout.flush()?;
-
-        if ctrl_c.is_finished() {
-            break;
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => break,
+            event = stream.next() => {
+                let Some(event) = event else {
+                    break;
+                };
+                let event = event?;
+                statuses.insert(event.project, event.status);
+                render_status(&statuses, &selected, projects, true).await?;
+            }
         }
-
-        sleep(Duration::from_millis(100)).await;
     }
+
+    let mut stdout = stdout();
     execute!(stdout, Clear(crossterm::terminal::ClearType::CurrentLine))?;
 
-    let status: Status = create_status(monitors, projects).await?;
-    status.print()?;
-
-    execute!(stdout, cursor::Show)?;
-    stdout.flush()?;
+    render_status(&statuses, &selected, projects, false).await?;
 
     Ok(())
 }
 
-pub async fn create_monitors(
-    target: &TargetSelector,
+async fn render_status(
+    statuses: &BTreeMap<String, ProjectStatus>,
+    selected: &[String],
     projects: &Projects,
-    refresh_interval: Duration,
-) -> anyhow::Result<BTreeMap<String, DockerProjectMonitor>> {
-    let selected = selected_project_names(target, projects);
+    move_up: bool,
+) -> anyhow::Result<()> {
+    let mut stdout = stdout();
+    let status: Status = create_status(statuses, selected, projects).await?;
+    status.print()?;
 
-    let mut monitors = BTreeMap::new();
-
-    for name in selected {
-        if let Some(project) = projects.get(&name) {
-            let monitor = DockerProjectMonitor::new(project, refresh_interval);
-            monitor.refresh_status().await?;
-            monitors.insert(name, monitor);
-        }
+    if move_up {
+        execute!(stdout, MoveUp((selected.len() * 2 + 1) as u16))?;
     }
-
-    Ok(monitors)
+    stdout.flush()?;
+    Ok(())
 }

@@ -3,9 +3,13 @@ use crossterm::{
     execute,
     style::{Color, Stylize},
 };
+use futures::StreamExt;
 use nirion_lib::{
+    compose::{ComposeConcurrency, compose_target_with_concurrency},
+    docker::{ProjectStatus, project_status_stream, query_project_status},
+    events::{ComposeEvent, ProcessEvent},
     projects::{Projects, selected_project_names},
-    wait::healthchecks_finished,
+    wait::{WaitTarget, wait_finished},
 };
 use nirion_tui_lib::{
     spinner::Spinner,
@@ -13,27 +17,55 @@ use nirion_tui_lib::{
 };
 use std::collections::BTreeMap;
 use std::io::{Write, stdout};
-use tokio::time::{Duration, sleep};
+use tokio::time::Duration;
 
 use crate::TargetSelector;
-use crate::docker::DockerMonitoredProcess;
 use crate::status_display::{project_state_icon, project_status_segments};
 
-async fn create_status(
+struct CursorGuard;
+
+impl CursorGuard {
+    fn hide() -> anyhow::Result<Self> {
+        let mut stdout = stdout();
+        execute!(stdout, cursor::Hide)?;
+        Ok(Self)
+    }
+}
+
+impl Drop for CursorGuard {
+    fn drop(&mut self) {
+        let mut stdout = stdout();
+        let _ = execute!(stdout, cursor::Show);
+        let _ = stdout.flush();
+    }
+}
+
+fn empty_status() -> ProjectStatus {
+    ProjectStatus {
+        services: BTreeMap::new(),
+    }
+}
+
+fn create_status(
     spinner: &Spinner,
-    map: &BTreeMap<String, DockerMonitoredProcess>,
+    selected: &[String],
+    running: &BTreeMap<String, bool>,
+    statuses: &BTreeMap<String, ProjectStatus>,
     projects: &Projects,
-) -> anyhow::Result<Status> {
+) -> Status {
     let mut entries = Vec::new();
 
-    for (name, proc) in map.iter() {
-        let project_status = proc.project_status().await;
+    for name in selected {
+        let project_status = statuses
+            .get(name)
+            .cloned()
+            .unwrap_or_else(empty_status);
         let project = &projects[name];
 
-        let icon = if proc.finished().await {
-            project_state_icon(&project_status.project_state())
-        } else {
+        let icon = if *running.get(name).unwrap_or(&false) {
             spinner.get().yellow().to_string()
+        } else {
+            project_state_icon(&project_status.project_state())
         };
 
         let prefix = format!("{icon} {name}");
@@ -48,24 +80,33 @@ async fn create_status(
 
         let suffix = format!("({progressing}/{num_services})    ");
 
-        let entry = StatusEntry {
+        entries.push(StatusEntry {
             prefix,
             segments,
             suffix,
-        };
-        entries.push(entry);
+        });
     }
 
-    Ok(Status { entries })
+    Status { entries }
 }
 
-async fn print_progress(
-    map: &BTreeMap<String, DockerMonitoredProcess>,
+fn print_progress(
+    selected: &[String],
     spinner: &Spinner,
+    running: &BTreeMap<String, bool>,
+    statuses: &BTreeMap<String, ProjectStatus>,
     projects: &Projects,
+    move_up: bool,
 ) -> anyhow::Result<()> {
-    let status = create_status(spinner, map, projects).await?;
+    let mut stdout = stdout();
+    let status = create_status(spinner, selected, running, statuses, projects);
     status.print()?;
+
+    if move_up {
+        execute!(stdout, MoveUp((selected.len() * 2 + 1) as u16))?;
+    }
+
+    stdout.flush()?;
     Ok(())
 }
 
@@ -78,120 +119,179 @@ pub async fn run_command_with_progress(
     refresh_interval: Duration,
     wait_for_healthchecks: bool,
 ) -> anyhow::Result<()> {
-    let selected = selected_project_names(target, projects);
-
-    let mut map = BTreeMap::new();
-
-    for name in &selected {
-        let project = &projects[name];
-        let proc = DockerMonitoredProcess::new(
-            project.clone(),
-            refresh_interval,
-            args,
-        )
-        .await;
-
-        map.insert(name.clone(), proc);
-    }
-
     if no_monitor {
-        wait_for_processes(&map, refresh_interval).await;
-        return fail_on_process_errors(&map).await;
+        return run_compose_hidden(target, projects, args).await;
     }
 
-    let mut stdout = stdout();
-    execute!(stdout, cursor::Hide)?;
-
+    let selected = selected_project_names(target, projects);
+    let args = args
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect::<Vec<_>>();
+    let mut compose_stream = compose_target_with_concurrency(
+        target.clone(),
+        projects.clone(),
+        args,
+        ComposeConcurrency::Parallel,
+    );
+    let mut status_stream = project_status_stream(
+        target.clone(),
+        projects.clone(),
+        refresh_interval,
+    );
     let spinner = Spinner::default();
+    let mut running = selected
+        .iter()
+        .map(|name| (name.clone(), true))
+        .collect::<BTreeMap<_, _>>();
+    let mut statuses = BTreeMap::new();
+    let mut compose_finished = false;
+    let mut compose_error = None;
 
-    let mut finished = false;
-    while !finished {
-        if !quiet {
-            print_progress(&map, &spinner, &projects).await?;
-            execute!(stdout, MoveUp((selected.len() * 2 + 1) as u16))?;
-            stdout.flush()?;
-        }
-
-        finished = true;
-        for project in map.values() {
-            if !project.finished().await {
-                finished = false;
-                break;
-            }
-        }
-
-        if finished {
-            fail_on_process_errors(&map).await?;
-        }
-
-        let mut statuses = BTreeMap::new();
-        for (project_name, status) in map.iter() {
-            statuses.insert(
-                project_name.to_string(),
-                status.project_status().await.clone(),
-            );
-        }
-        if wait_for_healthchecks
-            && !healthchecks_finished(target, projects, &statuses)
-        {
-            finished = false;
-        }
-
-        if !finished {
-            sleep(refresh_interval).await;
-        }
-    }
-
-    for proj in map.values() {
-        proj.refresh_status().await?;
-    }
+    let _cursor = CursorGuard::hide()?;
 
     if !quiet {
-        print_progress(&map, &spinner, &projects).await?;
-        stdout.flush()?;
+        print_progress(
+            &selected, &spinner, &running, &statuses, projects, true,
+        )?;
     }
 
-    fail_on_process_errors(&map).await
-}
-
-async fn wait_for_processes(
-    map: &BTreeMap<String, DockerMonitoredProcess>,
-    refresh_interval: Duration,
-) {
     loop {
-        let mut finished = true;
-        for project in map.values() {
-            if !project.finished().await {
-                finished = false;
-                break;
-            }
-        }
+        let ready = compose_error.is_some()
+            || (compose_finished
+                && (!wait_for_healthchecks
+                    || wait_finished(
+                        target,
+                        projects,
+                        &statuses,
+                        WaitTarget::Healthchecks,
+                    )));
 
-        if finished {
+        if ready {
             break;
         }
 
-        sleep(refresh_interval).await;
-    }
-}
+        tokio::select! {
+            event = compose_stream.next(), if !compose_finished => {
+                match event {
+                    Some(Ok(event)) => handle_compose_event(event, &mut running),
+                    Some(Err(error)) => {
+                        compose_error = Some(error);
+                        compose_finished = true;
+                        for value in running.values_mut() {
+                            *value = false;
+                        }
+                    }
+                    None => {
+                        compose_finished = true;
+                        for value in running.values_mut() {
+                            *value = false;
+                        }
+                    }
+                }
+            }
+            event = status_stream.next() => {
+                match event {
+                    Some(Ok(event)) => {
+                        statuses.insert(event.project, event.status);
+                    }
+                    Some(Err(error)) => {
+                        compose_error = Some(error);
+                        compose_finished = true;
+                        for value in running.values_mut() {
+                            *value = false;
+                        }
+                    }
+                    None => {
+                        compose_error = Some(anyhow::anyhow!("docker status stream ended before progress finished"));
+                        compose_finished = true;
+                        for value in running.values_mut() {
+                            *value = false;
+                        }
+                    }
+                }
+            }
+        }
 
-async fn fail_on_process_errors(
-    map: &BTreeMap<String, DockerMonitoredProcess>,
-) -> anyhow::Result<()> {
-    let mut failures = Vec::new();
-
-    for (project_name, process) in map {
-        if let Some(error) = process.error().await {
-            failures.push(format!("{project_name}: {error}"));
+        if !quiet {
+            print_progress(
+                &selected, &spinner, &running, &statuses, projects, true,
+            )?;
         }
     }
 
-    if !failures.is_empty() {
-        anyhow::bail!(
-            "docker compose failed for {} project(s): {}",
-            failures.len(),
-            failures.join("; ")
-        );
+    if compose_error.is_none() {
+        refresh_statuses(&selected, projects, &mut statuses).await?;
+    }
+
+    if !quiet {
+        print_progress(
+            &selected, &spinner, &running, &statuses, projects, false,
+        )?;
+    }
+
+    if let Some(error) = compose_error {
+        return Err(error);
+    }
+
+    Ok(())
+}
+
+async fn run_compose_hidden(
+    target: &TargetSelector,
+    projects: &Projects,
+    args: &[&str],
+) -> anyhow::Result<()> {
+    let args = args
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect::<Vec<_>>();
+    let mut stream = compose_target_with_concurrency(
+        target.clone(),
+        projects.clone(),
+        args,
+        ComposeConcurrency::Parallel,
+    );
+
+    while let Some(event) = stream.next().await {
+        event?;
+    }
+
+    Ok(())
+}
+
+fn handle_compose_event(
+    event: ComposeEvent,
+    running: &mut BTreeMap<String, bool>,
+) {
+    match event {
+        ComposeEvent::ProjectStarted { project } => {
+            running.insert(project, true);
+        }
+        ComposeEvent::ProjectFailed { project, .. } => {
+            running.insert(project, false);
+        }
+        ComposeEvent::Process {
+            project: Some(project),
+            event: ProcessEvent::Exited(_),
+        } => {
+            running.insert(project, false);
+        }
+        ComposeEvent::Process { .. } => {}
+    }
+}
+
+async fn refresh_statuses(
+    selected: &[String],
+    projects: &Projects,
+    statuses: &mut BTreeMap<String, ProjectStatus>,
+) -> anyhow::Result<()> {
+    for name in selected {
+        let project = &projects[name];
+        let status =
+            query_project_status(&project.docker_compose, &project.name)
+                .await?;
+        statuses.insert(name.clone(), status);
     }
 
     Ok(())

@@ -12,11 +12,47 @@ use crate::{
     projects::{ProjectName, Projects, TargetSelector},
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComposeConcurrency {
+    Sequential,
+    Parallel,
+}
+
 #[cfg(test)]
 static TEST_DOCKER_CMD: std::sync::Mutex<Option<Vec<String>>> =
     std::sync::Mutex::new(None);
 
 pub fn compose_target(
+    target: TargetSelector,
+    projects: Projects,
+    args: Vec<String>,
+) -> BoxStream<'static, anyhow::Result<ComposeEvent>> {
+    compose_target_with_concurrency(
+        target,
+        projects,
+        args,
+        ComposeConcurrency::Sequential,
+    )
+}
+
+pub fn compose_target_with_concurrency(
+    target: TargetSelector,
+    projects: Projects,
+    args: Vec<String>,
+    concurrency: ComposeConcurrency,
+) -> BoxStream<'static, anyhow::Result<ComposeEvent>> {
+    match concurrency {
+        ComposeConcurrency::Sequential => {
+            compose_target_sequential(target, projects, args)
+        }
+        ComposeConcurrency::Parallel => match target {
+            TargetSelector::All => compose_target_all_parallel(projects, args),
+            target => compose_target_sequential(target, projects, args),
+        },
+    }
+}
+
+fn compose_target_sequential(
     target: TargetSelector,
     projects: Projects,
     args: Vec<String>,
@@ -134,6 +170,76 @@ pub fn compose_target(
     rx.boxed()
 }
 
+fn compose_target_all_parallel(
+    projects: Projects,
+    args: Vec<String>,
+) -> BoxStream<'static, anyhow::Result<ComposeEvent>> {
+    let (tx, rx) = mpsc::unbounded();
+
+    tokio::spawn(async move {
+        let mut handles = Vec::new();
+
+        for (name, project) in projects.iter() {
+            let name = name.to_string();
+            let project = project.clone();
+            let args = args.clone();
+            let tx = tx.clone();
+
+            let _ = tx.unbounded_send(Ok(ComposeEvent::ProjectStarted {
+                project: name.clone(),
+            }));
+
+            handles.push(tokio::spawn(async move {
+                let mut stream =
+                    compose_cmd(project.docker_compose, project.name, args);
+
+                while let Some(event) = stream.next().await {
+                    match event {
+                        Ok(event) => {
+                            let _ =
+                                tx.unbounded_send(Ok(ComposeEvent::Process {
+                                    project: Some(name.clone()),
+                                    event,
+                                }));
+                        }
+                        Err(e) => {
+                            let error = e.to_string();
+                            let _ = tx.unbounded_send(Ok(
+                                ComposeEvent::ProjectFailed {
+                                    project: name.clone(),
+                                    error: error.clone(),
+                                },
+                            ));
+                            return Some(format!("{name}: {error}"));
+                        }
+                    }
+                }
+
+                None
+            }));
+        }
+
+        let mut failures = Vec::new();
+        for handle in handles {
+            match handle.await {
+                Ok(Some(failure)) => failures.push(failure),
+                Ok(None) => {}
+                Err(error) => failures.push(error.to_string()),
+            }
+        }
+
+        if !failures.is_empty() {
+            let _ = tx.unbounded_send(Err(anyhow::anyhow!(
+                "docker compose failed for {} project(s): {}",
+                failures.len(),
+                failures.join("; ")
+            )));
+        }
+    });
+
+    rx.boxed()
+}
+
 pub fn compose_cmd(
     compose_file: String,
     project_name: ProjectName,
@@ -206,10 +312,14 @@ pub fn run_docker_compose(
         let err_thread = tokio::spawn(async move {
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
+            let mut stderr = Vec::new();
             while let Ok(Some(line)) = lines.next_line().await {
+                stderr.push(line.clone());
                 let _ =
                     err_tx.unbounded_send(Ok(ProcessEvent::StderrLine(line)));
             }
+
+            stderr
         });
 
         let status = match child.wait().await {
@@ -221,15 +331,22 @@ pub fn run_docker_compose(
         };
 
         out_thread.await.ok();
-        err_thread.await.ok();
+        let stderr = err_thread.await.unwrap_or_default();
 
         let _ = tx.unbounded_send(Ok(ProcessEvent::Exited(status.into())));
 
         if !status.success() {
-            let _ = tx.unbounded_send(Err(anyhow::anyhow!(
-                "docker compose exited with status {}",
-                status
-            )));
+            let stderr = stderr.join("\n");
+            let stderr = stderr.trim();
+            let _ = tx.unbounded_send(Err(if stderr.is_empty() {
+                anyhow::anyhow!("docker compose exited with status {}", status)
+            } else {
+                anyhow::anyhow!(
+                    "docker compose exited with status {}: {}",
+                    status,
+                    stderr
+                )
+            }));
         }
     });
 
@@ -593,6 +710,33 @@ exit {exit_code}
     }
 
     #[tokio::test]
+    async fn compose_target_parallel_all_emits_project_boundaries() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker(dir.path(), &args_file, 0);
+        let _docker_bin_guard = DockerBinGuard::set_script(docker);
+
+        let events = collect_compose_events(compose_target_with_concurrency(
+            TargetSelector::All,
+            projects(),
+            vec!["pull".into()],
+            ComposeConcurrency::Parallel,
+        ))
+        .await;
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Ok(ComposeEvent::ProjectStarted { project }) if project == "api"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Ok(ComposeEvent::ProjectStarted { project }) if project == "worker"
+        )));
+        assert!(events.iter().all(Result::is_ok));
+    }
+
+    #[tokio::test]
     async fn compose_target_project_reports_failure() {
         let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
@@ -631,6 +775,39 @@ exit {exit_code}
             TargetSelector::All,
             projects(),
             vec!["up".into()],
+        ))
+        .await;
+
+        let project_failures = events
+            .iter()
+            .filter(|event| {
+                matches!(event, Ok(ComposeEvent::ProjectFailed { .. }))
+            })
+            .count();
+        assert_eq!(project_failures, 2);
+        assert!(events.iter().any(|event| {
+            match event {
+                Err(err) => err
+                    .to_string()
+                    .contains("docker compose failed for 2 project(s)"),
+                Ok(_) => false,
+            }
+        }));
+    }
+
+    #[tokio::test]
+    async fn compose_target_parallel_all_collects_failures() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker(dir.path(), &args_file, 5);
+        let _docker_bin_guard = DockerBinGuard::set_script(docker);
+
+        let events = collect_compose_events(compose_target_with_concurrency(
+            TargetSelector::All,
+            projects(),
+            vec!["up".into()],
+            ComposeConcurrency::Parallel,
         ))
         .await;
 

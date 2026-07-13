@@ -5,6 +5,24 @@ use crate::{
     projects::{Projects, TargetSelector},
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaitTarget {
+    Healthchecks,
+}
+
+pub fn wait_finished(
+    target: &TargetSelector,
+    projects: &Projects,
+    statuses: &BTreeMap<String, ProjectStatus>,
+    wait_target: WaitTarget,
+) -> bool {
+    match wait_target {
+        WaitTarget::Healthchecks => {
+            healthchecks_finished(target, projects, statuses)
+        }
+    }
+}
+
 pub fn healthchecks_finished(
     target: &TargetSelector,
     projects: &Projects,

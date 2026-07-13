@@ -3,10 +3,7 @@ use nirion_lib::{lock::LockedImages, projects::Projects};
 use nirion_oci_lib::client::AuthConfig;
 use std::{path::Path, time::Duration};
 
-use crate::{
-    monitor::{create_monitors, monitor},
-    ClapSelector, TargetSelector,
-};
+use crate::{monitor::monitor, ClapSelector, TargetSelector};
 
 #[derive(Parser, Debug, Clone)]
 pub struct MonitorArgs {
@@ -30,8 +27,6 @@ pub async fn handle_monitor(
     _lock_file: &Path,
     _auth: &AuthConfig,
 ) -> anyhow::Result<()> {
-    let monitors =
-        create_monitors(&args.target, projects, args.refresh).await?;
-    monitor(&monitors, projects).await?;
+    monitor(&args.target, projects, args.refresh).await?;
     Ok(())
 }
