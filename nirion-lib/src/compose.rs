@@ -433,6 +433,48 @@ exit {exit_code}
     }
 
     #[tokio::test]
+    async fn run_docker_compose_reports_spawn_failure() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let missing_docker = dir.path().join("missing-docker");
+        let _docker_bin_guard = DockerBinGuard::set(
+            missing_docker
+                .to_string_lossy()
+                .to_string(),
+        );
+
+        let events =
+            collect_events(run_docker_compose(vec!["ps".into()])).await;
+
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(&events[0], Err(err) if err.to_string().contains("failed to execute docker compose"))
+        );
+    }
+
+    #[tokio::test]
+    async fn compose_cmd_builds_args_and_streams_events() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker(dir.path(), &args_file, 0);
+        let _docker_bin_guard = DockerBinGuard::set(docker);
+
+        let events = collect_events(compose_cmd(
+            "compose.yml".into(),
+            ProjectName("myapp".into()),
+            vec!["logs".into()],
+        ))
+        .await;
+
+        assert!(events.iter().all(Result::is_ok));
+        assert_eq!(
+            fs::read_to_string(args_file).unwrap(),
+            "compose\n--file\ncompose.yml\n--project-name\nmyapp\nlogs\n"
+        );
+    }
+
+    #[tokio::test]
     async fn compose_target_project_wraps_process_events() {
         let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
@@ -486,6 +528,34 @@ exit {exit_code}
             fs::read_to_string(args_file).unwrap(),
             "compose\n--file\napi.yml\n--project-name\napi\nrestart\nweb\n"
         );
+    }
+
+    #[tokio::test]
+    async fn compose_target_service_reports_failure() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker(dir.path(), &args_file, 9);
+        let _docker_bin_guard = DockerBinGuard::set(docker);
+
+        let events = collect_compose_events(compose_target(
+            TargetSelector::Service(crate::projects::ServiceSelector {
+                project: "api".into(),
+                service: "web".into(),
+            }),
+            projects(),
+            vec!["restart".into()],
+        ))
+        .await;
+
+        assert!(events.iter().any(|event| {
+            match event {
+                Err(err) => err
+                    .to_string()
+                    .contains("Service 'api.web' failed"),
+                Ok(_) => false,
+            }
+        }));
     }
 
     #[tokio::test]

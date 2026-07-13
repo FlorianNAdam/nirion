@@ -465,6 +465,24 @@ mod tests {
     }
 
     #[test]
+    fn parse_port_external_missing_arrow_fails() {
+        let err = parse_port_mapping("0.0.0.0:8080/tcp").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Failed to split port by ':'")
+        );
+    }
+
+    #[test]
+    fn parse_port_mismatched_ranges_fail() {
+        let err = parse_port_mapping("0.0.0.0:8080-8081->80/tcp").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Port ranges have different lengths")
+        );
+    }
+
+    #[test]
     fn parse_port_range_single() {
         let r = super::parse_port_range("80").unwrap();
         assert_eq!(r, vec![80]);
@@ -510,6 +528,25 @@ mod tests {
         let status = ProjectStatus::from_json(json).unwrap();
         assert_eq!(status.services.len(), 1);
         assert_eq!(status.services["web"].state, ServiceState::Running);
+    }
+
+    #[test]
+    fn from_json_array_reports_parse_errors() {
+        let err = ProjectStatus::from_json("[").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("failed to parse docker compose JSON output")
+        );
+    }
+
+    #[test]
+    fn from_json_reports_port_parse_errors() {
+        let json = r#"{"ID":"abc","Name":"web-1","Service":"web","Image":"nginx","State":"running","Health":null,"ExitCode":null,"RunningFor":null,"Status":null,"Ports":"bad-port","Networks":""}"#;
+        let err = ProjectStatus::from_json(json).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Failed to parse ports")
+        );
     }
 
     #[test]
@@ -609,6 +646,45 @@ mod tests {
             networks: None,
         };
         assert_eq!(ServiceState::from_container(&c), ServiceState::Failed);
+    }
+
+    #[test]
+    fn from_state_exited_without_code_is_failure() {
+        let c = ContainerInfo {
+            id: "1".into(),
+            name: "a".into(),
+            service: "s".into(),
+            image: "img".into(),
+            state: "exited".into(),
+            health: None,
+            exit_code: None,
+            running_for: None,
+            status: None,
+            ports: None,
+            networks: None,
+        };
+        assert_eq!(ServiceState::from_container(&c), ServiceState::Failed);
+    }
+
+    #[test]
+    fn from_state_paused_and_restarting() {
+        let mut c = ContainerInfo {
+            id: "1".into(),
+            name: "a".into(),
+            service: "s".into(),
+            image: "img".into(),
+            state: "paused".into(),
+            health: None,
+            exit_code: None,
+            running_for: None,
+            status: None,
+            ports: None,
+            networks: None,
+        };
+        assert_eq!(ServiceState::from_container(&c), ServiceState::Paused);
+
+        c.state = "restarting".into();
+        assert_eq!(ServiceState::from_container(&c), ServiceState::Restarting);
     }
 
     #[test]
@@ -737,6 +813,20 @@ mod tests {
         );
         let status = ProjectStatus { services };
         assert_eq!(status.project_state(), ProjectState::Paused);
+    }
+
+    #[test]
+    fn project_state_unknown_when_no_rule_matches() {
+        let mut services = BTreeMap::new();
+        services.insert(
+            "a".into(),
+            ServiceStatus {
+                state: ServiceState::Created,
+                ..service(ServiceState::Created)
+            },
+        );
+        let status = ProjectStatus { services };
+        assert_eq!(status.project_state(), ProjectState::Unknown);
     }
 
     #[test]

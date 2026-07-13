@@ -372,6 +372,16 @@ mod tests {
     }
 
     #[test]
+    fn constructors_configure_base_url_and_default_registry() {
+        let default_reference = Reference::try_from("nginx:latest").unwrap();
+        let custom = DockerHubClient::with_base_url("http://127.0.0.1:5000");
+
+        assert!(DockerHubClient::new().supports(&default_reference));
+        assert_eq!(custom.base_url, "http://127.0.0.1:5000");
+        assert!(custom.supports(&default_reference));
+    }
+
+    #[test]
     fn alias_dockerhub_tags_from_tags_returns_matching_digest_and_architecture()
     {
         let arch = Architecture::default();
