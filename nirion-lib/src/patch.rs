@@ -6,6 +6,10 @@ use tokio::process::Command;
 
 use crate::projects::{Projects, TargetSelector};
 
+#[cfg(test)]
+static TEST_SUDO_CMD: std::sync::Mutex<Option<Vec<String>>> =
+    std::sync::Mutex::new(None);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PatchTarget {
     EnvFile,
@@ -92,7 +96,7 @@ struct Service {
 }
 
 pub async fn patch(file: &str) -> Result<()> {
-    let status = Command::new("sudo")
+    let status = sudo_command()
         .arg("mirage-patch")
         .arg(file)
         .stdin(Stdio::inherit())
@@ -109,9 +113,73 @@ pub async fn patch(file: &str) -> Result<()> {
     Ok(())
 }
 
+fn sudo_command() -> Command {
+    #[cfg(test)]
+    if let Some(cmd) = TEST_SUDO_CMD.lock().unwrap().clone() {
+        let mut command = Command::new(&cmd[0]);
+        command.args(&cmd[1..]);
+        return command;
+    }
+
+    Command::new("sudo")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{fs, io::Write, os::unix::fs::PermissionsExt, path::Path};
+
+    static SUDO_BIN_LOCK: tokio::sync::Mutex<()> =
+        tokio::sync::Mutex::const_new(());
+
+    struct SudoBinGuard;
+
+    impl SudoBinGuard {
+        fn set_script(script: String) -> Self {
+            *TEST_SUDO_CMD.lock().unwrap() =
+                Some(vec!["/bin/sh".to_string(), script]);
+            Self
+        }
+
+        fn set_command(command: String) -> Self {
+            *TEST_SUDO_CMD.lock().unwrap() = Some(vec![command]);
+            Self
+        }
+    }
+
+    impl Drop for SudoBinGuard {
+        fn drop(&mut self) {
+            *TEST_SUDO_CMD.lock().unwrap() = None;
+        }
+    }
+
+    fn write_fake_sudo(dir: &Path, args_file: &Path, exit_code: i32) -> String {
+        let sudo = dir.join("sudo");
+        let tmp = dir.join("sudo.tmp");
+        let mut file = fs::File::create(&tmp).unwrap();
+        file.write_all(
+            format!(
+                r#"#!/bin/sh
+printf '%s\n' "$@" > '{}'
+exit {exit_code}
+"#,
+                args_file.display()
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+
+        let mut permissions = fs::metadata(&tmp)
+            .unwrap()
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&tmp, permissions).unwrap();
+        fs::rename(&tmp, &sudo).unwrap();
+
+        sudo.to_string_lossy().to_string()
+    }
 
     fn projects(compose_path: &str) -> Projects {
         serde_json::from_value(serde_json::json!({
@@ -280,5 +348,113 @@ services:
         .unwrap_err();
 
         assert_eq!(err.to_string(), "No env_file found for `myapp.web`");
+    }
+
+    #[tokio::test]
+    async fn patch_invokes_mirage_patch_through_sudo() {
+        let _sudo_bin_lock = SUDO_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let sudo = write_fake_sudo(dir.path(), &args_file, 0);
+        let _sudo_bin_guard = SudoBinGuard::set_script(sudo);
+
+        patch("compose.yml").await.unwrap();
+
+        assert_eq!(
+            fs::read_to_string(args_file).unwrap(),
+            "mirage-patch\ncompose.yml\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn patch_reports_failed_status() {
+        let _sudo_bin_lock = SUDO_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let sudo = write_fake_sudo(dir.path(), &args_file, 3);
+        let _sudo_bin_guard = SudoBinGuard::set_script(sudo);
+
+        let err = patch("compose.yml").await.unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("mirage-patch exited with status")
+        );
+    }
+
+    #[tokio::test]
+    async fn patch_reports_spawn_failure() {
+        let _sudo_bin_lock = SUDO_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let missing_sudo = dir.path().join("missing-sudo");
+        let _sudo_bin_guard = SudoBinGuard::set_command(
+            missing_sudo
+                .to_string_lossy()
+                .to_string(),
+        );
+
+        let err = patch("compose.yml").await.unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("failed to spawn mirage-patch")
+        );
+    }
+
+    #[tokio::test]
+    async fn patch_target_patches_project_compose_file() {
+        let _sudo_bin_lock = SUDO_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let sudo = write_fake_sudo(dir.path(), &args_file, 0);
+        let _sudo_bin_guard = SudoBinGuard::set_script(sudo);
+        let compose_path = dir.path().join("compose.yml");
+        let projects = projects(compose_path.to_str().unwrap());
+
+        patch_target(
+            &TargetSelector::Project(crate::projects::ProjectSelector {
+                name: "myapp".into(),
+            }),
+            &projects,
+            &PatchTarget::Compose,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(args_file).unwrap(),
+            format!("mirage-patch\n{}\n", compose_path.display())
+        );
+    }
+
+    #[tokio::test]
+    async fn patch_target_patches_first_service_env_file() {
+        let _sudo_bin_lock = SUDO_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let sudo = write_fake_sudo(dir.path(), &args_file, 0);
+        let _sudo_bin_guard = SudoBinGuard::set_script(sudo);
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(
+            &compose_path,
+            r#"
+services:
+  web:
+    env_file:
+      - web.env
+      - common.env
+"#,
+        )
+        .unwrap();
+        let projects = projects(compose_path.to_str().unwrap());
+
+        patch_target(&service_target("web"), &projects, &PatchTarget::EnvFile)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(args_file).unwrap(),
+            "mirage-patch\nweb.env\n"
+        );
     }
 }

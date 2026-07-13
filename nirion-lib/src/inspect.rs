@@ -9,7 +9,7 @@ use crate::{
 };
 
 #[cfg(test)]
-static TEST_DOCKER_BIN: std::sync::Mutex<Option<String>> =
+static TEST_DOCKER_CMD: std::sync::Mutex<Option<Vec<String>>> =
     std::sync::Mutex::new(None);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -199,8 +199,10 @@ fn pretty_json(string: &str) -> String {
 
 fn docker_command() -> Command {
     #[cfg(test)]
-    if let Some(bin) = TEST_DOCKER_BIN.lock().unwrap().clone() {
-        return Command::new(bin);
+    if let Some(cmd) = TEST_DOCKER_CMD.lock().unwrap().clone() {
+        let mut command = Command::new(&cmd[0]);
+        command.args(&cmd[1..]);
+        return command;
     }
 
     Command::new("docker")
@@ -210,7 +212,7 @@ fn docker_command() -> Command {
 mod tests {
     use super::*;
     use crate::lock::VersionedImage;
-    use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+    use std::{fs, io::Write, os::unix::fs::PermissionsExt, path::Path};
 
     static DOCKER_BIN_LOCK: tokio::sync::Mutex<()> =
         tokio::sync::Mutex::const_new(());
@@ -218,15 +220,22 @@ mod tests {
     struct DockerBinGuard;
 
     impl DockerBinGuard {
-        fn set(bin: String) -> Self {
-            *TEST_DOCKER_BIN.lock().unwrap() = Some(bin);
+        fn set(script: String) -> Self {
+            let cmd = vec!["/bin/sh".to_string(), script];
+            *TEST_DOCKER_CMD.lock().unwrap() = Some(cmd.clone());
+            *crate::docker::TEST_DOCKER_CMD
+                .lock()
+                .unwrap() = Some(cmd);
             Self
         }
     }
 
     impl Drop for DockerBinGuard {
         fn drop(&mut self) {
-            *TEST_DOCKER_BIN.lock().unwrap() = None;
+            *TEST_DOCKER_CMD.lock().unwrap() = None;
+            *crate::docker::TEST_DOCKER_CMD
+                .lock()
+                .unwrap() = None;
         }
     }
 
@@ -266,9 +275,10 @@ mod tests {
         stderr: &str,
         exit_code: i32,
     ) -> String {
-        let docker = dir.join("docker");
-        fs::write(
-            &docker,
+        let docker = dir.join("docker-image");
+        let tmp = dir.join("docker-image.tmp");
+        let mut file = fs::File::create(&tmp).unwrap();
+        file.write_all(
             format!(
                 r#"#!/bin/sh
 printf '%s\n' "$@" > '{}'
@@ -279,17 +289,82 @@ exit {exit_code}
                 args_file.display(),
                 stdout,
                 stderr,
-            ),
+            )
+            .as_bytes(),
         )
         .unwrap();
+        file.sync_all().unwrap();
+        drop(file);
 
-        let mut permissions = fs::metadata(&docker)
+        let mut permissions = fs::metadata(&tmp)
             .unwrap()
             .permissions();
         permissions.set_mode(0o755);
-        fs::set_permissions(&docker, permissions).unwrap();
+        fs::set_permissions(&tmp, permissions).unwrap();
+        fs::rename(&tmp, &docker).unwrap();
 
         docker.to_string_lossy().to_string()
+    }
+
+    fn write_fake_container_docker(
+        dir: &Path,
+        args_file: &Path,
+        compose_stdout: &str,
+        inspect_stdout: &str,
+        inspect_stderr: &str,
+        inspect_exit_code: i32,
+    ) -> String {
+        let docker = dir.join("docker-container");
+        let tmp = dir.join("docker-container.tmp");
+        let mut file = fs::File::create(&tmp).unwrap();
+        file.write_all(
+            format!(
+                r#"#!/bin/sh
+printf '%s\n' "$@" >> '{}'
+if [ "$1" = "compose" ]; then
+  printf '%s\n' '{}'
+  exit 0
+fi
+printf '%s\n' '{}'
+printf '%s\n' '{}' >&2
+exit {inspect_exit_code}
+"#,
+                args_file.display(),
+                compose_stdout,
+                inspect_stdout,
+                inspect_stderr,
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+
+        let mut permissions = fs::metadata(&tmp)
+            .unwrap()
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&tmp, permissions).unwrap();
+        fs::rename(&tmp, &docker).unwrap();
+
+        docker.to_string_lossy().to_string()
+    }
+
+    fn compose_ps_service(service: &str, id: &str) -> String {
+        serde_json::json!({
+            "ID": id,
+            "Name": format!("myapp-{service}-1"),
+            "Service": service,
+            "Image": "nginx:latest",
+            "State": "running",
+            "Health": null,
+            "ExitCode": null,
+            "RunningFor": "1 minute",
+            "Status": "Up 1 minute",
+            "Ports": "",
+            "Networks": "default"
+        })
+        .to_string()
     }
 
     #[test]
@@ -510,6 +585,116 @@ exit {exit_code}
   "Id": "abc"
 }"#
         );
+    }
+
+    #[tokio::test]
+    async fn inspect_container_pretty_prints_container_json() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_container_docker(
+            dir.path(),
+            &args_file,
+            &compose_ps_service("web", "container-123"),
+            r#"{"Name":"myapp-web-1"}"#,
+            "",
+            0,
+        );
+        let _docker_bin_guard = DockerBinGuard::set(docker);
+
+        let output =
+            inspect_container(&target("web"), &projects(), "{{json .}}", false)
+                .await
+                .unwrap();
+
+        assert_eq!(
+            output,
+            r#"{
+  "Name": "myapp-web-1"
+}"#
+        );
+        assert!(
+            fs::read_to_string(args_file)
+                .unwrap()
+                .contains("inspect\n--format\n{{json .}}\ncontainer-123\n")
+        );
+    }
+
+    #[tokio::test]
+    async fn inspect_service_dispatches_container_inspect_raw() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_container_docker(
+            dir.path(),
+            &args_file,
+            &compose_ps_service("web", "container-abc"),
+            r#"{"raw":true}"#,
+            "",
+            0,
+        );
+        let _docker_bin_guard = DockerBinGuard::set(docker);
+
+        let output = inspect_service(
+            &target("web"),
+            &InspectTarget::Container,
+            &projects(),
+            &LockedImages::default(),
+            "{{json .}}",
+            true,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(output, r#"{"raw":true}"#.to_string() + "\n");
+    }
+
+    #[tokio::test]
+    async fn inspect_container_reports_missing_service_status() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_container_docker(
+            dir.path(),
+            &args_file,
+            &compose_ps_service("db", "container-db"),
+            r#"{}"#,
+            "",
+            0,
+        );
+        let _docker_bin_guard = DockerBinGuard::set(docker);
+
+        let err =
+            inspect_container(&target("web"), &projects(), "{{json .}}", true)
+                .await
+                .unwrap_err();
+
+        assert_eq!(err.to_string(), "Service web missing from status");
+    }
+
+    #[tokio::test]
+    async fn inspect_container_reports_docker_failure_with_stderr() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_container_docker(
+            dir.path(),
+            &args_file,
+            &compose_ps_service("web", "container-123"),
+            "",
+            "container gone",
+            4,
+        );
+        let _docker_bin_guard = DockerBinGuard::set(docker);
+
+        let err =
+            inspect_container(&target("web"), &projects(), "{{json .}}", true)
+                .await
+                .unwrap_err();
+
+        let err = err.to_string();
+        assert!(err.contains("docker inspect failed with status"));
+        assert!(err.contains("container gone"));
     }
 
     #[tokio::test]
