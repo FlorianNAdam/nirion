@@ -1,12 +1,15 @@
-use std::{
-    collections::BTreeMap, ffi::OsStr, ops::Deref, sync::Arc, time::Duration,
-};
+use std::{collections::BTreeMap, ops::Deref, time::Duration};
 
 use anyhow::Context;
+use futures::{
+    StreamExt, channel::mpsc, stream::BoxStream, stream::select_all,
+};
 use serde::{Deserialize, Serialize};
-use tokio::{process::Command, sync::RwLock, task::JoinHandle};
+use tokio::process::Command;
 
-use crate::projects::{Project, ProjectName};
+use crate::projects::{
+    Project, ProjectName, Projects, TargetSelector, selected_project_names,
+};
 
 #[cfg(test)]
 pub(crate) static TEST_DOCKER_CMD: std::sync::Mutex<Option<Vec<String>>> =
@@ -43,6 +46,74 @@ pub async fn query_project_status(
     let json = String::from_utf8_lossy(&output.stdout).to_string();
 
     ProjectStatus::from_json(&json)
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectStatusEvent {
+    pub project: String,
+    pub status: ProjectStatus,
+}
+
+pub fn status_stream(
+    target: TargetSelector,
+    projects: Projects,
+    refresh_interval: Duration,
+) -> BoxStream<'static, anyhow::Result<ProjectStatusEvent>> {
+    let selected = selected_project_names(&target, &projects);
+    let streams = selected
+        .into_iter()
+        .filter_map(|name| {
+            let project = projects.get(&name)?.clone();
+            Some(project_status_stream(name, project, refresh_interval))
+        })
+        .collect::<Vec<_>>();
+
+    select_all(streams).boxed()
+}
+
+pub fn project_status_stream(
+    name: String,
+    project: Project,
+    refresh_interval: Duration,
+) -> BoxStream<'static, anyhow::Result<ProjectStatusEvent>> {
+    let (tx, rx) = mpsc::unbounded();
+
+    tokio::spawn(async move {
+        let mut first_poll = true;
+
+        loop {
+            match query_project_status(&project.docker_compose, &project.name)
+                .await
+            {
+                Ok(status) => {
+                    if tx
+                        .unbounded_send(Ok(ProjectStatusEvent {
+                            project: name.clone(),
+                            status,
+                        }))
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                Err(error) if first_poll => {
+                    if tx.unbounded_send(Err(error)).is_err() {
+                        return;
+                    }
+                }
+                Err(_) => {
+                    if tx.is_closed() {
+                        return;
+                    }
+                }
+            }
+
+            first_poll = false;
+            tokio::time::sleep(refresh_interval).await;
+        }
+    });
+
+    rx.boxed()
 }
 
 fn docker_command() -> Command {
@@ -341,81 +412,6 @@ impl ServiceState {
             },
             _ => ServiceState::Unknown,
         }
-    }
-}
-
-pub struct DockerProjectMonitor {
-    project_name: ProjectName,
-    compose_file: String,
-    project_status: Arc<RwLock<ProjectStatus>>,
-    refresh_handle: Option<JoinHandle<()>>,
-}
-
-impl DockerProjectMonitor {
-    pub fn new(project: &Project, refresh_interval: Duration) -> Self {
-        let mut monitor = Self {
-            project_name: project.name.clone(),
-            compose_file: project.docker_compose.clone(),
-            project_status: Arc::new(RwLock::new(ProjectStatus {
-                services: BTreeMap::new(),
-            })),
-            refresh_handle: None,
-        };
-
-        let handle = {
-            let project_status = monitor.project_status.clone();
-            let project_name = project.name.clone();
-            let compose_file = monitor.compose_file.clone();
-            tokio::spawn(project_refresh_thread(
-                project_status,
-                compose_file,
-                project_name,
-                refresh_interval,
-            ))
-        };
-
-        monitor.refresh_handle = Some(handle);
-        monitor
-    }
-
-    pub async fn refresh_status(&self) -> anyhow::Result<()> {
-        let new_status =
-            query_project_status(&self.compose_file, &self.project_name)
-                .await?;
-
-        let mut status = self.project_status.write().await;
-        *status = new_status;
-        Ok(())
-    }
-
-    pub async fn project_status(&self) -> ProjectStatus {
-        self.project_status.read().await.clone()
-    }
-}
-
-impl Drop for DockerProjectMonitor {
-    fn drop(&mut self) {
-        if let Some(handle) = &self.refresh_handle {
-            handle.abort();
-        }
-    }
-}
-
-async fn project_refresh_thread(
-    project_status: Arc<RwLock<ProjectStatus>>,
-    compose_file: String,
-    project_name: ProjectName,
-    interval: Duration,
-) {
-    loop {
-        match query_project_status(&compose_file, &project_name).await {
-            Ok(new_status) => {
-                let mut status = project_status.write().await;
-                *status = new_status;
-            }
-            Err(_) => {}
-        }
-        tokio::time::sleep(interval).await;
     }
 }
 
@@ -878,93 +874,5 @@ mod tests {
             services: BTreeMap::new(),
         };
         assert_eq!(status.progressing(), 0);
-    }
-}
-
-pub struct DockerMonitoredProcess {
-    pub monitor: DockerProjectMonitor,
-    finished: Arc<RwLock<bool>>,
-    error: Arc<RwLock<Option<String>>>,
-}
-
-impl DockerMonitoredProcess {
-    pub async fn new(
-        project: Project,
-        refresh_interval: Duration,
-        args: impl IntoIterator<Item = impl AsRef<OsStr>>,
-    ) -> Self {
-        let monitor = DockerProjectMonitor::new(&project, refresh_interval);
-
-        let finished = Arc::new(RwLock::new(false));
-        let error = Arc::new(RwLock::new(None));
-
-        let _ = {
-            let compose_file = project.docker_compose.clone();
-            let args: Vec<_> = args
-                .into_iter()
-                .map(|a| a.as_ref().to_os_string())
-                .collect();
-            let finished = finished.clone();
-            let error = error.clone();
-
-            tokio::spawn(async move {
-                let result = Command::new("docker")
-                    .arg("compose")
-                    .arg("-f")
-                    .arg(compose_file)
-                    .arg("--project-name")
-                    .arg(project.name.deref())
-                    .args(args)
-                    .output()
-                    .await
-                    .context("failed to execute docker compose")
-                    .and_then(|output| {
-                        if output.status.success() {
-                            Ok(())
-                        } else {
-                            let stderr =
-                                String::from_utf8_lossy(&output.stderr);
-                            anyhow::bail!(
-                                "docker compose exited with status {}{}{}",
-                                output.status,
-                                if stderr.trim().is_empty() {
-                                    ""
-                                } else {
-                                    ": "
-                                },
-                                stderr.trim()
-                            )
-                        }
-                    });
-
-                if let Err(e) = result {
-                    *error.write().await = Some(e.to_string());
-                }
-
-                *finished.write().await = true;
-            })
-        };
-
-        Self {
-            monitor,
-            finished,
-            error,
-        }
-    }
-
-    pub async fn refresh_status(&self) -> anyhow::Result<()> {
-        self.monitor.refresh_status().await
-    }
-
-    pub async fn project_status(&self) -> ProjectStatus {
-        self.monitor.project_status().await
-    }
-
-    pub async fn finished(&self) -> bool {
-        *self.finished.read().await
-    }
-
-    pub async fn error(&self) -> Option<String> {
-        self.error.read().await.clone()
     }
 }

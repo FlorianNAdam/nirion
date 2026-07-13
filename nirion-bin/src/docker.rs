@@ -5,8 +5,6 @@ use nirion_lib::{
     projects::{Projects, TargetSelector},
 };
 
-pub use nirion_lib::docker::{DockerMonitoredProcess, DockerProjectMonitor};
-
 pub async fn compose_target_cmd(
     target: &TargetSelector,
     projects: &Projects,

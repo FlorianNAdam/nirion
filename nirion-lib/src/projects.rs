@@ -208,6 +208,20 @@ pub fn get_images(
     images
 }
 
+pub fn selected_project_names(
+    target: &TargetSelector,
+    projects: &Projects,
+) -> Vec<String> {
+    match target {
+        TargetSelector::All => projects
+            .iter()
+            .map(|(name, _)| name.to_string())
+            .collect(),
+        TargetSelector::Project(project) => vec![project.name.clone()],
+        TargetSelector::Service(service) => vec![service.project.clone()],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,6 +401,37 @@ mod tests {
         let images = get_images(&TargetSelector::All, &projects);
         assert_eq!(images.len(), 3);
         assert!(!images.contains_key("myapp.worker"));
+    }
+
+    #[test]
+    fn selected_project_names_all() {
+        let projects = test_projects();
+        let names = selected_project_names(&TargetSelector::All, &projects);
+
+        assert_eq!(names, vec!["api", "myapp"]);
+    }
+
+    #[test]
+    fn selected_project_names_project() {
+        let projects = test_projects();
+        let sel = TargetSelector::Project(ProjectSelector {
+            name: "myapp".into(),
+        });
+        let names = selected_project_names(&sel, &projects);
+
+        assert_eq!(names, vec!["myapp"]);
+    }
+
+    #[test]
+    fn selected_project_names_service() {
+        let projects = test_projects();
+        let sel = TargetSelector::Service(ServiceSelector {
+            project: "myapp".into(),
+            service: "web".into(),
+        });
+        let names = selected_project_names(&sel, &projects);
+
+        assert_eq!(names, vec!["myapp"]);
     }
 
     #[test]
