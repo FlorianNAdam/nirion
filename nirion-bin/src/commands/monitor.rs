@@ -1,9 +1,9 @@
 use clap::Parser;
-use nirion_lib::{lock::LockedImages, projects::Projects};
-use nirion_oci_lib::client::AuthConfig;
-use std::{path::Path, time::Duration};
+use std::time::Duration;
 
-use crate::{monitor::monitor, ClapSelector, TargetSelector};
+use crate::{
+    commands::NirionContext, monitor::monitor, ClapSelector, TargetSelector,
+};
 
 #[derive(Parser, Debug, Clone)]
 pub struct MonitorArgs {
@@ -22,11 +22,8 @@ pub struct MonitorArgs {
 
 pub async fn handle_monitor(
     args: &MonitorArgs,
-    projects: &Projects,
-    _locked_images: &LockedImages,
-    _lock_file: &Path,
-    _auth: &AuthConfig,
+    context: &NirionContext,
 ) -> anyhow::Result<()> {
-    monitor(&args.target, projects, args.refresh).await?;
+    monitor(&args.target, &context.projects, args.refresh).await?;
     Ok(())
 }

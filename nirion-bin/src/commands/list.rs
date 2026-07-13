@@ -1,9 +1,6 @@
 use clap::Parser;
-use nirion_lib::{lock::LockedImages, projects::Projects};
-use nirion_oci_lib::client::AuthConfig;
-use std::path::Path;
 
-use crate::{ClapSelector, TargetSelector};
+use crate::{commands::NirionContext, ClapSelector, TargetSelector};
 
 /// List projects or services
 #[derive(Parser, Debug, Clone)]
@@ -19,21 +16,18 @@ pub struct ListArgs {
 
 pub async fn handle_list(
     args: &ListArgs,
-    projects: &Projects,
-    _locked_images: &LockedImages,
-    _lock_file: &Path,
-    _auth: &AuthConfig,
+    context: &NirionContext,
 ) -> anyhow::Result<()> {
     match &args.target {
         TargetSelector::All => {
             println!("Projects:");
-            for (project_name, _) in projects.iter() {
+            for (project_name, _) in context.projects.iter() {
                 println!("- {}", project_name);
             }
         }
 
         TargetSelector::Project(proj) => {
-            let project = &projects[&proj.name];
+            let project = &context.projects[&proj.name];
             println!("Images in project '{}':", proj.name);
             for image in project.services.keys() {
                 println!("- {}", image);

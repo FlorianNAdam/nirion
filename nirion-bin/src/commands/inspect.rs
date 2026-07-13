@@ -4,13 +4,10 @@ use nirion_lib::{
     inspect::{
         inspect_project, inspect_service, InspectTarget as LibInspectTarget,
     },
-    lock::LockedImages,
-    projects::{ProjectSelector, Projects, TargetSelector},
+    projects::{ProjectSelector, TargetSelector},
 };
-use nirion_oci_lib::client::AuthConfig;
-use std::path::Path;
 
-use crate::ClapSelector;
+use crate::{commands::NirionContext, ClapSelector};
 
 /// Patch service files using mirage-patch
 #[derive(Parser, Debug, Clone)]
@@ -53,24 +50,21 @@ impl From<&InspectTarget> for LibInspectTarget {
 
 pub async fn handle_inspect(
     args: &InspectArgs,
-    projects: &Projects,
-    locked_images: &LockedImages,
-    _lock_file: &Path,
-    _auth: &AuthConfig,
+    context: &NirionContext,
 ) -> Result<()> {
     let inspect_target = LibInspectTarget::from(&args.inspect_target);
 
     match &args.target {
         TargetSelector::All => {
-            for (project_name, _) in projects.iter() {
+            for (project_name, _) in context.projects.iter() {
                 let project_selector = ProjectSelector {
                     name: project_name.to_string(),
                 };
                 for output in inspect_project(
                     &project_selector,
                     &inspect_target,
-                    projects,
-                    locked_images,
+                    &context.projects,
+                    &context.locked_images,
                     &args.format,
                     args.raw,
                 )
@@ -84,8 +78,8 @@ pub async fn handle_inspect(
             for output in inspect_project(
                 proj,
                 &inspect_target,
-                projects,
-                locked_images,
+                &context.projects,
+                &context.locked_images,
                 &args.format,
                 args.raw,
             )
@@ -98,8 +92,8 @@ pub async fn handle_inspect(
             let output = inspect_service(
                 img,
                 &inspect_target,
-                projects,
-                locked_images,
+                &context.projects,
+                &context.locked_images,
                 &args.format,
                 args.raw,
             )

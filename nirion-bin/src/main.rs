@@ -1,4 +1,4 @@
-use crate::commands::{Commands, handle_command};
+use crate::commands::{Commands, NirionContext, handle_command};
 use clap::{CommandFactory, Parser};
 use clap_complete::{ArgValueCompleter, CompletionCandidate};
 use crossterm::style::Stylize;
@@ -281,7 +281,7 @@ async fn main() -> anyhow::Result<()> {
     let projects = core_cli.files.get_projects().await?;
 
     PROJECTS
-        .set(projects)
+        .set(projects.clone())
         .map_err(|_| anyhow::anyhow!("PROJECTS already initialized"))?;
 
     let mut args = core_cli.args;
@@ -289,14 +289,16 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse_from(args);
 
-    let projects = PROJECTS
-        .get()
-        .ok_or_else(|| anyhow::anyhow!("PROJECTS not initialized"))?;
-
     let auth = cli.get_auth().await?;
 
-    handle_command(&cli.command, &projects, &locked_images, &lock_file, &auth)
-        .await?;
+    let context = NirionContext {
+        projects,
+        locked_images,
+        lock_file,
+        auth,
+    };
+
+    handle_command(&cli.command, &context).await?;
 
     Ok(())
 }

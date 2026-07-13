@@ -1,15 +1,14 @@
-use std::path::Path;
-
 use clap::Parser;
 use futures::StreamExt;
 use nirion_lib::{
-    lock::LockedImages,
     lock_update::update_images,
-    projects::{get_images, Projects, TargetSelector},
+    projects::{get_images, TargetSelector},
 };
-use nirion_oci_lib::client::AuthConfig;
 
-use crate::{commands::lock::render_lock_update_event, ClapSelector};
+use crate::{
+    commands::{lock::render_lock_update_event, NirionContext},
+    ClapSelector,
+};
 
 /// Update lock file entries
 #[derive(Parser, Debug, Clone)]
@@ -29,17 +28,14 @@ pub struct UpdateArgs {
 
 pub async fn handle_update(
     args: &UpdateArgs,
-    projects: &Projects,
-    locked_images: &LockedImages,
-    lock_file: &Path,
-    auth: &AuthConfig,
+    context: &NirionContext,
 ) -> anyhow::Result<()> {
-    let images = get_images(&args.target, projects);
+    let images = get_images(&args.target, &context.projects);
     let mut operation = update_images(
-        auth.clone(),
+        context.auth.clone(),
         images,
-        locked_images.clone(),
-        lock_file.to_path_buf(),
+        context.locked_images.clone(),
+        context.lock_file.clone(),
         args.jobs,
     );
 

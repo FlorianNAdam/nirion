@@ -1,12 +1,9 @@
 use clap::Parser;
-use nirion_lib::{
-    lock::LockedImages,
-    projects::{Projects, TargetSelector},
-};
-use nirion_oci_lib::client::AuthConfig;
-use std::path::Path;
+use nirion_lib::projects::TargetSelector;
 
-use crate::{docker::compose_target_cmd, ClapSelector};
+use crate::{
+    commands::NirionContext, docker::compose_target_cmd, ClapSelector,
+};
 
 /// View output from service containers
 #[derive(Parser, Debug, Clone)]
@@ -50,10 +47,7 @@ pub struct LogsArgs {
 
 pub async fn handle_logs(
     args: &LogsArgs,
-    projects: &Projects,
-    _locked_images: &LockedImages,
-    _lock_file: &Path,
-    _auth: &AuthConfig,
+    context: &NirionContext,
 ) -> anyhow::Result<()> {
     let mut cmd = vec!["logs".into()];
 
@@ -84,5 +78,5 @@ pub async fn handle_logs(
 
     let cmd_slices: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
 
-    compose_target_cmd(&args.target, projects, &cmd_slices).await
+    compose_target_cmd(&args.target, &context.projects, &cmd_slices).await
 }

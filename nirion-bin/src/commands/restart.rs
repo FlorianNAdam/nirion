@@ -1,11 +1,8 @@
 use anyhow::Result;
 use clap::Parser;
-use nirion_oci_lib::client::AuthConfig;
-use nirion_lib::lock::LockedImages;
-use nirion_lib::projects::Projects;
-use std::path::Path;
 use tokio::time::Duration;
 
+use crate::commands::NirionContext;
 use crate::docker::compose_target_cmd;
 use crate::progress::run_command_with_progress;
 use crate::{ClapSelector, TargetSelector};
@@ -48,15 +45,12 @@ pub struct RestartArgs {
 
 pub async fn handle_restart(
     args: &RestartArgs,
-    projects: &Projects,
-    _locked_images: &LockedImages,
-    _lock_file: &Path,
-    _auth: &AuthConfig,
+    context: &NirionContext,
 ) -> Result<()> {
     if !args.legacy && !matches!(args.target, TargetSelector::Service(_)) {
         run_command_with_progress(
             &args.target,
-            projects,
+            &context.projects,
             &["restart"],
             args.no_monitor,
             args.quiet,
@@ -65,7 +59,8 @@ pub async fn handle_restart(
         )
         .await?;
     } else {
-        compose_target_cmd(&args.target, projects, &["restart"]).await?;
+        compose_target_cmd(&args.target, &context.projects, &["restart"])
+            .await?;
     }
     Ok(())
 }

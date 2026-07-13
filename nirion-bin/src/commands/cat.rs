@@ -2,13 +2,10 @@ use anyhow::Result;
 use clap::Parser;
 use nirion_lib::{
     compose_file::{compose_to_string, full_compose, service_compose},
-    lock::LockedImages,
-    projects::{Projects, TargetSelector},
+    projects::TargetSelector,
 };
-use nirion_oci_lib::client::AuthConfig;
-use std::path::Path;
 
-use crate::ClapSelector;
+use crate::{commands::NirionContext, ClapSelector};
 
 /// Print the docker compose file
 #[derive(Parser, Debug, Clone)]
@@ -22,26 +19,20 @@ pub struct CatArgs {
     pub target: TargetSelector,
 }
 
-pub async fn handle_cat(
-    args: &CatArgs,
-    projects: &Projects,
-    _locked_images: &LockedImages,
-    _lock_file: &Path,
-    _auth: &AuthConfig,
-) -> Result<()> {
+pub async fn handle_cat(args: &CatArgs, context: &NirionContext) -> Result<()> {
     match &args.target {
         TargetSelector::All => {
-            for (project_name, project) in projects.iter() {
+            for (project_name, project) in context.projects.iter() {
                 println!("Project {}:", project_name);
                 print_compose(&full_compose(project)?)?;
             }
         }
         TargetSelector::Project(proj) => {
-            let project = &projects[&proj.name];
+            let project = &context.projects[&proj.name];
             print_compose(&full_compose(project)?)?;
         }
         TargetSelector::Service(img) => {
-            let project = &projects[&img.project];
+            let project = &context.projects[&img.project];
             print_compose(&service_compose(
                 &img.project,
                 project,

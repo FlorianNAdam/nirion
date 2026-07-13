@@ -2,9 +2,16 @@ use nirion_lib::lock::LockedImages;
 use nirion_lib::projects::Projects;
 use nirion_oci_lib::client::AuthConfig;
 use paste::paste;
-use std::path::Path;
+use std::path::PathBuf;
 
 use clap::Subcommand;
+
+pub struct NirionContext {
+    pub projects: Projects,
+    pub locked_images: LockedImages,
+    pub lock_file: PathBuf,
+    pub auth: AuthConfig,
+}
 
 macro_rules! define_commands {
     (
@@ -28,15 +35,12 @@ macro_rules! define_commands {
 
             pub async fn handle_command(
                 command: &Commands,
-                projects: &Projects,
-                locked_images: &LockedImages,
-                lock_file: &Path,
-                auth: &AuthConfig
+                context: &NirionContext
             ) -> anyhow::Result<()> {
                 match command {
                     $(
                         Commands::[<$modname:camel>] { args } =>
-                            [<handle_ $modname>](args, projects, locked_images, lock_file, auth).await?,
+                            [<handle_ $modname>](args, context).await?,
                     )*
                 }
                 Ok(())
