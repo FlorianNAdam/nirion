@@ -1,14 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use nirion_lib::{
-    lock::LockedImages,
-    patch::{patch_target, PatchTarget as LibPatchTarget},
-    projects::Projects,
-};
-use nirion_oci_lib::client::AuthConfig;
-use std::path::Path;
+use nirion_lib::patch::{patch_target, PatchTarget as LibPatchTarget};
 
-use crate::{ClapSelector, TargetSelector};
+use crate::{commands::NirionContext, ClapSelector, TargetSelector};
 
 /// Patch service files using mirage-patch
 #[derive(Parser, Debug, Clone)]
@@ -43,14 +37,11 @@ impl From<&PatchTarget> for LibPatchTarget {
 
 pub async fn handle_patch(
     args: &PatchArgs,
-    projects: &Projects,
-    _locked_images: &LockedImages,
-    _lock_file: &Path,
-    _auth: &AuthConfig,
+    context: &NirionContext,
 ) -> Result<()> {
     patch_target(
         &args.target,
-        projects,
+        &context.projects,
         &LibPatchTarget::from(&args.patch_target),
     )
     .await

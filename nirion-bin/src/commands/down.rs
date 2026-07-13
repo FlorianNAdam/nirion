@@ -1,11 +1,9 @@
 use anyhow::Result;
 use clap::Parser;
-use nirion_oci_lib::client::AuthConfig;
-use nirion_lib::lock::LockedImages;
-use nirion_lib::projects::{Projects, TargetSelector};
-use std::path::Path;
+use nirion_lib::projects::TargetSelector;
 use tokio::time::Duration;
 
+use crate::commands::NirionContext;
 use crate::docker::compose_target_cmd;
 use crate::progress::run_command_with_progress;
 use crate::ClapSelector;
@@ -44,15 +42,12 @@ pub struct DownArgs {
 
 pub async fn handle_down(
     args: &DownArgs,
-    projects: &Projects,
-    _locked_images: &LockedImages,
-    _lock_file: &Path,
-    _auth: &AuthConfig,
+    context: &NirionContext,
 ) -> Result<()> {
     if !args.legacy && !matches!(args.target, TargetSelector::Service(_)) {
         run_command_with_progress(
             &args.target,
-            projects,
+            &context.projects,
             &["down"],
             args.no_monitor,
             args.quiet,
@@ -61,7 +56,7 @@ pub async fn handle_down(
         )
         .await?;
     } else {
-        compose_target_cmd(&args.target, projects, &["down"]).await?;
+        compose_target_cmd(&args.target, &context.projects, &["down"]).await?;
     }
     Ok(())
 }

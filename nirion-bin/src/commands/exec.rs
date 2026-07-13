@@ -1,13 +1,7 @@
 use clap::{Parser, ValueHint};
-use nirion_lib::{
-    exec::{exec, ExecRequest},
-    lock::LockedImages,
-    projects::Projects,
-};
-use nirion_oci_lib::client::AuthConfig;
-use std::path::Path;
+use nirion_lib::exec::{exec, ExecRequest};
 
-use crate::{ClapSelector, ServiceSelector};
+use crate::{commands::NirionContext, ClapSelector, ServiceSelector};
 
 /// Execute a command in a running service container
 #[derive(Parser, Debug, Clone)]
@@ -54,13 +48,10 @@ pub struct ExecArgs {
 
 pub async fn handle_exec(
     args: &ExecArgs,
-    projects: &Projects,
-    _locked_images: &LockedImages,
-    _lock_file: &Path,
-    _auth: &AuthConfig,
+    context: &NirionContext,
 ) -> anyhow::Result<()> {
     exec(
-        projects,
+        &context.projects,
         &ExecRequest {
             target: args.target.clone(),
             detach: args.detach,

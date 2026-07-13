@@ -1,17 +1,14 @@
-use std::path::Path;
-
 use clap::Parser;
 use crossterm::style::Stylize;
 use futures::StreamExt;
 use nirion_lib::{
     events::LockUpdateEvent,
-    lock::{DiffEntry, LockedImages},
+    lock::DiffEntry,
     lock_update::update_images,
-    projects::{get_images, Projects, TargetSelector},
+    projects::{get_images, TargetSelector},
 };
-use nirion_oci_lib::client::AuthConfig;
 
-use crate::ClapSelector;
+use crate::{commands::NirionContext, ClapSelector};
 
 /// Create missing lock file entries
 #[derive(Parser, Debug, Clone)]
@@ -31,19 +28,16 @@ pub struct LockArgs {
 
 pub async fn handle_lock(
     args: &LockArgs,
-    projects: &Projects,
-    locked_images: &LockedImages,
-    lock_file: &Path,
-    auth: &AuthConfig,
+    context: &NirionContext,
 ) -> anyhow::Result<()> {
-    let mut images = get_images(&args.target, projects);
-    images.retain(|name, _| !locked_images.contains_key(name));
+    let mut images = get_images(&args.target, &context.projects);
+    images.retain(|name, _| !context.locked_images.contains_key(name));
 
     let mut operation = update_images(
-        auth.clone(),
+        context.auth.clone(),
         images,
-        locked_images.clone(),
-        lock_file.to_path_buf(),
+        context.locked_images.clone(),
+        context.lock_file.clone(),
         args.jobs,
     );
 

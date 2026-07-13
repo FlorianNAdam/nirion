@@ -1,9 +1,9 @@
 use clap::Parser;
-use nirion_lib::{lock::LockedImages, projects::Projects};
-use nirion_oci_lib::client::AuthConfig;
-use std::path::Path;
 
-use crate::{docker::compose_target_cmd, ClapSelector, TargetSelector};
+use crate::{
+    commands::NirionContext, docker::compose_target_cmd, ClapSelector,
+    TargetSelector,
+};
 
 /// Display the running processes of a service container
 #[derive(Parser, Debug, Clone)]
@@ -19,13 +19,10 @@ pub struct TopArgs {
 
 pub async fn handle_top(
     args: &TopArgs,
-    projects: &Projects,
-    _locked_images: &LockedImages,
-    _lock_file: &Path,
-    _auth: &AuthConfig,
+    context: &NirionContext,
 ) -> anyhow::Result<()> {
     // docker compose top has no flags: just ["top"]
     let cmd: Vec<&str> = vec!["top"];
 
-    compose_target_cmd(&args.target, projects, &cmd).await
+    compose_target_cmd(&args.target, &context.projects, &cmd).await
 }

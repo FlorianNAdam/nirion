@@ -3,15 +3,14 @@ use clap::Parser;
 use crossterm::style::Stylize;
 use nirion_lib::{
     docker::{query_project_status, Port, ServiceStatus},
-    lock::LockedImages,
     projects::Projects,
 };
-use nirion_oci_lib::client::AuthConfig;
 use nirion_tui_lib::table::print_table;
-use std::{collections::HashSet, path::Path};
+use std::collections::HashSet;
 
 use crate::{
-    docker::compose_target_cmd, ClapSelector, Project, TargetSelector,
+    commands::NirionContext, docker::compose_target_cmd, ClapSelector, Project,
+    TargetSelector,
 };
 
 //
@@ -70,17 +69,11 @@ pub struct PsArgs {
     pub status: Vec<String>,
 }
 
-pub async fn handle_ps(
-    args: &PsArgs,
-    projects: &Projects,
-    _locked_images: &LockedImages,
-    _lock_file: &Path,
-    _auth: &AuthConfig,
-) -> Result<()> {
+pub async fn handle_ps(args: &PsArgs, context: &NirionContext) -> Result<()> {
     if args.legacy {
-        legacy_ps(args, projects).await
+        legacy_ps(args, &context.projects).await
     } else {
-        fancy_ps(args, projects).await
+        fancy_ps(args, &context.projects).await
     }
 }
 
