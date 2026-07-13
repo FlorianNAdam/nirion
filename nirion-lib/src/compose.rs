@@ -13,7 +13,7 @@ use crate::{
 };
 
 #[cfg(test)]
-static TEST_DOCKER_BIN: std::sync::Mutex<Option<String>> =
+static TEST_DOCKER_CMD: std::sync::Mutex<Option<Vec<String>>> =
     std::sync::Mutex::new(None);
 
 pub fn compose_target(
@@ -238,8 +238,10 @@ pub fn run_docker_compose(
 
 fn docker_command() -> Command {
     #[cfg(test)]
-    if let Some(bin) = TEST_DOCKER_BIN.lock().unwrap().clone() {
-        return Command::new(bin);
+    if let Some(cmd) = TEST_DOCKER_CMD.lock().unwrap().clone() {
+        let mut command = Command::new(&cmd[0]);
+        command.args(&cmd[1..]);
+        return command;
     }
 
     Command::new("docker")
@@ -256,15 +258,21 @@ mod tests {
     struct DockerBinGuard;
 
     impl DockerBinGuard {
-        fn set(bin: String) -> Self {
-            *TEST_DOCKER_BIN.lock().unwrap() = Some(bin);
+        fn set_script(script: String) -> Self {
+            *TEST_DOCKER_CMD.lock().unwrap() =
+                Some(vec!["/bin/sh".to_string(), script]);
+            Self
+        }
+
+        fn set_command(command: String) -> Self {
+            *TEST_DOCKER_CMD.lock().unwrap() = Some(vec![command]);
             Self
         }
     }
 
     impl Drop for DockerBinGuard {
         fn drop(&mut self) {
-            *TEST_DOCKER_BIN.lock().unwrap() = None;
+            *TEST_DOCKER_CMD.lock().unwrap() = None;
         }
     }
 
@@ -378,7 +386,7 @@ exit {exit_code}
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
-        let _docker_bin_guard = DockerBinGuard::set(docker);
+        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
         let events = collect_events(run_docker_compose(vec![
             "ps".into(),
@@ -413,7 +421,7 @@ exit {exit_code}
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 42);
-        let _docker_bin_guard = DockerBinGuard::set(docker);
+        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
         let events =
             collect_events(run_docker_compose(vec!["up".into()])).await;
@@ -437,7 +445,7 @@ exit {exit_code}
         let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let missing_docker = dir.path().join("missing-docker");
-        let _docker_bin_guard = DockerBinGuard::set(
+        let _docker_bin_guard = DockerBinGuard::set_command(
             missing_docker
                 .to_string_lossy()
                 .to_string(),
@@ -458,7 +466,7 @@ exit {exit_code}
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
-        let _docker_bin_guard = DockerBinGuard::set(docker);
+        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
         let events = collect_events(compose_cmd(
             "compose.yml".into(),
@@ -480,7 +488,7 @@ exit {exit_code}
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
-        let _docker_bin_guard = DockerBinGuard::set(docker);
+        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
         let events = collect_compose_events(compose_target(
             TargetSelector::Project(crate::projects::ProjectSelector {
@@ -511,7 +519,7 @@ exit {exit_code}
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
-        let _docker_bin_guard = DockerBinGuard::set(docker);
+        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
         let events = collect_compose_events(compose_target(
             TargetSelector::Service(crate::projects::ServiceSelector {
@@ -536,7 +544,7 @@ exit {exit_code}
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 9);
-        let _docker_bin_guard = DockerBinGuard::set(docker);
+        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
         let events = collect_compose_events(compose_target(
             TargetSelector::Service(crate::projects::ServiceSelector {
@@ -564,7 +572,7 @@ exit {exit_code}
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
-        let _docker_bin_guard = DockerBinGuard::set(docker);
+        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
         let events = collect_compose_events(compose_target(
             TargetSelector::All,
@@ -590,7 +598,7 @@ exit {exit_code}
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 2);
-        let _docker_bin_guard = DockerBinGuard::set(docker);
+        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
         let events = collect_compose_events(compose_target(
             TargetSelector::Project(crate::projects::ProjectSelector {
@@ -617,7 +625,7 @@ exit {exit_code}
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 5);
-        let _docker_bin_guard = DockerBinGuard::set(docker);
+        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
         let events = collect_compose_events(compose_target(
             TargetSelector::All,

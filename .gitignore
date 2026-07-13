@@ -7,3 +7,6 @@
 # secret
 .envrc.private
 auth.json
+
+# coverage
+coverage-*.info

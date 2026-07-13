@@ -4,6 +4,10 @@ use anyhow::Context;
 
 use crate::projects::{Projects, ServiceSelector};
 
+#[cfg(test)]
+static TEST_DOCKER_CMD: std::sync::Mutex<Option<Vec<String>>> =
+    std::sync::Mutex::new(None);
+
 #[derive(Debug, Clone)]
 pub struct ExecRequest {
     pub target: ServiceSelector,
@@ -22,7 +26,7 @@ pub fn exec(projects: &Projects, request: &ExecRequest) -> anyhow::Result<()> {
     let service_name = &request.target.service;
     let cmd_args = build_exec_args(projects, request)?;
 
-    let status = ProcCommand::new("docker")
+    let status = docker_command()
         .arg("compose")
         .args(&cmd_args)
         .status()
@@ -93,9 +97,71 @@ fn build_exec_args(
     Ok(cmd_args)
 }
 
+fn docker_command() -> ProcCommand {
+    #[cfg(test)]
+    if let Some(cmd) = TEST_DOCKER_CMD.lock().unwrap().clone() {
+        let mut command = ProcCommand::new(&cmd[0]);
+        command.args(&cmd[1..]);
+        return command;
+    }
+
+    ProcCommand::new("docker")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+
+    static DOCKER_BIN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct DockerBinGuard;
+
+    impl DockerBinGuard {
+        fn set_script(script: String) -> Self {
+            *TEST_DOCKER_CMD.lock().unwrap() =
+                Some(vec!["/bin/sh".to_string(), script]);
+            Self
+        }
+
+        fn set_command(command: String) -> Self {
+            *TEST_DOCKER_CMD.lock().unwrap() = Some(vec![command]);
+            Self
+        }
+    }
+
+    impl Drop for DockerBinGuard {
+        fn drop(&mut self) {
+            *TEST_DOCKER_CMD.lock().unwrap() = None;
+        }
+    }
+
+    fn write_fake_docker(
+        dir: &Path,
+        args_file: &Path,
+        exit_code: i32,
+    ) -> String {
+        let docker = dir.join("docker");
+        fs::write(
+            &docker,
+            format!(
+                r#"#!/bin/sh
+printf '%s\n' "$@" > '{}'
+exit {exit_code}
+"#,
+                args_file.display()
+            ),
+        )
+        .unwrap();
+
+        let mut permissions = fs::metadata(&docker)
+            .unwrap()
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker, permissions).unwrap();
+
+        docker.to_string_lossy().to_string()
+    }
 
     fn projects() -> Projects {
         serde_json::from_value(serde_json::json!({
@@ -203,6 +269,57 @@ mod tests {
                 "web",
                 "printenv"
             ]
+        );
+    }
+
+    #[test]
+    fn exec_runs_docker_compose_exec() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker(dir.path(), &args_file, 0);
+        let _docker_bin_guard = DockerBinGuard::set_script(docker);
+
+        exec(&projects(), &request(vec!["true"])).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(args_file).unwrap(),
+            "compose\n--file\ncompose.yml\n--project-name\nmyapp\nexec\nweb\ntrue\n"
+        );
+    }
+
+    #[test]
+    fn exec_reports_failed_status() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker(dir.path(), &args_file, 7);
+        let _docker_bin_guard = DockerBinGuard::set_script(docker);
+
+        let err = exec(&projects(), &request(vec!["false"])).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("Command failed in myapp.web with status")
+        );
+    }
+
+    #[test]
+    fn exec_reports_spawn_failure() {
+        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let missing_docker = dir.path().join("missing-docker");
+        let _docker_bin_guard = DockerBinGuard::set_command(
+            missing_docker
+                .to_string_lossy()
+                .to_string(),
+        );
+
+        let err = exec(&projects(), &request(vec!["true"])).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("failed to execute docker compose exec")
         );
     }
 }

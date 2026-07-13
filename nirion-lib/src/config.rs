@@ -9,6 +9,10 @@ use tokio::process::Command;
 
 use crate::{lock::LockedImages, projects::Projects};
 
+#[cfg(test)]
+static TEST_NIX_CMD: std::sync::Mutex<Option<Vec<String>>> =
+    std::sync::Mutex::new(None);
+
 pub fn load_locked_images(lock_file: &Path) -> anyhow::Result<LockedImages> {
     let locked_images = if lock_file.exists() {
         let lock_file_data = fs::read_to_string(lock_file)
@@ -65,6 +69,64 @@ pub fn nix_config_target(target: &str) -> String {
 mod tests {
     use super::*;
     use nirion_oci_lib::auth::RegistryAuth;
+    use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+
+    static NIX_BIN_LOCK: tokio::sync::Mutex<()> =
+        tokio::sync::Mutex::const_new(());
+
+    struct NixBinGuard;
+
+    impl NixBinGuard {
+        fn set_script(script: String) -> Self {
+            *TEST_NIX_CMD.lock().unwrap() =
+                Some(vec!["/bin/sh".to_string(), script]);
+            Self
+        }
+
+        fn set_command(command: String) -> Self {
+            *TEST_NIX_CMD.lock().unwrap() = Some(vec![command]);
+            Self
+        }
+    }
+
+    impl Drop for NixBinGuard {
+        fn drop(&mut self) {
+            *TEST_NIX_CMD.lock().unwrap() = None;
+        }
+    }
+
+    fn write_fake_nix(
+        dir: &Path,
+        args_file: &Path,
+        exit_code: i32,
+        stdout: &str,
+        stderr: &str,
+    ) -> String {
+        let nix = dir.join("nix");
+        fs::write(
+            &nix,
+            format!(
+                r#"#!/bin/sh
+printf '%s\n' "$@" > '{}'
+printf '%s' '{}'
+printf '%s' '{}' >&2
+exit {exit_code}
+"#,
+                args_file.display(),
+                stdout,
+                stderr
+            ),
+        )
+        .unwrap();
+
+        let mut permissions = fs::metadata(&nix)
+            .unwrap()
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&nix, permissions).unwrap();
+
+        nix.to_string_lossy().to_string()
+    }
 
     #[test]
     fn nix_config_target_basic() {
@@ -202,12 +264,75 @@ mod tests {
         std::fs::write(&path, "not json").unwrap();
         assert!(load_auth_config(Some(&path)).is_err());
     }
+
+    #[tokio::test]
+    async fn build_nix_project_file_returns_trimmed_output_path() {
+        let _nix_bin_lock = NIX_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let nix = write_fake_nix(
+            dir.path(),
+            &args_file,
+            0,
+            "/nix/store/projects-file\n",
+            "",
+        );
+        let _nix_bin_guard = NixBinGuard::set_script(nix);
+
+        let result = build_nix_project_file(".#nixosConfigurations.host")
+            .await
+            .unwrap();
+
+        assert_eq!(result, PathBuf::from("/nix/store/projects-file"));
+        assert_eq!(
+            fs::read_to_string(args_file).unwrap(),
+            "build\n.#nixosConfigurations.host\n--no-link\n--print-out-paths\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_nix_project_file_reports_failed_build_stderr() {
+        let _nix_bin_lock = NIX_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let nix =
+            write_fake_nix(dir.path(), &args_file, 1, "", "broken flake\n");
+        let _nix_bin_guard = NixBinGuard::set_script(nix);
+
+        let err = build_nix_project_file(".#target")
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("nix build failed with status")
+        );
+        assert!(err.to_string().contains("broken flake"));
+    }
+
+    #[tokio::test]
+    async fn build_nix_project_file_reports_spawn_failure() {
+        let _nix_bin_lock = NIX_BIN_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let missing_nix = dir.path().join("missing-nix");
+        let _nix_bin_guard = NixBinGuard::set_command(
+            missing_nix
+                .to_string_lossy()
+                .to_string(),
+        );
+
+        let err = build_nix_project_file(".#target")
+            .await
+            .unwrap_err();
+
+        assert!(!err.to_string().is_empty());
+    }
 }
 
 pub async fn build_nix_project_file(
     nix_eval_target: &str,
 ) -> anyhow::Result<PathBuf> {
-    let output = Command::new("nix")
+    let output = nix_command()
         .args(["build", nix_eval_target, "--no-link", "--print-out-paths"])
         .output()
         .await?;
@@ -227,4 +352,15 @@ pub async fn build_nix_project_file(
         .to_string();
 
     Ok(PathBuf::from(raw_path))
+}
+
+fn nix_command() -> Command {
+    #[cfg(test)]
+    if let Some(cmd) = TEST_NIX_CMD.lock().unwrap().clone() {
+        let mut command = Command::new(&cmd[0]);
+        command.args(&cmd[1..]);
+        return command;
+    }
+
+    Command::new("nix")
 }
