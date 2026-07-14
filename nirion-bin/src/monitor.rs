@@ -7,13 +7,14 @@ use crossterm::{
 };
 use futures::StreamExt;
 use nirion_lib::{
-    docker::{ProjectStatus, status_stream},
+    docker::{ProjectStatus, status_stream_with_docker},
     projects::{Projects, selected_project_names},
 };
 use nirion_tui_lib::status::{Status, StatusEntry};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::io::stdout;
+use std::path::Path;
 use tokio::time::Duration;
 
 use crate::status_display::{project_state_icon, project_status_segments};
@@ -78,14 +79,19 @@ pub async fn create_status(
 }
 
 pub async fn monitor(
+    docker_binary: &Path,
     target: &TargetSelector,
     projects: &Projects,
     refresh_interval: Duration,
 ) -> anyhow::Result<()> {
     let selected = selected_project_names(target, projects);
     let mut statuses = BTreeMap::new();
-    let mut stream =
-        status_stream(target.clone(), projects.clone(), refresh_interval);
+    let mut stream = status_stream_with_docker(
+        docker_binary.to_path_buf(),
+        target.clone(),
+        projects.clone(),
+        refresh_interval,
+    );
     let _cursor = CursorGuard::hide()?;
 
     render_status(&statuses, &selected, projects, true).await?;

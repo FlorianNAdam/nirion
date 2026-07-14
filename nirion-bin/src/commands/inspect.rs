@@ -2,7 +2,8 @@ use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use nirion_lib::{
     inspect::{
-        inspect_project, inspect_service, InspectTarget as LibInspectTarget,
+        inspect_project_with_docker, inspect_service_with_docker,
+        InspectTarget as LibInspectTarget,
     },
     projects::{ProjectSelector, TargetSelector},
 };
@@ -60,7 +61,8 @@ pub async fn handle_inspect(
                 let project_selector = ProjectSelector {
                     name: project_name.to_string(),
                 };
-                for output in inspect_project(
+                for output in inspect_project_with_docker(
+                    context.docker_binary.clone(),
                     &project_selector,
                     &inspect_target,
                     &context.projects,
@@ -75,7 +77,8 @@ pub async fn handle_inspect(
             }
         }
         TargetSelector::Project(proj) => {
-            for output in inspect_project(
+            for output in inspect_project_with_docker(
+                context.docker_binary.clone(),
                 proj,
                 &inspect_target,
                 &context.projects,
@@ -89,7 +92,8 @@ pub async fn handle_inspect(
             }
         }
         TargetSelector::Service(img) => {
-            let output = inspect_service(
+            let output = inspect_service_with_docker(
+                &context.docker_binary,
                 img,
                 &inspect_target,
                 &context.projects,

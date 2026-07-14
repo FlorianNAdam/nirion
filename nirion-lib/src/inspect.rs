@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
+use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
 use crate::{
-    docker::query_project_status,
+    docker::query_project_status_with_docker,
     lock::LockedImages,
     projects::{ProjectSelector, Projects, ServiceSelector},
 };
@@ -26,6 +27,27 @@ pub async fn inspect_project(
     format: &str,
     raw: bool,
 ) -> anyhow::Result<Vec<String>> {
+    inspect_project_with_docker(
+        PathBuf::from("docker"),
+        target,
+        inspect_target,
+        projects,
+        locked_images,
+        format,
+        raw,
+    )
+    .await
+}
+
+pub async fn inspect_project_with_docker(
+    docker_binary: PathBuf,
+    target: &ProjectSelector,
+    inspect_target: &InspectTarget,
+    projects: &Projects,
+    locked_images: &LockedImages,
+    format: &str,
+    raw: bool,
+) -> anyhow::Result<Vec<String>> {
     let mut failures = Vec::new();
     let mut outputs = Vec::new();
 
@@ -34,7 +56,8 @@ pub async fn inspect_project(
             project: target.name.to_string(),
             service: service.to_string(),
         };
-        match inspect_service(
+        match inspect_service_with_docker(
+            &docker_binary,
             &service_selector,
             inspect_target,
             projects,
@@ -70,18 +93,49 @@ pub async fn inspect_service(
     format: &str,
     raw: bool,
 ) -> anyhow::Result<String> {
+    inspect_service_with_docker(
+        Path::new("docker"),
+        target,
+        inspect_target,
+        projects,
+        locked_images,
+        format,
+        raw,
+    )
+    .await
+}
+
+pub async fn inspect_service_with_docker(
+    docker_binary: &Path,
+    target: &ServiceSelector,
+    inspect_target: &InspectTarget,
+    projects: &Projects,
+    locked_images: &LockedImages,
+    format: &str,
+    raw: bool,
+) -> anyhow::Result<String> {
     let output = match inspect_target {
         InspectTarget::Image => {
-            inspect_image(target, projects, locked_images, format, raw).await?
+            inspect_image(
+                docker_binary,
+                target,
+                projects,
+                locked_images,
+                format,
+                raw,
+            )
+            .await?
         }
         InspectTarget::Container => {
-            inspect_container(target, projects, format, raw).await?
+            inspect_container(docker_binary, target, projects, format, raw)
+                .await?
         }
     };
     Ok(output)
 }
 
 async fn inspect_image(
+    docker_binary: &Path,
     target: &ServiceSelector,
     projects: &Projects,
     locked_images: &LockedImages,
@@ -109,7 +163,7 @@ async fn inspect_image(
         base_image.to_string()
     };
 
-    let output = docker_command()
+    let output = docker_command(docker_binary)
         .arg("image")
         .arg("inspect")
         .arg("--format")
@@ -139,6 +193,7 @@ async fn inspect_image(
 }
 
 async fn inspect_container(
+    docker_binary: &Path,
     target: &ServiceSelector,
     projects: &Projects,
     format: &str,
@@ -146,8 +201,12 @@ async fn inspect_container(
 ) -> Result<String> {
     let project = &projects.get(&target.project).unwrap();
 
-    let project_status =
-        query_project_status(&project.docker_compose, &project.name).await?;
+    let project_status = query_project_status_with_docker(
+        docker_binary,
+        &project.docker_compose,
+        &project.name,
+    )
+    .await?;
 
     let service_status = project_status
         .services
@@ -156,7 +215,7 @@ async fn inspect_container(
             anyhow::anyhow!("Service {} missing from status", &target.service)
         })?;
 
-    let output = docker_command()
+    let output = docker_command(docker_binary)
         .arg("inspect")
         .arg("--format")
         .arg(format)
@@ -197,7 +256,7 @@ fn pretty_json(string: &str) -> String {
     }
 }
 
-fn docker_command() -> Command {
+fn docker_command(docker_binary: &Path) -> Command {
     #[cfg(test)]
     if let Some(cmd) = TEST_DOCKER_CMD.lock().unwrap().clone() {
         let mut command = Command::new(&cmd[0]);
@@ -205,7 +264,7 @@ fn docker_command() -> Command {
         return command;
     }
 
-    Command::new("docker")
+    Command::new(docker_binary)
 }
 
 #[cfg(test)]
@@ -422,6 +481,7 @@ exit {inspect_exit_code}
         let _docker_bin_guard = DockerBinGuard::set(docker);
 
         let output = inspect_image(
+            Path::new("docker"),
             &target("web"),
             &projects(),
             &LockedImages::default(),
@@ -462,6 +522,7 @@ exit {inspect_exit_code}
         );
 
         let output = inspect_image(
+            Path::new("docker"),
             &target("web"),
             &projects(),
             &locked_images,
@@ -495,6 +556,7 @@ exit {inspect_exit_code}
         let _docker_bin_guard = DockerBinGuard::set(docker);
 
         let err = inspect_image(
+            Path::new("docker"),
             &target("worker"),
             &projects(),
             &LockedImages::default(),
@@ -517,6 +579,7 @@ exit {inspect_exit_code}
         let _docker_bin_guard = DockerBinGuard::set(docker);
 
         let err = inspect_image(
+            Path::new("docker"),
             &target("missing"),
             &projects(),
             &LockedImages::default(),
@@ -545,6 +608,7 @@ exit {inspect_exit_code}
         let _docker_bin_guard = DockerBinGuard::set(docker);
 
         let err = inspect_image(
+            Path::new("docker"),
             &target("web"),
             &projects(),
             &LockedImages::default(),
@@ -602,10 +666,15 @@ exit {inspect_exit_code}
         );
         let _docker_bin_guard = DockerBinGuard::set(docker);
 
-        let output =
-            inspect_container(&target("web"), &projects(), "{{json .}}", false)
-                .await
-                .unwrap();
+        let output = inspect_container(
+            Path::new("docker"),
+            &target("web"),
+            &projects(),
+            "{{json .}}",
+            false,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             output,
@@ -664,10 +733,15 @@ exit {inspect_exit_code}
         );
         let _docker_bin_guard = DockerBinGuard::set(docker);
 
-        let err =
-            inspect_container(&target("web"), &projects(), "{{json .}}", true)
-                .await
-                .unwrap_err();
+        let err = inspect_container(
+            Path::new("docker"),
+            &target("web"),
+            &projects(),
+            "{{json .}}",
+            true,
+        )
+        .await
+        .unwrap_err();
 
         assert_eq!(err.to_string(), "Service web missing from status");
     }
@@ -687,10 +761,15 @@ exit {inspect_exit_code}
         );
         let _docker_bin_guard = DockerBinGuard::set(docker);
 
-        let err =
-            inspect_container(&target("web"), &projects(), "{{json .}}", true)
-                .await
-                .unwrap_err();
+        let err = inspect_container(
+            Path::new("docker"),
+            &target("web"),
+            &projects(),
+            "{{json .}}",
+            true,
+        )
+        .await
+        .unwrap_err();
 
         let err = err.to_string();
         assert!(err.contains("docker inspect failed with status"));

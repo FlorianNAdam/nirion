@@ -11,8 +11,9 @@ use nirion_lib::projects::{
     Project, Projects, ServiceSelector, TargetSelector, parse_selector,
     parse_service_selector,
 };
+use nirion_oci_lib::client::NirionOciClient;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 mod commands;
 mod docker;
@@ -290,12 +291,18 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse_from(args);
 
     let auth = cli.get_auth().await?;
+    let oci_client = Arc::new(
+        NirionOciClient::builder()
+            .auth(auth)
+            .build(),
+    );
 
     let context = NirionContext {
         projects,
         locked_images,
         lock_file,
-        auth,
+        oci_client,
+        docker_binary: PathBuf::from("docker"),
     };
 
     handle_command(&cli.command, &context).await?;

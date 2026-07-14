@@ -4,13 +4,16 @@ use nirion_lib::{
     events::{ComposeEvent, ProcessEvent},
     projects::{Projects, TargetSelector},
 };
+use std::path::Path;
 
 pub async fn compose_target_cmd(
+    docker_binary: &Path,
     target: &TargetSelector,
     projects: &Projects,
     args: &[&str],
 ) -> anyhow::Result<()> {
-    let mut stream = nirion_lib::compose::compose_target(
+    let mut stream = nirion_lib::compose::compose_target_with_docker(
+        docker_binary.to_path_buf(),
         target.clone(),
         projects.clone(),
         args.iter()

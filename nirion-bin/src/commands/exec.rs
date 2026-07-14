@@ -1,5 +1,5 @@
 use clap::{Parser, ValueHint};
-use nirion_lib::exec::{exec, ExecRequest};
+use nirion_lib::exec::{exec_with_docker, ExecRequest};
 
 use crate::{commands::NirionContext, ClapSelector, ServiceSelector};
 
@@ -50,7 +50,8 @@ pub async fn handle_exec(
     args: &ExecArgs,
     context: &NirionContext,
 ) -> anyhow::Result<()> {
-    exec(
+    exec_with_docker(
+        &context.docker_binary,
         &context.projects,
         &ExecRequest {
             target: args.target.clone(),
