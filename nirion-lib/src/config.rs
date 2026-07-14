@@ -36,7 +36,7 @@ pub fn load_projects(project_file: &Path) -> anyhow::Result<Projects> {
 }
 
 pub fn load_auth_config(
-    auth_file: Option<&Path>,
+    auth_file: Option<&Path>
 ) -> anyhow::Result<AuthConfig> {
     let Some(auth_file) = auth_file else {
         return Ok(AuthConfig::default());
@@ -330,7 +330,7 @@ exit {exit_code}
 }
 
 pub async fn build_nix_project_file(
-    nix_eval_target: &str,
+    nix_eval_target: &str
 ) -> anyhow::Result<PathBuf> {
     let output = nix_command()
         .args(["build", nix_eval_target, "--no-link", "--print-out-paths"])

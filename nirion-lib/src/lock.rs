@@ -44,7 +44,10 @@ impl<'de> Deserialize<'de> for LockedImages {
 }
 
 impl Serialize for LockedImages {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(
+        &self,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
@@ -59,15 +62,25 @@ impl LockedImages {
             .map(|(k, v)| (k.as_str(), v))
     }
 
-    pub fn insert(&mut self, key: String, image: VersionedImage) {
+    pub fn insert(
+        &mut self,
+        key: String,
+        image: VersionedImage,
+    ) {
         self.locked_images.insert(key, image);
     }
 
-    pub fn contains_key(&self, key: &str) -> bool {
+    pub fn contains_key(
+        &self,
+        key: &str,
+    ) -> bool {
         self.locked_images.contains_key(key)
     }
 
-    pub fn get(&self, key: &str) -> Option<&VersionedImage> {
+    pub fn get(
+        &self,
+        key: &str,
+    ) -> Option<&VersionedImage> {
         self.locked_images.get(key)
     }
 
@@ -78,7 +91,10 @@ impl LockedImages {
         self.locked_images.extend(iter);
     }
 
-    pub fn diff(&self, other: &LockedImages) -> Vec<DiffEntry> {
+    pub fn diff(
+        &self,
+        other: &LockedImages,
+    ) -> Vec<DiffEntry> {
         let mut diffs = Vec::new();
 
         for (service, new_image) in &other.locked_images {
@@ -137,7 +153,11 @@ pub enum DiffEntry {
 mod tests {
     use super::*;
 
-    fn img(image: &str, version: &str, digest: &str) -> VersionedImage {
+    fn img(
+        image: &str,
+        version: &str,
+        digest: &str,
+    ) -> VersionedImage {
         VersionedImage {
             image: image.to_string(),
             version: Some(version.to_string()),

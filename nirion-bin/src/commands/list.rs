@@ -1,6 +1,7 @@
 use clap::Parser;
+use nirion_lib::context::NirionContext;
 
-use crate::{commands::NirionContext, ClapSelector, TargetSelector};
+use crate::{ClapSelector, TargetSelector};
 
 /// List projects or services
 #[derive(Parser, Debug, Clone)]

@@ -1,14 +1,14 @@
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use nirion_lib::{
+    context::NirionContext,
     inspect::{
-        inspect_project_with_docker, inspect_service_with_docker,
-        InspectTarget as LibInspectTarget,
+        inspect_project, inspect_service, InspectTarget as LibInspectTarget,
     },
     projects::{ProjectSelector, TargetSelector},
 };
 
-use crate::{commands::NirionContext, ClapSelector};
+use crate::ClapSelector;
 
 /// Patch service files using mirage-patch
 #[derive(Parser, Debug, Clone)]
@@ -61,12 +61,10 @@ pub async fn handle_inspect(
                 let project_selector = ProjectSelector {
                     name: project_name.to_string(),
                 };
-                for output in inspect_project_with_docker(
-                    context.docker_command.clone(),
+                for output in inspect_project(
+                    context,
                     &project_selector,
                     &inspect_target,
-                    &context.projects,
-                    &context.locked_images,
                     &args.format,
                     args.raw,
                 )
@@ -77,12 +75,10 @@ pub async fn handle_inspect(
             }
         }
         TargetSelector::Project(proj) => {
-            for output in inspect_project_with_docker(
-                context.docker_command.clone(),
+            for output in inspect_project(
+                context,
                 proj,
                 &inspect_target,
-                &context.projects,
-                &context.locked_images,
                 &args.format,
                 args.raw,
             )
@@ -92,12 +88,10 @@ pub async fn handle_inspect(
             }
         }
         TargetSelector::Service(img) => {
-            let output = inspect_service_with_docker(
-                &context.docker_command,
+            let output = inspect_service(
+                context,
                 img,
                 &inspect_target,
-                &context.projects,
-                &context.locked_images,
                 &args.format,
                 args.raw,
             )

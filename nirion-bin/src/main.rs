@@ -1,4 +1,4 @@
-use crate::commands::{Commands, NirionContext, handle_command};
+use crate::commands::{Commands, handle_command};
 use clap::{CommandFactory, Parser};
 use clap_complete::{ArgValueCompleter, CompletionCandidate};
 use crossterm::style::Stylize;
@@ -6,10 +6,11 @@ use nirion_lib::config::{
     build_nix_project_file, load_auth_config, load_locked_images,
     load_projects, nix_config_target,
 };
+use nirion_lib::context::NirionContext;
 use nirion_lib::docker::DockerCommand;
 use nirion_lib::lock::LockedImages;
 use nirion_lib::projects::{
-    Project, Projects, ServiceSelector, TargetSelector, parse_selector,
+    Projects, ServiceSelector, TargetSelector, parse_selector,
     parse_service_selector,
 };
 use nirion_oci_lib::client::NirionOciClient;
@@ -49,7 +50,7 @@ impl ClapSelector for TargetSelector {
 }
 
 pub fn target_selector_completer(
-    current: &std::ffi::OsStr,
+    current: &std::ffi::OsStr
 ) -> Vec<CompletionCandidate> {
     let core_cli = CoreCli::parse();
 
@@ -111,7 +112,7 @@ impl ClapSelector for ServiceSelector {
 }
 
 pub fn service_selector_completer(
-    current: &std::ffi::OsStr,
+    current: &std::ffi::OsStr
 ) -> Vec<CompletionCandidate> {
     let core_cli = CoreCli::parse();
 
@@ -262,7 +263,7 @@ struct Cli {
 
 impl Cli {
     async fn get_auth(
-        &self,
+        &self
     ) -> anyhow::Result<nirion_oci_lib::client::AuthConfig> {
         load_auth_config(self.auth_file.as_deref())
     }

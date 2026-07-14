@@ -153,7 +153,11 @@ mod tests {
         }
     }
 
-    fn write_fake_sudo(dir: &Path, args_file: &Path, exit_code: i32) -> String {
+    fn write_fake_sudo(
+        dir: &Path,
+        args_file: &Path,
+        exit_code: i32,
+    ) -> String {
         let sudo = dir.join("sudo");
         let tmp = dir.join("sudo.tmp");
         let mut file = fs::File::create(&tmp).unwrap();

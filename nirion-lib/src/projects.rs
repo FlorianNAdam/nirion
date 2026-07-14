@@ -23,7 +23,10 @@ impl<'de> Deserialize<'de> for Projects {
 }
 
 impl Serialize for Projects {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(
+        &self,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
@@ -38,11 +41,17 @@ impl Projects {
             .map(|(s, p)| (s.as_str(), p))
     }
 
-    pub fn contains_key(&self, key: &str) -> bool {
+    pub fn contains_key(
+        &self,
+        key: &str,
+    ) -> bool {
         self.projects.contains_key(key)
     }
 
-    pub fn get(&self, key: &str) -> Option<&Project> {
+    pub fn get(
+        &self,
+        key: &str,
+    ) -> Option<&Project> {
         self.projects.get(key)
     }
 }
@@ -50,7 +59,10 @@ impl Projects {
 impl Index<&str> for Projects {
     type Output = Project;
 
-    fn index(&self, index: &str) -> &Self::Output {
+    fn index(
+        &self,
+        index: &str,
+    ) -> &Self::Output {
         &self.projects[index]
     }
 }
@@ -77,7 +89,10 @@ pub enum TargetSelector {
 pub struct ProjectName(pub String);
 
 impl Display for ProjectName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
         Display::fmt(&self.0, f)
     }
 }

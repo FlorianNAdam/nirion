@@ -73,7 +73,10 @@ fn render_status_line(
     format!("{prefix} │ {bar} │ {suffix}")
 }
 
-fn render_status_bar(segments: Vec<Color>, width: usize) -> String {
+fn render_status_bar(
+    segments: Vec<Color>,
+    width: usize,
+) -> String {
     if segments.len() == 0 {
         return " ".repeat(width);
     }
@@ -94,7 +97,11 @@ fn render_status_bar(segments: Vec<Color>, width: usize) -> String {
     out
 }
 
-fn optimal_sublist_length(width: usize, n: usize, i: usize) -> usize {
+fn optimal_sublist_length(
+    width: usize,
+    n: usize,
+    i: usize,
+) -> usize {
     if n == 0 {
         return 0;
     }

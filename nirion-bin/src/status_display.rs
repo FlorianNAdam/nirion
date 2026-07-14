@@ -69,7 +69,10 @@ mod tests {
     use console::strip_ansi_codes;
     use std::collections::BTreeMap;
 
-    fn service_status(service: &str, state: ServiceState) -> ServiceStatus {
+    fn service_status(
+        service: &str,
+        state: ServiceState,
+    ) -> ServiceStatus {
         ServiceStatus {
             id: format!("{service}-id"),
             service: service.to_string(),

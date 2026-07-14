@@ -10,6 +10,7 @@ use futures::{
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
+use crate::context::NirionContext;
 use crate::projects::{
     Project, ProjectName, Projects, TargetSelector, selected_project_names,
 };
@@ -61,18 +62,19 @@ impl Default for DockerCommand {
 }
 
 pub async fn query_project_status(
-    compose_file: &str,
-    project_name: &ProjectName,
+    context: &NirionContext,
+    project_name: &str,
 ) -> anyhow::Result<ProjectStatus> {
-    query_project_status_with_docker(
-        &DockerCommand::default(),
-        compose_file,
-        project_name,
+    let project = &context.projects[project_name];
+    query_project_status_for_command(
+        &context.docker_command,
+        &project.docker_compose,
+        &project.name,
     )
     .await
 }
 
-pub async fn query_project_status_with_docker(
+async fn query_project_status_for_command(
     docker_command: &DockerCommand,
     compose_file: &str,
     project_name: &ProjectName,
@@ -114,19 +116,19 @@ pub struct ProjectStatusEvent {
 }
 
 pub fn status_stream(
+    context: &NirionContext,
     target: TargetSelector,
-    projects: Projects,
     refresh_interval: Duration,
 ) -> BoxStream<'static, anyhow::Result<ProjectStatusEvent>> {
-    status_stream_with_docker(
-        DockerCommand::default(),
+    status_stream_for_command(
+        context.docker_command.clone(),
         target,
-        projects,
+        context.projects.clone(),
         refresh_interval,
     )
 }
 
-pub fn status_stream_with_docker(
+fn status_stream_for_command(
     docker_command: DockerCommand,
     target: TargetSelector,
     projects: Projects,
@@ -137,7 +139,7 @@ pub fn status_stream_with_docker(
         .into_iter()
         .filter_map(|name| {
             let project = projects.get(&name)?.clone();
-            Some(project_status_stream_with_docker(
+            Some(project_status_stream_for_command(
                 docker_command.clone(),
                 name,
                 project,
@@ -149,20 +151,7 @@ pub fn status_stream_with_docker(
     select_all(streams).boxed()
 }
 
-pub fn project_status_stream(
-    name: String,
-    project: Project,
-    refresh_interval: Duration,
-) -> BoxStream<'static, anyhow::Result<ProjectStatusEvent>> {
-    project_status_stream_with_docker(
-        DockerCommand::default(),
-        name,
-        project,
-        refresh_interval,
-    )
-}
-
-pub fn project_status_stream_with_docker(
+fn project_status_stream_for_command(
     docker_command: DockerCommand,
     name: String,
     project: Project,
@@ -174,7 +163,7 @@ pub fn project_status_stream_with_docker(
         let mut first_poll = true;
 
         loop {
-            match query_project_status_with_docker(
+            match query_project_status_for_command(
                 &docker_command,
                 &project.docker_compose,
                 &project.name,

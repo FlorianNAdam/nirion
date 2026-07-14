@@ -7,7 +7,8 @@ use crossterm::{
 };
 use futures::StreamExt;
 use nirion_lib::{
-    docker::{DockerCommand, ProjectStatus, status_stream_with_docker},
+    context::NirionContext,
+    docker::{ProjectStatus, status_stream},
     projects::{Projects, selected_project_names},
 };
 use nirion_tui_lib::status::{Status, StatusEntry};
@@ -78,22 +79,16 @@ pub async fn create_status(
 }
 
 pub async fn monitor(
-    docker_command: &DockerCommand,
+    context: &NirionContext,
     target: &TargetSelector,
-    projects: &Projects,
     refresh_interval: Duration,
 ) -> anyhow::Result<()> {
-    let selected = selected_project_names(target, projects);
+    let selected = selected_project_names(target, &context.projects);
     let mut statuses = BTreeMap::new();
-    let mut stream = status_stream_with_docker(
-        docker_command.clone(),
-        target.clone(),
-        projects.clone(),
-        refresh_interval,
-    );
+    let mut stream = status_stream(context, target.clone(), refresh_interval);
     let _cursor = CursorGuard::hide()?;
 
-    render_status(&statuses, &selected, projects, true).await?;
+    render_status(&statuses, &selected, &context.projects, true).await?;
 
     loop {
         tokio::select! {
@@ -104,7 +99,7 @@ pub async fn monitor(
                 };
                 let event = event?;
                 statuses.insert(event.project, event.status);
-                render_status(&statuses, &selected, projects, true).await?;
+                render_status(&statuses, &selected, &context.projects, true).await?;
             }
         }
     }
@@ -112,7 +107,7 @@ pub async fn monitor(
     let mut stdout = stdout();
     execute!(stdout, Clear(crossterm::terminal::ClearType::CurrentLine))?;
 
-    render_status(&statuses, &selected, projects, false).await?;
+    render_status(&statuses, &selected, &context.projects, false).await?;
 
     Ok(())
 }
@@ -157,7 +152,10 @@ mod tests {
         .unwrap()
     }
 
-    fn service_status(service: &str, state: ServiceState) -> ServiceStatus {
+    fn service_status(
+        service: &str,
+        state: ServiceState,
+    ) -> ServiceStatus {
         ServiceStatus {
             id: format!("{service}-id"),
             service: service.to_string(),

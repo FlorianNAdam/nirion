@@ -106,7 +106,10 @@ mod tests {
         .unwrap()
     }
 
-    fn service_status(service: &str, state: ServiceState) -> ServiceStatus {
+    fn service_status(
+        service: &str,
+        state: ServiceState,
+    ) -> ServiceStatus {
         ServiceStatus {
             id: format!("{service}-id"),
             service: service.to_string(),

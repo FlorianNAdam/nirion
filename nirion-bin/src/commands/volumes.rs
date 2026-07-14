@@ -1,10 +1,8 @@
 use anyhow::Result;
 use clap::Parser;
 
-use crate::{
-    commands::NirionContext, docker::compose_target_cmd, ClapSelector,
-    TargetSelector,
-};
+use crate::{docker::compose_target_cmd, ClapSelector, TargetSelector};
+use nirion_lib::context::NirionContext;
 
 /// List volumes
 #[derive(Parser, Debug, Clone)]
@@ -39,11 +37,5 @@ pub async fn handle_volumes(
 
     let cmd_slices: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
 
-    compose_target_cmd(
-        &context.docker_command,
-        &args.target,
-        &context.projects,
-        &cmd_slices,
-    )
-    .await
+    compose_target_cmd(context, &args.target, &cmd_slices).await
 }

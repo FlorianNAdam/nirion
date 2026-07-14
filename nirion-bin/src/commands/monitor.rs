@@ -1,9 +1,8 @@
 use clap::Parser;
 use std::time::Duration;
 
-use crate::{
-    commands::NirionContext, monitor::monitor, ClapSelector, TargetSelector,
-};
+use crate::{monitor::monitor, ClapSelector, TargetSelector};
+use nirion_lib::context::NirionContext;
 
 #[derive(Parser, Debug, Clone)]
 pub struct MonitorArgs {
@@ -24,12 +23,6 @@ pub async fn handle_monitor(
     args: &MonitorArgs,
     context: &NirionContext,
 ) -> anyhow::Result<()> {
-    monitor(
-        &context.docker_command,
-        &args.target,
-        &context.projects,
-        args.refresh,
-    )
-    .await?;
+    monitor(context, &args.target, args.refresh).await?;
     Ok(())
 }

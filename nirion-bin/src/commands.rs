@@ -1,20 +1,7 @@
-use nirion_lib::docker::DockerCommand;
-use nirion_lib::lock::LockedImages;
-use nirion_lib::projects::Projects;
-use nirion_oci_lib::client::NirionOciClient;
 use paste::paste;
-use std::path::PathBuf;
-use std::sync::Arc;
 
 use clap::Subcommand;
-
-pub struct NirionContext {
-    pub projects: Projects,
-    pub locked_images: LockedImages,
-    pub lock_file: PathBuf,
-    pub oci_client: Arc<NirionOciClient>,
-    pub docker_command: DockerCommand,
-}
+use nirion_lib::context::NirionContext;
 
 macro_rules! define_commands {
     (

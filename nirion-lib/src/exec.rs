@@ -3,7 +3,7 @@ use std::ops::Deref;
 use anyhow::Context;
 
 use crate::{
-    docker::DockerCommand,
+    context::NirionContext,
     projects::{Projects, ServiceSelector},
 };
 
@@ -20,20 +20,16 @@ pub struct ExecRequest {
     pub cmd: Vec<String>,
 }
 
-pub fn exec(projects: &Projects, request: &ExecRequest) -> anyhow::Result<()> {
-    exec_with_docker(&DockerCommand::default(), projects, request)
-}
-
-pub fn exec_with_docker(
-    docker_command: &DockerCommand,
-    projects: &Projects,
+pub fn exec(
+    context: &NirionContext,
     request: &ExecRequest,
 ) -> anyhow::Result<()> {
     let project_name = &request.target.project;
     let service_name = &request.target.service;
-    let cmd_args = build_exec_args(projects, request)?;
+    let cmd_args = build_exec_args(&context.projects, request)?;
 
-    let status = docker_command
+    let status = context
+        .docker_command
         .std_command()
         .arg("compose")
         .args(&cmd_args)
@@ -108,7 +104,10 @@ fn build_exec_args(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{docker::DockerCommand, lock::LockedImages};
+    use nirion_oci_lib::client::NirionOciClient;
     use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+    use std::{path::PathBuf, sync::Arc};
 
     fn write_fake_docker(
         dir: &Path,
@@ -145,6 +144,16 @@ exit {exit_code}
 
     fn fake_docker_command(script: &str) -> DockerCommand {
         DockerCommand::with_args("/bin/sh", [script])
+    }
+
+    fn context(docker_command: DockerCommand) -> NirionContext {
+        NirionContext {
+            projects: projects(),
+            locked_images: LockedImages::default(),
+            lock_file: PathBuf::from("lock.json"),
+            oci_client: Arc::new(NirionOciClient::builder().build()),
+            docker_command,
+        }
     }
 
     fn projects() -> Projects {
@@ -262,9 +271,8 @@ exit {exit_code}
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
 
-        exec_with_docker(
-            &fake_docker_command(&docker),
-            &projects(),
+        exec(
+            &context(fake_docker_command(&docker)),
             &request(vec!["true"]),
         )
         .unwrap();
@@ -281,9 +289,8 @@ exit {exit_code}
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 7);
 
-        let err = exec_with_docker(
-            &fake_docker_command(&docker),
-            &projects(),
+        let err = exec(
+            &context(fake_docker_command(&docker)),
             &request(vec!["false"]),
         )
         .unwrap_err();
@@ -299,9 +306,8 @@ exit {exit_code}
         let dir = tempfile::tempdir().unwrap();
         let missing_docker = dir.path().join("missing-docker");
 
-        let err = exec_with_docker(
-            &DockerCommand::new(missing_docker),
-            &projects(),
+        let err = exec(
+            &context(DockerCommand::new(missing_docker)),
             &request(vec!["true"]),
         )
         .unwrap_err();

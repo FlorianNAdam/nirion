@@ -1,8 +1,11 @@
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use nirion_lib::patch::{patch_target, PatchTarget as LibPatchTarget};
+use nirion_lib::{
+    context::NirionContext,
+    patch::{patch_target, PatchTarget as LibPatchTarget},
+};
 
-use crate::{commands::NirionContext, ClapSelector, TargetSelector};
+use crate::{ClapSelector, TargetSelector};
 
 /// Patch service files using mirage-patch
 #[derive(Parser, Debug, Clone)]

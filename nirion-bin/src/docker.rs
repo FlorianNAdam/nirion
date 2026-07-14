@@ -1,24 +1,24 @@
 use crossterm::style::Stylize;
 use futures::StreamExt;
 use nirion_lib::{
-    docker::DockerCommand,
+    compose::{ComposeConcurrency, compose_target},
+    context::NirionContext,
     events::{ComposeEvent, ProcessEvent},
-    projects::{Projects, TargetSelector},
+    projects::TargetSelector,
 };
 
 pub async fn compose_target_cmd(
-    docker_command: &DockerCommand,
+    context: &NirionContext,
     target: &TargetSelector,
-    projects: &Projects,
     args: &[&str],
 ) -> anyhow::Result<()> {
-    let mut stream = nirion_lib::compose::compose_target_with_docker(
-        docker_command.clone(),
+    let mut stream = compose_target(
+        context.clone(),
         target.clone(),
-        projects.clone(),
         args.iter()
             .map(|arg| arg.to_string())
             .collect(),
+        ComposeConcurrency::Sequential,
     );
 
     while let Some(event) = stream.next().await {

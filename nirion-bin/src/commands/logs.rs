@@ -1,9 +1,8 @@
 use clap::Parser;
 use nirion_lib::projects::TargetSelector;
 
-use crate::{
-    commands::NirionContext, docker::compose_target_cmd, ClapSelector,
-};
+use crate::{docker::compose_target_cmd, ClapSelector};
+use nirion_lib::context::NirionContext;
 
 /// View output from service containers
 #[derive(Parser, Debug, Clone)]
@@ -78,11 +77,5 @@ pub async fn handle_logs(
 
     let cmd_slices: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
 
-    compose_target_cmd(
-        &context.docker_command,
-        &args.target,
-        &context.projects,
-        &cmd_slices,
-    )
-    .await
+    compose_target_cmd(context, &args.target, &cmd_slices).await
 }

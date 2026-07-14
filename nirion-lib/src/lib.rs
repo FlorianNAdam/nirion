@@ -1,6 +1,7 @@
 pub mod compose;
 pub mod compose_file;
 pub mod config;
+pub mod context;
 pub mod docker;
 pub mod events;
 pub mod exec;

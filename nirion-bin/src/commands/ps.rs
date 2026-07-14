@@ -1,20 +1,14 @@
 use anyhow::Result;
 use clap::Parser;
 use crossterm::style::Stylize;
-use nirion_lib::docker::{
-    query_project_status_with_docker, DockerCommand, Port, ServiceStatus,
+use nirion_lib::{
+    context::NirionContext,
+    docker::{query_project_status, Port, ServiceStatus},
 };
 use nirion_tui_lib::table::print_table;
 use std::collections::HashSet;
 
-use crate::{
-    commands::NirionContext, docker::compose_target_cmd, ClapSelector, Project,
-    TargetSelector,
-};
-
-//
-// ===== CLI =====
-//
+use crate::{docker::compose_target_cmd, ClapSelector, TargetSelector};
 
 /// List running service containers
 #[derive(Parser, Debug, Clone)]
@@ -125,13 +119,7 @@ async fn legacy_ps(args: &PsArgs, context: &NirionContext) -> Result<()> {
         .map(|s| s.as_str())
         .collect();
 
-    compose_target_cmd(
-        &context.docker_command,
-        &args.target,
-        &context.projects,
-        &cmd_slices,
-    )
-    .await
+    compose_target_cmd(context, &args.target, &cmd_slices).await
 }
 
 async fn fancy_ps(args: &PsArgs, context: &NirionContext) -> Result<()> {
@@ -139,40 +127,24 @@ async fn fancy_ps(args: &PsArgs, context: &NirionContext) -> Result<()> {
 
     match &args.target {
         TargetSelector::All => {
-            for (project_name, project) in context.projects.iter() {
-                rows.extend(
-                    print_project_status(
-                        &context.docker_command,
-                        project_name,
-                        project,
-                    )
-                    .await?,
-                );
+            for (project_name, _) in context.projects.iter() {
+                rows.extend(print_project_status(context, project_name).await?);
             }
         }
 
         TargetSelector::Project(sel) => {
-            if let Some(project) = context.projects.get(&sel.name) {
-                rows.extend(
-                    print_project_status(
-                        &context.docker_command,
-                        &sel.name,
-                        project,
-                    )
-                    .await?,
-                );
+            if context.projects.contains_key(&sel.name) {
+                rows.extend(print_project_status(context, &sel.name).await?);
             }
         }
 
         TargetSelector::Service(sel) => {
-            if let Some(project) = context.projects.get(&sel.project) {
-                let project_name = &project.name;
-                let status = query_project_status_with_docker(
-                    &context.docker_command,
-                    &project.docker_compose,
-                    &project_name,
-                )
-                .await?;
+            if context
+                .projects
+                .contains_key(&sel.project)
+            {
+                let status =
+                    query_project_status(context, &sel.project).await?;
 
                 if let Some(svc) = status.services.get(&sel.service) {
                     rows.push(print_header(&sel.project));
@@ -187,21 +159,14 @@ async fn fancy_ps(args: &PsArgs, context: &NirionContext) -> Result<()> {
 }
 
 async fn print_project_status(
-    docker_command: &DockerCommand,
+    context: &NirionContext,
     project_name: &str,
-    project: &Project,
 ) -> anyhow::Result<Vec<String>> {
     let mut rows = vec![];
 
     rows.push(print_header(project_name));
 
-    let project_name = &project.name;
-    let status = query_project_status_with_docker(
-        docker_command,
-        &project.docker_compose,
-        project_name,
-    )
-    .await?;
+    let status = query_project_status(context, project_name).await?;
 
     for svc in status.services.values() {
         rows.push(print_row(svc)?);

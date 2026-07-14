@@ -2,9 +2,9 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 
 use crate::{
-    docker::{DockerCommand, query_project_status_with_docker},
-    lock::LockedImages,
-    projects::{ProjectSelector, Projects, ServiceSelector},
+    context::NirionContext,
+    docker::query_project_status,
+    projects::{ProjectSelector, ServiceSelector},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -14,48 +14,27 @@ pub enum InspectTarget {
 }
 
 pub async fn inspect_project(
+    context: &NirionContext,
     target: &ProjectSelector,
     inspect_target: &InspectTarget,
-    projects: &Projects,
-    locked_images: &LockedImages,
-    format: &str,
-    raw: bool,
-) -> anyhow::Result<Vec<String>> {
-    inspect_project_with_docker(
-        DockerCommand::default(),
-        target,
-        inspect_target,
-        projects,
-        locked_images,
-        format,
-        raw,
-    )
-    .await
-}
-
-pub async fn inspect_project_with_docker(
-    docker_command: DockerCommand,
-    target: &ProjectSelector,
-    inspect_target: &InspectTarget,
-    projects: &Projects,
-    locked_images: &LockedImages,
     format: &str,
     raw: bool,
 ) -> anyhow::Result<Vec<String>> {
     let mut failures = Vec::new();
     let mut outputs = Vec::new();
 
-    for service in projects[&target.name].services.keys() {
+    for service in context.projects[&target.name]
+        .services
+        .keys()
+    {
         let service_selector = ServiceSelector {
             project: target.name.to_string(),
             service: service.to_string(),
         };
-        match inspect_service_with_docker(
-            &docker_command,
+        match inspect_service(
+            context,
             &service_selector,
             inspect_target,
-            projects,
-            locked_images,
             format,
             raw,
         )
@@ -80,63 +59,30 @@ pub async fn inspect_project_with_docker(
 }
 
 pub async fn inspect_service(
+    context: &NirionContext,
     target: &ServiceSelector,
     inspect_target: &InspectTarget,
-    projects: &Projects,
-    locked_images: &LockedImages,
-    format: &str,
-    raw: bool,
-) -> anyhow::Result<String> {
-    inspect_service_with_docker(
-        &DockerCommand::default(),
-        target,
-        inspect_target,
-        projects,
-        locked_images,
-        format,
-        raw,
-    )
-    .await
-}
-
-pub async fn inspect_service_with_docker(
-    docker_command: &DockerCommand,
-    target: &ServiceSelector,
-    inspect_target: &InspectTarget,
-    projects: &Projects,
-    locked_images: &LockedImages,
     format: &str,
     raw: bool,
 ) -> anyhow::Result<String> {
     let output = match inspect_target {
         InspectTarget::Image => {
-            inspect_image(
-                docker_command,
-                target,
-                projects,
-                locked_images,
-                format,
-                raw,
-            )
-            .await?
+            inspect_image(context, target, format, raw).await?
         }
         InspectTarget::Container => {
-            inspect_container(docker_command, target, projects, format, raw)
-                .await?
+            inspect_container(context, target, format, raw).await?
         }
     };
     Ok(output)
 }
 
 async fn inspect_image(
-    docker_command: &DockerCommand,
+    context: &NirionContext,
     target: &ServiceSelector,
-    projects: &Projects,
-    locked_images: &LockedImages,
     format: &str,
     raw: bool,
 ) -> Result<String> {
-    let project = &projects[&target.project];
+    let project = &context.projects[&target.project];
 
     let service = project
         .services
@@ -151,13 +97,15 @@ async fn inspect_image(
 
     let identifier = format!("{}.{}", target.project, target.service);
 
-    let image_name = if let Some(digest) = locked_images.get(&identifier) {
-        format!("{}@{}", base_image, digest.digest)
-    } else {
-        base_image.to_string()
-    };
+    let image_name =
+        if let Some(digest) = context.locked_images.get(&identifier) {
+            format!("{}@{}", base_image, digest.digest)
+        } else {
+            base_image.to_string()
+        };
 
-    let output = docker_command
+    let output = context
+        .docker_command
         .command()
         .arg("image")
         .arg("inspect")
@@ -188,20 +136,12 @@ async fn inspect_image(
 }
 
 async fn inspect_container(
-    docker_command: &DockerCommand,
+    context: &NirionContext,
     target: &ServiceSelector,
-    projects: &Projects,
     format: &str,
     raw: bool,
 ) -> Result<String> {
-    let project = &projects.get(&target.project).unwrap();
-
-    let project_status = query_project_status_with_docker(
-        docker_command,
-        &project.docker_compose,
-        &project.name,
-    )
-    .await?;
+    let project_status = query_project_status(context, &target.project).await?;
 
     let service_status = project_status
         .services
@@ -210,7 +150,8 @@ async fn inspect_container(
             anyhow::anyhow!("Service {} missing from status", &target.service)
         })?;
 
-    let output = docker_command
+    let output = context
+        .docker_command
         .command()
         .arg("inspect")
         .arg("--format")
@@ -255,8 +196,19 @@ fn pretty_json(string: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lock::VersionedImage;
-    use std::{fs, io::Write, os::unix::fs::PermissionsExt, path::Path};
+    use crate::{
+        docker::DockerCommand,
+        lock::{LockedImages, VersionedImage},
+        projects::Projects,
+    };
+    use nirion_oci_lib::client::NirionOciClient;
+    use std::{
+        fs,
+        io::Write,
+        os::unix::fs::PermissionsExt,
+        path::{Path, PathBuf},
+        sync::Arc,
+    };
 
     fn projects() -> Projects {
         serde_json::from_value(serde_json::json!({
@@ -284,6 +236,20 @@ mod tests {
         ServiceSelector {
             project: "myapp".into(),
             service: service.into(),
+        }
+    }
+
+    fn context(
+        docker_command: DockerCommand,
+        projects: Projects,
+        locked_images: LockedImages,
+    ) -> NirionContext {
+        NirionContext {
+            projects,
+            locked_images,
+            lock_file: PathBuf::from("lock.json"),
+            oci_client: Arc::new(NirionOciClient::builder().build()),
+            docker_command,
         }
     }
 
@@ -373,7 +339,10 @@ exit {inspect_exit_code}
         DockerCommand::with_args("/bin/sh", [script])
     }
 
-    fn compose_ps_service(service: &str, id: &str) -> String {
+    fn compose_ps_service(
+        service: &str,
+        id: &str,
+    ) -> String {
         serde_json::json!({
             "ID": id,
             "Name": format!("myapp-{service}-1"),
@@ -443,10 +412,12 @@ exit {inspect_exit_code}
         );
 
         let output = inspect_image(
-            &fake_docker_command(&docker),
+            &context(
+                fake_docker_command(&docker),
+                projects(),
+                LockedImages::default(),
+            ),
             &target("web"),
-            &projects(),
-            &LockedImages::default(),
             "{{json .}}",
             true,
         )
@@ -482,10 +453,8 @@ exit {inspect_exit_code}
         );
 
         let output = inspect_image(
-            &fake_docker_command(&docker),
+            &context(fake_docker_command(&docker), projects(), locked_images),
             &target("web"),
-            &projects(),
-            &locked_images,
             "{{json .}}",
             false,
         )
@@ -514,10 +483,12 @@ exit {inspect_exit_code}
         let docker = write_fake_docker(dir.path(), &args_file, "{}", "", 0);
 
         let err = inspect_image(
-            &fake_docker_command(&docker),
+            &context(
+                fake_docker_command(&docker),
+                projects(),
+                LockedImages::default(),
+            ),
             &target("worker"),
-            &projects(),
-            &LockedImages::default(),
             "{{json .}}",
             true,
         )
@@ -535,10 +506,12 @@ exit {inspect_exit_code}
         let docker = write_fake_docker(dir.path(), &args_file, "{}", "", 0);
 
         let err = inspect_image(
-            &fake_docker_command(&docker),
+            &context(
+                fake_docker_command(&docker),
+                projects(),
+                LockedImages::default(),
+            ),
             &target("missing"),
-            &projects(),
-            &LockedImages::default(),
             "{{json .}}",
             true,
         )
@@ -562,10 +535,12 @@ exit {inspect_exit_code}
         );
 
         let err = inspect_image(
-            &fake_docker_command(&docker),
+            &context(
+                fake_docker_command(&docker),
+                projects(),
+                LockedImages::default(),
+            ),
             &target("web"),
-            &projects(),
-            &LockedImages::default(),
             "{{json .}}",
             true,
         )
@@ -584,12 +559,14 @@ exit {inspect_exit_code}
         let docker =
             write_fake_docker(dir.path(), &args_file, r#"{"Id":"abc"}"#, "", 0);
 
-        let output = inspect_service_with_docker(
-            &fake_docker_command(&docker),
+        let output = inspect_service(
+            &context(
+                fake_docker_command(&docker),
+                projects(),
+                LockedImages::default(),
+            ),
             &target("web"),
             &InspectTarget::Image,
-            &projects(),
-            &LockedImages::default(),
             "{{json .}}",
             false,
         )
@@ -618,9 +595,12 @@ exit {inspect_exit_code}
         );
 
         let output = inspect_container(
-            &fake_docker_command(&docker),
+            &context(
+                fake_docker_command(&docker),
+                projects(),
+                LockedImages::default(),
+            ),
             &target("web"),
-            &projects(),
             "{{json .}}",
             false,
         )
@@ -653,12 +633,14 @@ exit {inspect_exit_code}
             0,
         );
 
-        let output = inspect_service_with_docker(
-            &fake_docker_command(&docker),
+        let output = inspect_service(
+            &context(
+                fake_docker_command(&docker),
+                projects(),
+                LockedImages::default(),
+            ),
             &target("web"),
             &InspectTarget::Container,
-            &projects(),
-            &LockedImages::default(),
             "{{json .}}",
             true,
         )
@@ -682,9 +664,12 @@ exit {inspect_exit_code}
         );
 
         let err = inspect_container(
-            &fake_docker_command(&docker),
+            &context(
+                fake_docker_command(&docker),
+                projects(),
+                LockedImages::default(),
+            ),
             &target("web"),
-            &projects(),
             "{{json .}}",
             true,
         )
@@ -708,9 +693,12 @@ exit {inspect_exit_code}
         );
 
         let err = inspect_container(
-            &fake_docker_command(&docker),
+            &context(
+                fake_docker_command(&docker),
+                projects(),
+                LockedImages::default(),
+            ),
             &target("web"),
-            &projects(),
             "{{json .}}",
             true,
         )
@@ -743,14 +731,16 @@ exit {inspect_exit_code}
         }))
         .unwrap();
 
-        let outputs = inspect_project_with_docker(
-            fake_docker_command(&docker),
+        let outputs = inspect_project(
+            &context(
+                fake_docker_command(&docker),
+                projects,
+                LockedImages::default(),
+            ),
             &crate::projects::ProjectSelector {
                 name: "myapp".into(),
             },
             &InspectTarget::Image,
-            &projects,
-            &LockedImages::default(),
             "{{json .}}",
             true,
         )
@@ -766,14 +756,16 @@ exit {inspect_exit_code}
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, "{}", "", 0);
 
-        let err = inspect_project_with_docker(
-            fake_docker_command(&docker),
+        let err = inspect_project(
+            &context(
+                fake_docker_command(&docker),
+                projects(),
+                LockedImages::default(),
+            ),
             &crate::projects::ProjectSelector {
                 name: "myapp".into(),
             },
             &InspectTarget::Image,
-            &projects(),
-            &LockedImages::default(),
             "{{json .}}",
             true,
         )

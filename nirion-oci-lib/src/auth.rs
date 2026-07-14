@@ -163,11 +163,17 @@ mod tests {
 }
 
 pub trait Authenticable {
-    fn apply_authentication(self, auth: &RegistryAuth) -> Self;
+    fn apply_authentication(
+        self,
+        auth: &RegistryAuth,
+    ) -> Self;
 }
 
 impl Authenticable for reqwest::RequestBuilder {
-    fn apply_authentication(self, auth: &RegistryAuth) -> Self {
+    fn apply_authentication(
+        self,
+        auth: &RegistryAuth,
+    ) -> Self {
         match auth {
             RegistryAuth::Anonymous => self,
             RegistryAuth::Basic { username, password } => {

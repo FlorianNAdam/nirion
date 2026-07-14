@@ -108,12 +108,19 @@ impl<'de> Deserialize<'de> for AuthConfig {
 }
 
 impl AuthConfig {
-    pub fn add_auth(&mut self, registry: String, auth: RegistryAuth) {
+    pub fn add_auth(
+        &mut self,
+        registry: String,
+        auth: RegistryAuth,
+    ) {
         self.sources
             .insert(normalize_scope(&registry), auth);
     }
 
-    pub fn auth_for(&self, image: &Reference) -> RegistryAuth {
+    pub fn auth_for(
+        &self,
+        image: &Reference,
+    ) -> RegistryAuth {
         let registry = resolve_registry(image.registry().to_string());
         let mut key = format!("{}/{}", registry, image.repository());
 
@@ -312,7 +319,10 @@ impl Default for NirionOciClientBuilder {
 }
 
 impl NirionOciClientBuilder {
-    pub fn auth(mut self, auth: AuthConfig) -> Self {
+    pub fn auth(
+        mut self,
+        auth: AuthConfig,
+    ) -> Self {
         self.auth = auth;
         self
     }
@@ -326,17 +336,26 @@ impl NirionOciClientBuilder {
         self
     }
 
-    pub fn docker_hub(mut self, docker_hub: DockerHubClient) -> Self {
+    pub fn docker_hub(
+        mut self,
+        docker_hub: DockerHubClient,
+    ) -> Self {
         self.docker_hub = docker_hub;
         self
     }
 
-    pub fn oci_client_config(mut self, config: NirionOciClientConfig) -> Self {
+    pub fn oci_client_config(
+        mut self,
+        config: NirionOciClientConfig,
+    ) -> Self {
         self.oci_client_config = config;
         self
     }
 
-    pub fn oci_client_protocol(mut self, protocol: ClientProtocol) -> Self {
+    pub fn oci_client_protocol(
+        mut self,
+        protocol: ClientProtocol,
+    ) -> Self {
         self.oci_client_config.protocol = protocol;
         self
     }

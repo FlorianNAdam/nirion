@@ -5,9 +5,9 @@ use futures::{StreamExt, channel::mpsc, stream::BoxStream};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::{
-    docker::DockerCommand,
+    context::NirionContext,
     events::{ComposeEvent, ProcessEvent},
-    projects::{ProjectName, Projects, TargetSelector},
+    projects::{ProjectName, TargetSelector},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,57 +17,25 @@ pub enum ComposeConcurrency {
 }
 
 pub fn compose_target(
+    context: NirionContext,
     target: TargetSelector,
-    projects: Projects,
-    args: Vec<String>,
-) -> BoxStream<'static, anyhow::Result<ComposeEvent>> {
-    compose_target_with_docker(DockerCommand::default(), target, projects, args)
-}
-
-pub fn compose_target_with_docker(
-    docker_command: DockerCommand,
-    target: TargetSelector,
-    projects: Projects,
-    args: Vec<String>,
-) -> BoxStream<'static, anyhow::Result<ComposeEvent>> {
-    compose_target_with_concurrency(
-        docker_command,
-        target,
-        projects,
-        args,
-        ComposeConcurrency::Sequential,
-    )
-}
-
-pub fn compose_target_with_concurrency(
-    docker_command: DockerCommand,
-    target: TargetSelector,
-    projects: Projects,
     args: Vec<String>,
     concurrency: ComposeConcurrency,
 ) -> BoxStream<'static, anyhow::Result<ComposeEvent>> {
     match concurrency {
         ComposeConcurrency::Sequential => {
-            compose_target_sequential(docker_command, target, projects, args)
+            compose_target_sequential(context, target, args)
         }
         ComposeConcurrency::Parallel => match target {
-            TargetSelector::All => {
-                compose_target_all_parallel(docker_command, projects, args)
-            }
-            target => compose_target_sequential(
-                docker_command,
-                target,
-                projects,
-                args,
-            ),
+            TargetSelector::All => compose_target_all_parallel(context, args),
+            target => compose_target_sequential(context, target, args),
         },
     }
 }
 
 fn compose_target_sequential(
-    docker_command: DockerCommand,
+    context: NirionContext,
     target: TargetSelector,
-    projects: Projects,
     args: Vec<String>,
 ) -> BoxStream<'static, anyhow::Result<ComposeEvent>> {
     let (tx, rx) = mpsc::unbounded();
@@ -77,14 +45,14 @@ fn compose_target_sequential(
 
         match target {
             TargetSelector::All => {
-                for (name, project) in projects.iter() {
+                for (name, project) in context.projects.iter() {
                     let _ =
                         tx.unbounded_send(Ok(ComposeEvent::ProjectStarted {
                             project: name.to_string(),
                         }));
 
                     let mut stream = compose_cmd(
-                        docker_command.clone(),
+                        context.clone(),
                         project.docker_compose.clone(),
                         project.name.clone(),
                         args.clone(),
@@ -115,9 +83,9 @@ fn compose_target_sequential(
                 }
             }
             TargetSelector::Project(proj) => {
-                let project = projects[&proj.name].clone();
+                let project = context.projects[&proj.name].clone();
                 let mut stream = compose_cmd(
-                    docker_command.clone(),
+                    context,
                     project.docker_compose,
                     project.name,
                     args.clone(),
@@ -143,12 +111,12 @@ fn compose_target_sequential(
                 }
             }
             TargetSelector::Service(sel) => {
-                let project = projects[&sel.project].clone();
+                let project = context.projects[&sel.project].clone();
                 let mut cmd_args = args.clone();
                 cmd_args.push(sel.service.clone());
 
                 let mut stream = compose_cmd(
-                    docker_command,
+                    context,
                     project.docker_compose,
                     project.name,
                     cmd_args,
@@ -190,8 +158,7 @@ fn compose_target_sequential(
 }
 
 fn compose_target_all_parallel(
-    docker_command: DockerCommand,
-    projects: Projects,
+    context: NirionContext,
     args: Vec<String>,
 ) -> BoxStream<'static, anyhow::Result<ComposeEvent>> {
     let (tx, rx) = mpsc::unbounded();
@@ -199,11 +166,11 @@ fn compose_target_all_parallel(
     tokio::spawn(async move {
         let mut handles = Vec::new();
 
-        for (name, project) in projects.iter() {
+        for (name, project) in context.projects.iter() {
             let name = name.to_string();
             let project = project.clone();
             let args = args.clone();
-            let docker_command = docker_command.clone();
+            let context = context.clone();
             let tx = tx.clone();
 
             let _ = tx.unbounded_send(Ok(ComposeEvent::ProjectStarted {
@@ -212,7 +179,7 @@ fn compose_target_all_parallel(
 
             handles.push(tokio::spawn(async move {
                 let mut stream = compose_cmd(
-                    docker_command,
+                    context,
                     project.docker_compose,
                     project.name,
                     args,
@@ -266,13 +233,13 @@ fn compose_target_all_parallel(
 }
 
 pub fn compose_cmd(
-    docker_command: DockerCommand,
+    context: NirionContext,
     compose_file: String,
     project_name: ProjectName,
     args: Vec<String>,
 ) -> BoxStream<'static, anyhow::Result<ProcessEvent>> {
     run_docker_compose(
-        docker_command,
+        context,
         build_compose_args(compose_file, project_name, args),
     )
 }
@@ -294,13 +261,14 @@ fn build_compose_args(
 }
 
 pub fn run_docker_compose(
-    docker_command: DockerCommand,
+    context: NirionContext,
     cmd_args: Vec<String>,
 ) -> BoxStream<'static, anyhow::Result<ProcessEvent>> {
     let (tx, rx) = mpsc::unbounded();
 
     tokio::spawn(async move {
-        let mut child = match docker_command
+        let mut child = match context
+            .docker_command
             .command()
             .arg("compose")
             .args(cmd_args)
@@ -387,10 +355,15 @@ pub fn run_docker_compose(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+    use crate::projects::Projects;
+    use crate::{docker::DockerCommand, lock::LockedImages};
+    use nirion_oci_lib::client::NirionOciClient;
+    use std::{
+        fs, os::unix::fs::PermissionsExt, path::Path, path::PathBuf, sync::Arc,
+    };
 
     async fn collect_events(
-        stream: BoxStream<'static, anyhow::Result<ProcessEvent>>,
+        stream: BoxStream<'static, anyhow::Result<ProcessEvent>>
     ) -> Vec<anyhow::Result<ProcessEvent>> {
         stream.collect::<Vec<_>>().await
     }
@@ -434,6 +407,16 @@ exit {exit_code}
         DockerCommand::with_args("/bin/sh", [script])
     }
 
+    fn context(docker_command: DockerCommand) -> NirionContext {
+        NirionContext {
+            projects: projects(),
+            locked_images: LockedImages::default(),
+            lock_file: PathBuf::from("lock.json"),
+            oci_client: Arc::new(NirionOciClient::builder().build()),
+            docker_command,
+        }
+    }
+
     fn projects() -> Projects {
         serde_json::from_value(serde_json::json!({
             "api": {
@@ -463,7 +446,7 @@ exit {exit_code}
     }
 
     async fn collect_compose_events(
-        stream: BoxStream<'static, anyhow::Result<ComposeEvent>>,
+        stream: BoxStream<'static, anyhow::Result<ComposeEvent>>
     ) -> Vec<anyhow::Result<ComposeEvent>> {
         stream.collect::<Vec<_>>().await
     }
@@ -510,7 +493,7 @@ exit {exit_code}
         let docker = write_fake_docker(dir.path(), &args_file, 0);
 
         let events = collect_events(run_docker_compose(
-            fake_docker_command(&docker),
+            context(fake_docker_command(&docker)),
             vec!["ps".into(), "--format".into(), "json".into()],
         ))
         .await;
@@ -542,7 +525,7 @@ exit {exit_code}
         let docker = write_fake_docker(dir.path(), &args_file, 42);
 
         let events = collect_events(run_docker_compose(
-            fake_docker_command(&docker),
+            context(fake_docker_command(&docker)),
             vec!["up".into()],
         ))
         .await;
@@ -567,7 +550,7 @@ exit {exit_code}
         let missing_docker = dir.path().join("missing-docker");
 
         let events = collect_events(run_docker_compose(
-            DockerCommand::new(missing_docker),
+            context(DockerCommand::new(missing_docker)),
             vec!["ps".into()],
         ))
         .await;
@@ -585,7 +568,7 @@ exit {exit_code}
         let docker = write_fake_docker(dir.path(), &args_file, 0);
 
         let events = collect_events(compose_cmd(
-            fake_docker_command(&docker),
+            context(fake_docker_command(&docker)),
             "compose.yml".into(),
             ProjectName("myapp".into()),
             vec!["logs".into()],
@@ -605,13 +588,13 @@ exit {exit_code}
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
 
-        let events = collect_compose_events(compose_target_with_docker(
-            fake_docker_command(&docker),
+        let events = collect_compose_events(compose_target(
+            context(fake_docker_command(&docker)),
             TargetSelector::Project(crate::projects::ProjectSelector {
                 name: "api".into(),
             }),
-            projects(),
             vec!["up".into(), "-d".into()],
+            ComposeConcurrency::Sequential,
         ))
         .await;
 
@@ -635,14 +618,14 @@ exit {exit_code}
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
 
-        let events = collect_compose_events(compose_target_with_docker(
-            fake_docker_command(&docker),
+        let events = collect_compose_events(compose_target(
+            context(fake_docker_command(&docker)),
             TargetSelector::Service(crate::projects::ServiceSelector {
                 project: "api".into(),
                 service: "web".into(),
             }),
-            projects(),
             vec!["restart".into()],
+            ComposeConcurrency::Sequential,
         ))
         .await;
 
@@ -659,14 +642,14 @@ exit {exit_code}
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 9);
 
-        let events = collect_compose_events(compose_target_with_docker(
-            fake_docker_command(&docker),
+        let events = collect_compose_events(compose_target(
+            context(fake_docker_command(&docker)),
             TargetSelector::Service(crate::projects::ServiceSelector {
                 project: "api".into(),
                 service: "web".into(),
             }),
-            projects(),
             vec!["restart".into()],
+            ComposeConcurrency::Sequential,
         ))
         .await;
 
@@ -686,11 +669,11 @@ exit {exit_code}
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
 
-        let events = collect_compose_events(compose_target_with_docker(
-            fake_docker_command(&docker),
+        let events = collect_compose_events(compose_target(
+            context(fake_docker_command(&docker)),
             TargetSelector::All,
-            projects(),
             vec!["pull".into()],
+            ComposeConcurrency::Sequential,
         ))
         .await;
 
@@ -711,10 +694,9 @@ exit {exit_code}
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
 
-        let events = collect_compose_events(compose_target_with_concurrency(
-            fake_docker_command(&docker),
+        let events = collect_compose_events(compose_target(
+            context(fake_docker_command(&docker)),
             TargetSelector::All,
-            projects(),
             vec!["pull".into()],
             ComposeConcurrency::Parallel,
         ))
@@ -737,13 +719,13 @@ exit {exit_code}
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 2);
 
-        let events = collect_compose_events(compose_target_with_docker(
-            fake_docker_command(&docker),
+        let events = collect_compose_events(compose_target(
+            context(fake_docker_command(&docker)),
             TargetSelector::Project(crate::projects::ProjectSelector {
                 name: "api".into(),
             }),
-            projects(),
             vec!["up".into()],
+            ComposeConcurrency::Sequential,
         ))
         .await;
 
@@ -763,11 +745,11 @@ exit {exit_code}
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 5);
 
-        let events = collect_compose_events(compose_target_with_docker(
-            fake_docker_command(&docker),
+        let events = collect_compose_events(compose_target(
+            context(fake_docker_command(&docker)),
             TargetSelector::All,
-            projects(),
             vec!["up".into()],
+            ComposeConcurrency::Sequential,
         ))
         .await;
 
@@ -794,10 +776,9 @@ exit {exit_code}
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 5);
 
-        let events = collect_compose_events(compose_target_with_concurrency(
-            fake_docker_command(&docker),
+        let events = collect_compose_events(compose_target(
+            context(fake_docker_command(&docker)),
             TargetSelector::All,
-            projects(),
             vec!["up".into()],
             ComposeConcurrency::Parallel,
         ))
