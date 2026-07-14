@@ -499,7 +499,7 @@ async fn oci_alias_tags_return_tags_with_matching_digest() -> anyhow::Result<()>
 }
 
 async fn start_mock_docker_hub(
-    digest: &str,
+    digest: &str
 ) -> anyhow::Result<(String, tokio::task::JoinHandle<anyhow::Result<()>>)> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
@@ -627,7 +627,10 @@ fn docker_hub_tags_response(digest: &str) -> String {
     )
 }
 
-fn docker_hub_tags_page(next: Option<&str>, names: &[&str]) -> String {
+fn docker_hub_tags_page(
+    next: Option<&str>,
+    names: &[&str],
+) -> String {
     let arch =
         nirion_oci_lib::oci_client::config::Architecture::default().to_string();
     let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -650,7 +653,11 @@ fn docker_hub_tags_page(next: Option<&str>, names: &[&str]) -> String {
     )
 }
 
-fn docker_hub_tag(name: &str, arch: &str, digest: &str) -> String {
+fn docker_hub_tag(
+    name: &str,
+    arch: &str,
+    digest: &str,
+) -> String {
     format!(
         r#"{{
       "id": 0,
@@ -671,7 +678,10 @@ fn docker_hub_tag(name: &str, arch: &str, digest: &str) -> String {
     )
 }
 
-fn docker_hub_image(arch: &str, digest: &str) -> String {
+fn docker_hub_image(
+    arch: &str,
+    digest: &str,
+) -> String {
     format!(
         r#"{{
         "architecture": "{arch}",

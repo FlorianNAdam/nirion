@@ -2,10 +2,11 @@ use anyhow::Result;
 use clap::Parser;
 use nirion_lib::{
     compose_file::{compose_to_string, full_compose, service_compose},
+    context::NirionContext,
     projects::TargetSelector,
 };
 
-use crate::{commands::NirionContext, ClapSelector};
+use crate::ClapSelector;
 
 /// Print the docker compose file
 #[derive(Parser, Debug, Clone)]

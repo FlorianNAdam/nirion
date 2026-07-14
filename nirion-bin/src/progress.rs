@@ -5,11 +5,9 @@ use crossterm::{
 };
 use futures::StreamExt;
 use nirion_lib::{
-    compose::{ComposeConcurrency, compose_target_with_concurrency},
-    docker::{
-        ProjectStatus, query_project_status_with_docker,
-        status_stream_with_docker,
-    },
+    compose::{ComposeConcurrency, compose_target},
+    context::NirionContext,
+    docker::{ProjectStatus, query_project_status, status_stream},
     events::{ComposeEvent, ProcessEvent},
     projects::{Projects, selected_project_names},
     wait::{WaitTarget, wait_finished},
@@ -20,7 +18,6 @@ use nirion_tui_lib::{
 };
 use std::collections::BTreeMap;
 use std::io::{Write, stdout};
-use std::path::Path;
 use tokio::time::Duration;
 
 use crate::TargetSelector;
@@ -115,9 +112,8 @@ fn print_progress(
 }
 
 pub async fn run_command_with_progress(
-    docker_binary: &Path,
+    context: &NirionContext,
     target: &TargetSelector,
-    projects: &Projects,
     args: &[&str],
     no_monitor: bool,
     quiet: bool,
@@ -125,27 +121,22 @@ pub async fn run_command_with_progress(
     wait_for_healthchecks: bool,
 ) -> anyhow::Result<()> {
     if no_monitor {
-        return run_compose_hidden(docker_binary, target, projects, args).await;
+        return run_compose_hidden(context, target, args).await;
     }
 
-    let selected = selected_project_names(target, projects);
+    let selected = selected_project_names(target, &context.projects);
     let args = args
         .iter()
         .map(|arg| arg.to_string())
         .collect::<Vec<_>>();
-    let mut compose_stream = compose_target_with_concurrency(
-        docker_binary.to_path_buf(),
+    let mut compose_stream = compose_target(
+        context.clone(),
         target.clone(),
-        projects.clone(),
         args,
         ComposeConcurrency::Parallel,
     );
-    let mut status_stream = status_stream_with_docker(
-        docker_binary.to_path_buf(),
-        target.clone(),
-        projects.clone(),
-        refresh_interval,
-    );
+    let mut status_stream =
+        status_stream(context, target.clone(), refresh_interval);
     let spinner = Spinner::default();
     let mut running = selected
         .iter()
@@ -159,7 +150,12 @@ pub async fn run_command_with_progress(
 
     if !quiet {
         print_progress(
-            &selected, &spinner, &running, &statuses, projects, true,
+            &selected,
+            &spinner,
+            &running,
+            &statuses,
+            &context.projects,
+            true,
         )?;
     }
 
@@ -169,7 +165,7 @@ pub async fn run_command_with_progress(
                 && (!wait_for_healthchecks
                     || wait_finished(
                         target,
-                        projects,
+                        &context.projects,
                         &statuses,
                         WaitTarget::Healthchecks,
                     )));
@@ -222,19 +218,28 @@ pub async fn run_command_with_progress(
 
         if !quiet {
             print_progress(
-                &selected, &spinner, &running, &statuses, projects, true,
+                &selected,
+                &spinner,
+                &running,
+                &statuses,
+                &context.projects,
+                true,
             )?;
         }
     }
 
     if compose_error.is_none() {
-        refresh_statuses(docker_binary, &selected, projects, &mut statuses)
-            .await?;
+        refresh_statuses(context, &selected, &mut statuses).await?;
     }
 
     if !quiet {
         print_progress(
-            &selected, &spinner, &running, &statuses, projects, false,
+            &selected,
+            &spinner,
+            &running,
+            &statuses,
+            &context.projects,
+            false,
         )?;
     }
 
@@ -246,19 +251,17 @@ pub async fn run_command_with_progress(
 }
 
 async fn run_compose_hidden(
-    docker_binary: &Path,
+    context: &NirionContext,
     target: &TargetSelector,
-    projects: &Projects,
     args: &[&str],
 ) -> anyhow::Result<()> {
     let args = args
         .iter()
         .map(|arg| arg.to_string())
         .collect::<Vec<_>>();
-    let mut stream = compose_target_with_concurrency(
-        docker_binary.to_path_buf(),
+    let mut stream = compose_target(
+        context.clone(),
         target.clone(),
-        projects.clone(),
         args,
         ComposeConcurrency::Parallel,
     );
@@ -292,19 +295,12 @@ fn handle_compose_event(
 }
 
 async fn refresh_statuses(
-    docker_binary: &Path,
+    context: &NirionContext,
     selected: &[String],
-    projects: &Projects,
     statuses: &mut BTreeMap<String, ProjectStatus>,
 ) -> anyhow::Result<()> {
     for name in selected {
-        let project = &projects[name];
-        let status = query_project_status_with_docker(
-            docker_binary,
-            &project.docker_compose,
-            &project.name,
-        )
-        .await?;
+        let status = query_project_status(context, name).await?;
         statuses.insert(name.clone(), status);
     }
 
@@ -338,7 +334,10 @@ mod tests {
         .unwrap()
     }
 
-    fn service_status(service: &str, state: ServiceState) -> ServiceStatus {
+    fn service_status(
+        service: &str,
+        state: ServiceState,
+    ) -> ServiceStatus {
         ServiceStatus {
             id: format!("{service}-id"),
             service: service.to_string(),

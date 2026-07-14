@@ -44,7 +44,7 @@ pub struct RegistryHandle {
 
 impl RegistryHandle {
     pub async fn start(
-        accounts: &[TestAccount],
+        accounts: &[TestAccount]
     ) -> anyhow::Result<Option<Self>> {
         let image = if accounts.is_empty() {
             ContainerRequest::from(registry_image())
@@ -125,7 +125,7 @@ impl RegistryHandle {
 }
 
 pub async fn push_anonymous_test_image(
-    tag: &str,
+    tag: &str
 ) -> anyhow::Result<Option<(RegistryHandle, TestImage)>> {
     let Some(handle) = RegistryHandle::start_anonymous().await? else {
         return Ok(None);

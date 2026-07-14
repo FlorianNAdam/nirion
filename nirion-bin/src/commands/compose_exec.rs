@@ -1,9 +1,8 @@
 use clap::Parser;
 use nirion_lib::projects::TargetSelector;
 
-use crate::{
-    commands::NirionContext, docker::compose_target_cmd, ClapSelector,
-};
+use crate::{docker::compose_target_cmd, ClapSelector};
+use nirion_lib::context::NirionContext;
 
 /// Run a docker compose command for a project or service
 #[derive(Parser, Debug, Clone)]
@@ -30,11 +29,5 @@ pub async fn handle_compose_exec(
         .map(|s| s.as_str())
         .collect();
 
-    compose_target_cmd(
-        &context.docker_binary,
-        &args.target,
-        &context.projects,
-        &cmd_slices,
-    )
-    .await
+    compose_target_cmd(context, &args.target, &cmd_slices).await
 }

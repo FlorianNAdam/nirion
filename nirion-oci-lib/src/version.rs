@@ -58,7 +58,10 @@ pub fn clean_tag(tag: &str) -> &str {
     strip_any_tag_suffix(tag, TAG_SUFFIXES)
 }
 
-pub fn strip_any_tag_prefix<'a>(s: &'a str, prefixes: &[&str]) -> &'a str {
+pub fn strip_any_tag_prefix<'a>(
+    s: &'a str,
+    prefixes: &[&str],
+) -> &'a str {
     prefixes
         .iter()
         .find_map(|p| {
@@ -68,7 +71,10 @@ pub fn strip_any_tag_prefix<'a>(s: &'a str, prefixes: &[&str]) -> &'a str {
         .unwrap_or(s)
 }
 
-pub fn strip_any_tag_suffix<'a>(s: &'a str, suffixes: &[&str]) -> &'a str {
+pub fn strip_any_tag_suffix<'a>(
+    s: &'a str,
+    suffixes: &[&str],
+) -> &'a str {
     suffixes
         .iter()
         .find_map(|p| {

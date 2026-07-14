@@ -2,10 +2,10 @@ use anyhow::Result;
 use clap::Parser;
 use tokio::time::Duration;
 
-use crate::commands::NirionContext;
 use crate::docker::compose_target_cmd;
 use crate::progress::run_command_with_progress;
 use crate::{ClapSelector, TargetSelector};
+use nirion_lib::context::NirionContext;
 
 /// Create and start service containers
 #[derive(Parser, Debug, Clone)]
@@ -46,9 +46,8 @@ pub struct UpArgs {
 pub async fn handle_up(args: &UpArgs, context: &NirionContext) -> Result<()> {
     if !args.legacy && !matches!(args.target, TargetSelector::Service(_)) {
         run_command_with_progress(
-            &context.docker_binary,
+            context,
             &args.target,
-            &context.projects,
             &["up", "-d"],
             args.no_monitor,
             args.quiet,
@@ -57,13 +56,7 @@ pub async fn handle_up(args: &UpArgs, context: &NirionContext) -> Result<()> {
         )
         .await?;
     } else {
-        compose_target_cmd(
-            &context.docker_binary,
-            &args.target,
-            &context.projects,
-            &["up", "-d"],
-        )
-        .await?;
+        compose_target_cmd(context, &args.target, &["up", "-d"]).await?;
     }
     Ok(())
 }

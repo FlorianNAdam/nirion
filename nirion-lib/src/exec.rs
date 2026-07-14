@@ -1,12 +1,11 @@
-use std::{ops::Deref, path::Path, process::Command as ProcCommand};
+use std::ops::Deref;
 
 use anyhow::Context;
 
-use crate::projects::{Projects, ServiceSelector};
-
-#[cfg(test)]
-static TEST_DOCKER_CMD: std::sync::Mutex<Option<Vec<String>>> =
-    std::sync::Mutex::new(None);
+use crate::{
+    context::NirionContext,
+    projects::{Projects, ServiceSelector},
+};
 
 #[derive(Debug, Clone)]
 pub struct ExecRequest {
@@ -21,20 +20,17 @@ pub struct ExecRequest {
     pub cmd: Vec<String>,
 }
 
-pub fn exec(projects: &Projects, request: &ExecRequest) -> anyhow::Result<()> {
-    exec_with_docker(Path::new("docker"), projects, request)
-}
-
-pub fn exec_with_docker(
-    docker_binary: &Path,
-    projects: &Projects,
+pub fn exec(
+    context: &NirionContext,
     request: &ExecRequest,
 ) -> anyhow::Result<()> {
     let project_name = &request.target.project;
     let service_name = &request.target.service;
-    let cmd_args = build_exec_args(projects, request)?;
+    let cmd_args = build_exec_args(&context.projects, request)?;
 
-    let status = docker_command(docker_binary)
+    let status = context
+        .docker_command
+        .std_command()
         .arg("compose")
         .args(&cmd_args)
         .status()
@@ -105,44 +101,13 @@ fn build_exec_args(
     Ok(cmd_args)
 }
 
-fn docker_command(docker_binary: &Path) -> ProcCommand {
-    #[cfg(test)]
-    if let Some(cmd) = TEST_DOCKER_CMD.lock().unwrap().clone() {
-        let mut command = ProcCommand::new(&cmd[0]);
-        command.args(&cmd[1..]);
-        return command;
-    }
-
-    ProcCommand::new(docker_binary)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{docker::DockerCommand, lock::LockedImages};
+    use nirion_oci_lib::client::NirionOciClient;
     use std::{fs, os::unix::fs::PermissionsExt, path::Path};
-
-    static DOCKER_BIN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    struct DockerBinGuard;
-
-    impl DockerBinGuard {
-        fn set_script(script: String) -> Self {
-            *TEST_DOCKER_CMD.lock().unwrap() =
-                Some(vec!["/bin/sh".to_string(), script]);
-            Self
-        }
-
-        fn set_command(command: String) -> Self {
-            *TEST_DOCKER_CMD.lock().unwrap() = Some(vec![command]);
-            Self
-        }
-    }
-
-    impl Drop for DockerBinGuard {
-        fn drop(&mut self) {
-            *TEST_DOCKER_CMD.lock().unwrap() = None;
-        }
-    }
+    use std::{path::PathBuf, sync::Arc};
 
     fn write_fake_docker(
         dir: &Path,
@@ -150,25 +115,45 @@ mod tests {
         exit_code: i32,
     ) -> String {
         let docker = dir.join("docker");
-        fs::write(
-            &docker,
+        let tmp = dir.join("docker.tmp");
+        let mut file = fs::File::create(&tmp).unwrap();
+        use std::io::Write;
+        file.write_all(
             format!(
                 r#"#!/bin/sh
 printf '%s\n' "$@" > '{}'
 exit {exit_code}
 "#,
                 args_file.display()
-            ),
+            )
+            .as_bytes(),
         )
         .unwrap();
+        file.sync_all().unwrap();
+        drop(file);
 
-        let mut permissions = fs::metadata(&docker)
+        let mut permissions = fs::metadata(&tmp)
             .unwrap()
             .permissions();
         permissions.set_mode(0o755);
-        fs::set_permissions(&docker, permissions).unwrap();
+        fs::set_permissions(&tmp, permissions).unwrap();
+        fs::rename(&tmp, &docker).unwrap();
 
         docker.to_string_lossy().to_string()
+    }
+
+    fn fake_docker_command(script: &str) -> DockerCommand {
+        DockerCommand::with_args("/bin/sh", [script])
+    }
+
+    fn context(docker_command: DockerCommand) -> NirionContext {
+        NirionContext {
+            projects: projects(),
+            locked_images: LockedImages::default(),
+            lock_file: PathBuf::from("lock.json"),
+            oci_client: Arc::new(NirionOciClient::builder().build()),
+            docker_command,
+        }
     }
 
     fn projects() -> Projects {
@@ -282,13 +267,15 @@ exit {exit_code}
 
     #[test]
     fn exec_runs_docker_compose_exec() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
-        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
-        exec(&projects(), &request(vec!["true"])).unwrap();
+        exec(
+            &context(fake_docker_command(&docker)),
+            &request(vec!["true"]),
+        )
+        .unwrap();
 
         assert_eq!(
             fs::read_to_string(args_file).unwrap(),
@@ -298,13 +285,15 @@ exit {exit_code}
 
     #[test]
     fn exec_reports_failed_status() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 7);
-        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
-        let err = exec(&projects(), &request(vec!["false"])).unwrap_err();
+        let err = exec(
+            &context(fake_docker_command(&docker)),
+            &request(vec!["false"]),
+        )
+        .unwrap_err();
 
         assert!(
             err.to_string()
@@ -314,16 +303,14 @@ exit {exit_code}
 
     #[test]
     fn exec_reports_spawn_failure() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let missing_docker = dir.path().join("missing-docker");
-        let _docker_bin_guard = DockerBinGuard::set_command(
-            missing_docker
-                .to_string_lossy()
-                .to_string(),
-        );
 
-        let err = exec(&projects(), &request(vec!["true"])).unwrap_err();
+        let err = exec(
+            &context(DockerCommand::new(missing_docker)),
+            &request(vec!["true"]),
+        )
+        .unwrap_err();
 
         assert!(
             err.to_string()

@@ -1,7 +1,5 @@
 use std::{
-    collections::BTreeMap,
-    ops::Deref,
-    path::{Path, PathBuf},
+    collections::BTreeMap, ffi::OsString, ops::Deref, path::PathBuf,
     time::Duration,
 };
 
@@ -12,32 +10,77 @@ use futures::{
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
+use crate::context::NirionContext;
 use crate::projects::{
     Project, ProjectName, Projects, TargetSelector, selected_project_names,
 };
 
-#[cfg(test)]
-pub(crate) static TEST_DOCKER_CMD: std::sync::Mutex<Option<Vec<String>>> =
-    std::sync::Mutex::new(None);
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DockerCommand {
+    pub program: PathBuf,
+    pub args: Vec<OsString>,
+}
+
+impl DockerCommand {
+    pub fn new(program: impl Into<PathBuf>) -> Self {
+        Self {
+            program: program.into(),
+            args: Vec::new(),
+        }
+    }
+
+    pub fn with_args(
+        program: impl Into<PathBuf>,
+        args: impl IntoIterator<Item = impl Into<OsString>>,
+    ) -> Self {
+        Self {
+            program: program.into(),
+            args: args
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        }
+    }
+
+    pub fn command(&self) -> Command {
+        let mut command = Command::new(&self.program);
+        command.args(&self.args);
+        command
+    }
+
+    pub fn std_command(&self) -> std::process::Command {
+        let mut command = std::process::Command::new(&self.program);
+        command.args(&self.args);
+        command
+    }
+}
+
+impl Default for DockerCommand {
+    fn default() -> Self {
+        Self::new("docker")
+    }
+}
 
 pub async fn query_project_status(
-    compose_file: &str,
-    project_name: &ProjectName,
+    context: &NirionContext,
+    project_name: &str,
 ) -> anyhow::Result<ProjectStatus> {
-    query_project_status_with_docker(
-        Path::new("docker"),
-        compose_file,
-        project_name,
+    let project = &context.projects[project_name];
+    query_project_status_for_command(
+        &context.docker_command,
+        &project.docker_compose,
+        &project.name,
     )
     .await
 }
 
-pub async fn query_project_status_with_docker(
-    docker_binary: &Path,
+async fn query_project_status_for_command(
+    docker_command: &DockerCommand,
     compose_file: &str,
     project_name: &ProjectName,
 ) -> anyhow::Result<ProjectStatus> {
-    let output = docker_command(docker_binary)
+    let output = docker_command
+        .command()
         .arg("compose")
         .arg("-f")
         .arg(compose_file)
@@ -73,20 +116,20 @@ pub struct ProjectStatusEvent {
 }
 
 pub fn status_stream(
+    context: &NirionContext,
     target: TargetSelector,
-    projects: Projects,
     refresh_interval: Duration,
 ) -> BoxStream<'static, anyhow::Result<ProjectStatusEvent>> {
-    status_stream_with_docker(
-        PathBuf::from("docker"),
+    status_stream_for_command(
+        context.docker_command.clone(),
         target,
-        projects,
+        context.projects.clone(),
         refresh_interval,
     )
 }
 
-pub fn status_stream_with_docker(
-    docker_binary: PathBuf,
+fn status_stream_for_command(
+    docker_command: DockerCommand,
     target: TargetSelector,
     projects: Projects,
     refresh_interval: Duration,
@@ -96,8 +139,8 @@ pub fn status_stream_with_docker(
         .into_iter()
         .filter_map(|name| {
             let project = projects.get(&name)?.clone();
-            Some(project_status_stream_with_docker(
-                docker_binary.clone(),
+            Some(project_status_stream_for_command(
+                docker_command.clone(),
                 name,
                 project,
                 refresh_interval,
@@ -108,21 +151,8 @@ pub fn status_stream_with_docker(
     select_all(streams).boxed()
 }
 
-pub fn project_status_stream(
-    name: String,
-    project: Project,
-    refresh_interval: Duration,
-) -> BoxStream<'static, anyhow::Result<ProjectStatusEvent>> {
-    project_status_stream_with_docker(
-        PathBuf::from("docker"),
-        name,
-        project,
-        refresh_interval,
-    )
-}
-
-pub fn project_status_stream_with_docker(
-    docker_binary: PathBuf,
+fn project_status_stream_for_command(
+    docker_command: DockerCommand,
     name: String,
     project: Project,
     refresh_interval: Duration,
@@ -133,8 +163,8 @@ pub fn project_status_stream_with_docker(
         let mut first_poll = true;
 
         loop {
-            match query_project_status_with_docker(
-                &docker_binary,
+            match query_project_status_for_command(
+                &docker_command,
                 &project.docker_compose,
                 &project.name,
             )
@@ -169,17 +199,6 @@ pub fn project_status_stream_with_docker(
     });
 
     rx.boxed()
-}
-
-fn docker_command(docker_binary: &Path) -> Command {
-    #[cfg(test)]
-    if let Some(cmd) = TEST_DOCKER_CMD.lock().unwrap().clone() {
-        let mut command = Command::new(&cmd[0]);
-        command.args(&cmd[1..]);
-        return command;
-    }
-
-    Command::new(docker_binary)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

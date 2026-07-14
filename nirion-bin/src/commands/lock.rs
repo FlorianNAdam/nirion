@@ -2,13 +2,14 @@ use clap::Parser;
 use crossterm::style::Stylize;
 use futures::StreamExt;
 use nirion_lib::{
+    context::NirionContext,
     events::LockUpdateEvent,
     lock::DiffEntry,
     lock_update::update_images,
     projects::{get_images, TargetSelector},
 };
 
-use crate::{commands::NirionContext, ClapSelector};
+use crate::ClapSelector;
 
 /// Create missing lock file entries
 #[derive(Parser, Debug, Clone)]
@@ -33,13 +34,7 @@ pub async fn handle_lock(
     let mut images = get_images(&args.target, &context.projects);
     images.retain(|name, _| !context.locked_images.contains_key(name));
 
-    let mut operation = update_images(
-        context.oci_client.clone(),
-        images,
-        context.locked_images.clone(),
-        context.lock_file.clone(),
-        args.jobs,
-    );
+    let mut operation = update_images(context, images, args.jobs);
 
     while let Some(event) = operation.events.next().await {
         render_lock_update_event(event?);

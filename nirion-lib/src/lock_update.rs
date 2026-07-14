@@ -4,12 +4,12 @@ use nirion_oci_lib::{client::NirionOciClient, oci_client::Reference};
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
-    path::PathBuf,
     sync::Arc,
 };
 use tokio::{sync::RwLock, task::JoinHandle};
 
 use crate::{
+    context::NirionContext,
     events::LockUpdateEvent,
     lock::{DiffEntry, LockedImages, VersionedImage},
 };
@@ -33,12 +33,13 @@ impl LockUpdateOperation {
 }
 
 pub fn update_images(
-    client: Arc<NirionOciClient>,
+    context: &NirionContext,
     images: BTreeMap<String, String>,
-    locked_images: LockedImages,
-    lock_file: PathBuf,
     jobs: usize,
 ) -> LockUpdateOperation {
+    let client = context.oci_client.clone();
+    let locked_images = context.locked_images.clone();
+    let lock_file = context.lock_file.clone();
     let (event_tx, event_rx) = mpsc::unbounded();
 
     let report = tokio::spawn(async move {
@@ -169,18 +170,39 @@ async fn get_cached_image(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::LockUpdateEvent;
+    use crate::{
+        docker::DockerCommand, events::LockUpdateEvent, projects::Projects,
+    };
     use futures::StreamExt;
     use nirion_oci_lib::{
         oci_client::secrets::RegistryAuth,
         test_registry::{RegistryHandle, http_nirion_client},
     };
+    use std::path::PathBuf;
 
-    fn image(image: &str, version: &str, digest: &str) -> VersionedImage {
+    fn image(
+        image: &str,
+        version: &str,
+        digest: &str,
+    ) -> VersionedImage {
         VersionedImage {
             image: image.to_string(),
             version: Some(version.to_string()),
             digest: digest.to_string(),
+        }
+    }
+
+    fn context(
+        client: NirionOciClient,
+        locked_images: LockedImages,
+        lock_file: PathBuf,
+    ) -> NirionContext {
+        NirionContext {
+            projects: Projects::default(),
+            locked_images,
+            lock_file,
+            oci_client: Arc::new(client),
+            docker_command: DockerCommand::default(),
         }
     }
 
@@ -190,10 +212,12 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let lock_file = dir.path().join("nirion.lock");
         let mut operation = update_images(
-            Arc::new(NirionOciClient::builder().build()),
+            &context(
+                NirionOciClient::builder().build(),
+                LockedImages::default(),
+                lock_file.clone(),
+            ),
             BTreeMap::new(),
-            LockedImages::default(),
-            lock_file.clone(),
             1,
         );
 
@@ -229,13 +253,15 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let lock_file = dir.path().join("nirion.lock");
         let report = update_images(
-            Arc::new(http_nirion_client().build()),
+            &context(
+                http_nirion_client().build(),
+                LockedImages::default(),
+                lock_file.clone(),
+            ),
             BTreeMap::from([(
                 "app.web".to_string(),
                 test_image.reference.to_string(),
             )]),
-            LockedImages::default(),
-            lock_file.clone(),
             1,
         )
         .finish()
@@ -286,13 +312,15 @@ mod tests {
         );
 
         let report = update_images(
-            Arc::new(http_nirion_client().build()),
+            &context(
+                http_nirion_client().build(),
+                locked_images,
+                lock_file.clone(),
+            ),
             BTreeMap::from([(
                 "app.web".to_string(),
                 test_image.reference.to_string(),
             )]),
-            locked_images,
-            lock_file.clone(),
             1,
         )
         .finish()
@@ -331,13 +359,11 @@ mod tests {
         );
 
         let report = update_images(
-            Arc::new(http_nirion_client().build()),
+            &context(http_nirion_client().build(), locked_images, lock_file),
             BTreeMap::from([(
                 "app.web".to_string(),
                 test_image.reference.to_string(),
             )]),
-            locked_images,
-            lock_file,
             1,
         )
         .finish()
@@ -364,13 +390,15 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let lock_file = dir.path().join("nirion.lock");
         let result = update_images(
-            Arc::new(http_nirion_client().build()),
+            &context(
+                http_nirion_client().build(),
+                LockedImages::default(),
+                lock_file.clone(),
+            ),
             BTreeMap::from([(
                 "app.web".to_string(),
                 "not a valid image".to_string(),
             )]),
-            LockedImages::default(),
-            lock_file.clone(),
             1,
         )
         .finish()

@@ -44,7 +44,10 @@ impl DockerHubClient {
         self
     }
 
-    pub fn supports(&self, reference: &Reference) -> bool {
+    pub fn supports(
+        &self,
+        reference: &Reference,
+    ) -> bool {
         self.registries
             .contains(reference.registry())
     }
@@ -237,7 +240,7 @@ pub struct ApiErrorResponse {
 }
 
 fn dockerhub_repository_parts(
-    reference: &Reference,
+    reference: &Reference
 ) -> Result<(String, String), DockerHubError> {
     let repo = reference.repository();
 
@@ -253,7 +256,7 @@ fn dockerhub_repository_parts(
 }
 
 async fn parse_dockerhub_error<T>(
-    resp: reqwest::Response,
+    resp: reqwest::Response
 ) -> Result<T, DockerHubError> {
     let status = resp.status();
     if let Ok(api_err) = resp.json::<ApiErrorResponse>().await {
