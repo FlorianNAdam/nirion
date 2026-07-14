@@ -93,6 +93,15 @@ fn nirion_command(
     command
 }
 
+fn assert_success(output: &std::process::Output) {
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn up_no_tui_uses_configured_docker_command() {
     let dir = TempDir::new();
@@ -109,12 +118,7 @@ fn up_no_tui_uses_configured_docker_command() {
         .output()
         .unwrap();
 
-    assert!(
-        output.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_success(&output);
     assert_eq!(
         fs::read_to_string(args_file).unwrap(),
         "compose\n--file\ncompose.yml\n--project-name\nmyapp\nup\n-d\n"
@@ -138,12 +142,7 @@ fn up_service_target_appends_service_name() {
         .output()
         .unwrap();
 
-    assert!(
-        output.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_success(&output);
     assert_eq!(
         fs::read_to_string(args_file).unwrap(),
         "compose\n--file\ncompose.yml\n--project-name\nmyapp\nup\n-d\nweb\n"
@@ -169,12 +168,7 @@ fn ps_no_tui_forwards_legacy_flags() {
         .output()
         .unwrap();
 
-    assert!(
-        output.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_success(&output);
     assert!(String::from_utf8_lossy(&output.stdout).contains("container-list"));
     assert_eq!(
         fs::read_to_string(args_file).unwrap(),
@@ -207,12 +201,7 @@ fn inspect_image_raw_prints_docker_output() {
         .output()
         .unwrap();
 
-    assert!(
-        output.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_success(&output);
     assert!(
         String::from_utf8_lossy(&output.stdout)
             .contains(r#"{"Id":"image-id"}"#)
@@ -221,4 +210,43 @@ fn inspect_image_raw_prints_docker_output() {
         fs::read_to_string(args_file).unwrap(),
         "image\ninspect\n--format\njson\nnginx:latest\n"
     );
+}
+
+#[test]
+fn compose_passthrough_commands_are_wired() {
+    let cases: &[(&[&str], &str)] = &[
+        (&["down", "--no-tui"], "down\n"),
+        (&["start", "--no-tui"], "start\n"),
+        (&["stop", "--no-tui"], "stop\n"),
+        (&["restart", "--no-tui"], "restart\n"),
+        (&["logs"], "logs\n"),
+        (&["top"], "top\n"),
+        (&["volumes"], "volumes\n--format\ntable\n"),
+        (&["compose-exec", "*", "pull"], "pull\n"),
+    ];
+
+    for (args, expected_command_args) in cases {
+        let dir = TempDir::new();
+        let project_file = dir.path().join("projects.json");
+        let lock_file = dir.path().join("nirion.lock");
+        let docker_script = dir.path().join("fake-docker.sh");
+        let args_file = dir.path().join("docker-args");
+        write_projects(&project_file);
+        write_fake_docker(&docker_script, &args_file, "", "", 0);
+
+        let output = nirion_command(&project_file, &lock_file, &docker_script)
+            .args(*args)
+            .output()
+            .unwrap();
+
+        assert_success(&output);
+        assert_eq!(
+            fs::read_to_string(args_file).unwrap(),
+            format!(
+                "compose\n--file\ncompose.yml\n--project-name\nmyapp\n{}",
+                expected_command_args
+            ),
+            "failed command case: {args:?}"
+        );
+    }
 }
