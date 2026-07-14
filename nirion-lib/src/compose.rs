@@ -417,6 +417,49 @@ exit {exit_code}
         }
     }
 
+    fn write_timed_fake_docker(
+        dir: &Path,
+        log_file: &Path,
+    ) -> String {
+        let docker = dir.join("docker-timed");
+        let tmp = dir.join("docker-timed.tmp");
+        let mut file = fs::File::create(&tmp).unwrap();
+        use std::io::Write;
+        file.write_all(
+            format!(
+                r#"#!/bin/sh
+project=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--project-name" ]; then
+    shift
+    project="$1"
+  fi
+  shift
+done
+printf 'start %s\n' "$project" >> '{}'
+sleep 0.2
+printf 'end %s\n' "$project" >> '{}'
+exit 0
+"#,
+                log_file.display(),
+                log_file.display(),
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+
+        let mut permissions = fs::metadata(&tmp)
+            .unwrap()
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&tmp, permissions).unwrap();
+        fs::rename(&tmp, &docker).unwrap();
+
+        docker.to_string_lossy().to_string()
+    }
+
     fn projects() -> Projects {
         serde_json::from_value(serde_json::json!({
             "api": {
@@ -711,6 +754,52 @@ exit {exit_code}
             Ok(ComposeEvent::ProjectStarted { project }) if project == "worker"
         )));
         assert!(events.iter().all(Result::is_ok));
+    }
+
+    #[tokio::test]
+    async fn compose_target_all_sequential_finishes_each_project_before_next() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_file = dir.path().join("timing-log");
+        let docker = write_timed_fake_docker(dir.path(), &log_file);
+
+        let events = collect_compose_events(compose_target(
+            context(fake_docker_command(&docker)),
+            TargetSelector::All,
+            vec!["up".into()],
+            ComposeConcurrency::Sequential,
+        ))
+        .await;
+
+        assert!(events.iter().all(Result::is_ok));
+        assert_eq!(
+            fs::read_to_string(log_file).unwrap(),
+            "start api\nend api\nstart worker\nend worker\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn compose_target_all_parallel_starts_projects_before_finishing() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_file = dir.path().join("timing-log");
+        let docker = write_timed_fake_docker(dir.path(), &log_file);
+
+        let events = collect_compose_events(compose_target(
+            context(fake_docker_command(&docker)),
+            TargetSelector::All,
+            vec!["up".into()],
+            ComposeConcurrency::Parallel,
+        ))
+        .await;
+
+        assert!(events.iter().all(Result::is_ok));
+        let log = fs::read_to_string(log_file).unwrap();
+        let lines = log.lines().collect::<Vec<_>>();
+
+        assert_eq!(lines.len(), 4);
+        assert!(lines[..2].contains(&"start api"));
+        assert!(lines[..2].contains(&"start worker"));
+        assert!(lines[2..].contains(&"end api"));
+        assert!(lines[2..].contains(&"end worker"));
     }
 
     #[tokio::test]

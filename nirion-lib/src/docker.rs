@@ -492,6 +492,185 @@ impl ServiceState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        context::NirionContext, lock::LockedImages, projects::ProjectSelector,
+    };
+    use nirion_oci_lib::client::NirionOciClient;
+    use std::{
+        fs,
+        io::Write,
+        os::unix::fs::PermissionsExt,
+        path::{Path, PathBuf},
+        sync::Arc,
+        time::Duration,
+    };
+
+    fn projects() -> Projects {
+        serde_json::from_value(serde_json::json!({
+            "myapp": {
+                "name": "myapp",
+                "dockerCompose": "compose.yml",
+                "services": {
+                    "web": {
+                        "image": "nginx:latest",
+                        "healthcheck": false,
+                        "restart": null
+                    }
+                }
+            }
+        }))
+        .unwrap()
+    }
+
+    fn context(docker_command: DockerCommand) -> NirionContext {
+        NirionContext {
+            projects: projects(),
+            locked_images: LockedImages::default(),
+            lock_file: PathBuf::from("lock.json"),
+            oci_client: Arc::new(NirionOciClient::builder().build()),
+            docker_command,
+        }
+    }
+
+    fn fake_docker_command(script: &str) -> DockerCommand {
+        DockerCommand::with_args("/bin/sh", [script])
+    }
+
+    fn write_fake_docker(
+        dir: &Path,
+        args_file: &Path,
+        stdout: &str,
+        stderr: &str,
+        exit_code: i32,
+    ) -> String {
+        let docker = dir.join("docker");
+        let tmp = dir.join("docker.tmp");
+        let mut file = fs::File::create(&tmp).unwrap();
+        file.write_all(
+            format!(
+                r#"#!/bin/sh
+printf '%s\n' "$@" > '{}'
+printf '%s\n' '{}'
+printf '%s\n' '{}' >&2
+exit {exit_code}
+"#,
+                args_file.display(),
+                stdout,
+                stderr,
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+
+        let mut permissions = fs::metadata(&tmp)
+            .unwrap()
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&tmp, permissions).unwrap();
+        fs::rename(&tmp, &docker).unwrap();
+
+        docker.to_string_lossy().to_string()
+    }
+
+    fn compose_ps_service(
+        service: &str,
+        id: &str,
+    ) -> String {
+        serde_json::json!({
+            "ID": id,
+            "Name": format!("myapp-{service}-1"),
+            "Service": service,
+            "Image": "nginx:latest",
+            "State": "running",
+            "Health": "healthy",
+            "ExitCode": null,
+            "RunningFor": "1 minute",
+            "Status": "Up 1 minute",
+            "Ports": "",
+            "Networks": "default"
+        })
+        .to_string()
+    }
+
+    #[tokio::test]
+    async fn query_project_status_runs_configured_docker_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker(
+            dir.path(),
+            &args_file,
+            &compose_ps_service("web", "container-123"),
+            "",
+            0,
+        );
+        let context = context(fake_docker_command(&docker));
+
+        let status = query_project_status(&context, "myapp")
+            .await
+            .unwrap();
+
+        assert_eq!(status.services["web"].id, "container-123");
+        assert_eq!(status.services["web"].state, ServiceState::Healthy);
+        assert_eq!(
+            fs::read_to_string(args_file).unwrap(),
+            "compose\n-f\ncompose.yml\n--project-name\nmyapp\nps\n-a\n--format\njson\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn status_stream_emits_initial_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker(
+            dir.path(),
+            &args_file,
+            &compose_ps_service("web", "container-abc"),
+            "",
+            0,
+        );
+        let context = context(fake_docker_command(&docker));
+        let mut stream = status_stream(
+            &context,
+            TargetSelector::Project(ProjectSelector {
+                name: "myapp".into(),
+            }),
+            Duration::from_secs(60),
+        );
+
+        let event = stream.next().await.unwrap().unwrap();
+
+        assert_eq!(event.project, "myapp");
+        assert_eq!(event.status.services["web"].id, "container-abc");
+    }
+
+    #[tokio::test]
+    async fn status_stream_emits_first_poll_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker(dir.path(), &args_file, "", "boom", 7);
+        let context = context(fake_docker_command(&docker));
+        let mut stream = status_stream(
+            &context,
+            TargetSelector::Project(ProjectSelector {
+                name: "myapp".into(),
+            }),
+            Duration::from_secs(60),
+        );
+
+        let err = stream
+            .next()
+            .await
+            .unwrap()
+            .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("docker compose ps failed with status")
+        );
+        assert!(err.to_string().contains("boom"));
+    }
 
     fn service(state: ServiceState) -> ServiceStatus {
         ServiceStatus {
