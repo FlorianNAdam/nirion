@@ -1,19 +1,19 @@
 use crossterm::style::Stylize;
 use futures::StreamExt;
 use nirion_lib::{
+    docker::DockerCommand,
     events::{ComposeEvent, ProcessEvent},
     projects::{Projects, TargetSelector},
 };
-use std::path::Path;
 
 pub async fn compose_target_cmd(
-    docker_binary: &Path,
+    docker_command: &DockerCommand,
     target: &TargetSelector,
     projects: &Projects,
     args: &[&str],
 ) -> anyhow::Result<()> {
     let mut stream = nirion_lib::compose::compose_target_with_docker(
-        docker_binary.to_path_buf(),
+        docker_command.clone(),
         target.clone(),
         projects.clone(),
         args.iter()

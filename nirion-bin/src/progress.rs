@@ -7,7 +7,7 @@ use futures::StreamExt;
 use nirion_lib::{
     compose::{ComposeConcurrency, compose_target_with_concurrency},
     docker::{
-        ProjectStatus, query_project_status_with_docker,
+        DockerCommand, ProjectStatus, query_project_status_with_docker,
         status_stream_with_docker,
     },
     events::{ComposeEvent, ProcessEvent},
@@ -20,7 +20,6 @@ use nirion_tui_lib::{
 };
 use std::collections::BTreeMap;
 use std::io::{Write, stdout};
-use std::path::Path;
 use tokio::time::Duration;
 
 use crate::TargetSelector;
@@ -115,7 +114,7 @@ fn print_progress(
 }
 
 pub async fn run_command_with_progress(
-    docker_binary: &Path,
+    docker_command: &DockerCommand,
     target: &TargetSelector,
     projects: &Projects,
     args: &[&str],
@@ -125,7 +124,8 @@ pub async fn run_command_with_progress(
     wait_for_healthchecks: bool,
 ) -> anyhow::Result<()> {
     if no_monitor {
-        return run_compose_hidden(docker_binary, target, projects, args).await;
+        return run_compose_hidden(docker_command, target, projects, args)
+            .await;
     }
 
     let selected = selected_project_names(target, projects);
@@ -134,14 +134,14 @@ pub async fn run_command_with_progress(
         .map(|arg| arg.to_string())
         .collect::<Vec<_>>();
     let mut compose_stream = compose_target_with_concurrency(
-        docker_binary.to_path_buf(),
+        docker_command.clone(),
         target.clone(),
         projects.clone(),
         args,
         ComposeConcurrency::Parallel,
     );
     let mut status_stream = status_stream_with_docker(
-        docker_binary.to_path_buf(),
+        docker_command.clone(),
         target.clone(),
         projects.clone(),
         refresh_interval,
@@ -228,7 +228,7 @@ pub async fn run_command_with_progress(
     }
 
     if compose_error.is_none() {
-        refresh_statuses(docker_binary, &selected, projects, &mut statuses)
+        refresh_statuses(docker_command, &selected, projects, &mut statuses)
             .await?;
     }
 
@@ -246,7 +246,7 @@ pub async fn run_command_with_progress(
 }
 
 async fn run_compose_hidden(
-    docker_binary: &Path,
+    docker_command: &DockerCommand,
     target: &TargetSelector,
     projects: &Projects,
     args: &[&str],
@@ -256,7 +256,7 @@ async fn run_compose_hidden(
         .map(|arg| arg.to_string())
         .collect::<Vec<_>>();
     let mut stream = compose_target_with_concurrency(
-        docker_binary.to_path_buf(),
+        docker_command.clone(),
         target.clone(),
         projects.clone(),
         args,
@@ -292,7 +292,7 @@ fn handle_compose_event(
 }
 
 async fn refresh_statuses(
-    docker_binary: &Path,
+    docker_command: &DockerCommand,
     selected: &[String],
     projects: &Projects,
     statuses: &mut BTreeMap<String, ProjectStatus>,
@@ -300,7 +300,7 @@ async fn refresh_statuses(
     for name in selected {
         let project = &projects[name];
         let status = query_project_status_with_docker(
-            docker_binary,
+            docker_command,
             &project.docker_compose,
             &project.name,
         )

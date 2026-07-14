@@ -46,7 +46,7 @@ pub struct UpArgs {
 pub async fn handle_up(args: &UpArgs, context: &NirionContext) -> Result<()> {
     if !args.legacy && !matches!(args.target, TargetSelector::Service(_)) {
         run_command_with_progress(
-            &context.docker_binary,
+            &context.docker_command,
             &args.target,
             &context.projects,
             &["up", "-d"],
@@ -58,7 +58,7 @@ pub async fn handle_up(args: &UpArgs, context: &NirionContext) -> Result<()> {
         .await?;
     } else {
         compose_target_cmd(
-            &context.docker_binary,
+            &context.docker_command,
             &args.target,
             &context.projects,
             &["up", "-d"],

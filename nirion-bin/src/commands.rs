@@ -1,3 +1,4 @@
+use nirion_lib::docker::DockerCommand;
 use nirion_lib::lock::LockedImages;
 use nirion_lib::projects::Projects;
 use nirion_oci_lib::client::NirionOciClient;
@@ -12,7 +13,7 @@ pub struct NirionContext {
     pub locked_images: LockedImages,
     pub lock_file: PathBuf,
     pub oci_client: Arc<NirionOciClient>,
-    pub docker_binary: PathBuf,
+    pub docker_command: DockerCommand,
 }
 
 macro_rules! define_commands {

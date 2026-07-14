@@ -62,7 +62,7 @@ pub async fn handle_inspect(
                     name: project_name.to_string(),
                 };
                 for output in inspect_project_with_docker(
-                    context.docker_binary.clone(),
+                    context.docker_command.clone(),
                     &project_selector,
                     &inspect_target,
                     &context.projects,
@@ -78,7 +78,7 @@ pub async fn handle_inspect(
         }
         TargetSelector::Project(proj) => {
             for output in inspect_project_with_docker(
-                context.docker_binary.clone(),
+                context.docker_command.clone(),
                 proj,
                 &inspect_target,
                 &context.projects,
@@ -93,7 +93,7 @@ pub async fn handle_inspect(
         }
         TargetSelector::Service(img) => {
             let output = inspect_service_with_docker(
-                &context.docker_binary,
+                &context.docker_command,
                 img,
                 &inspect_target,
                 &context.projects,

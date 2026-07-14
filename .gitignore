@@ -10,3 +10,4 @@ auth.json
 
 # coverage
 coverage-*.info
+*_cov.profraw

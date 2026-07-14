@@ -1,7 +1,5 @@
 use std::{
-    collections::BTreeMap,
-    ops::Deref,
-    path::{Path, PathBuf},
+    collections::BTreeMap, ffi::OsString, ops::Deref, path::PathBuf,
     time::Duration,
 };
 
@@ -16,16 +14,58 @@ use crate::projects::{
     Project, ProjectName, Projects, TargetSelector, selected_project_names,
 };
 
-#[cfg(test)]
-pub(crate) static TEST_DOCKER_CMD: std::sync::Mutex<Option<Vec<String>>> =
-    std::sync::Mutex::new(None);
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DockerCommand {
+    pub program: PathBuf,
+    pub args: Vec<OsString>,
+}
+
+impl DockerCommand {
+    pub fn new(program: impl Into<PathBuf>) -> Self {
+        Self {
+            program: program.into(),
+            args: Vec::new(),
+        }
+    }
+
+    pub fn with_args(
+        program: impl Into<PathBuf>,
+        args: impl IntoIterator<Item = impl Into<OsString>>,
+    ) -> Self {
+        Self {
+            program: program.into(),
+            args: args
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        }
+    }
+
+    pub fn command(&self) -> Command {
+        let mut command = Command::new(&self.program);
+        command.args(&self.args);
+        command
+    }
+
+    pub fn std_command(&self) -> std::process::Command {
+        let mut command = std::process::Command::new(&self.program);
+        command.args(&self.args);
+        command
+    }
+}
+
+impl Default for DockerCommand {
+    fn default() -> Self {
+        Self::new("docker")
+    }
+}
 
 pub async fn query_project_status(
     compose_file: &str,
     project_name: &ProjectName,
 ) -> anyhow::Result<ProjectStatus> {
     query_project_status_with_docker(
-        Path::new("docker"),
+        &DockerCommand::default(),
         compose_file,
         project_name,
     )
@@ -33,11 +73,12 @@ pub async fn query_project_status(
 }
 
 pub async fn query_project_status_with_docker(
-    docker_binary: &Path,
+    docker_command: &DockerCommand,
     compose_file: &str,
     project_name: &ProjectName,
 ) -> anyhow::Result<ProjectStatus> {
-    let output = docker_command(docker_binary)
+    let output = docker_command
+        .command()
         .arg("compose")
         .arg("-f")
         .arg(compose_file)
@@ -78,7 +119,7 @@ pub fn status_stream(
     refresh_interval: Duration,
 ) -> BoxStream<'static, anyhow::Result<ProjectStatusEvent>> {
     status_stream_with_docker(
-        PathBuf::from("docker"),
+        DockerCommand::default(),
         target,
         projects,
         refresh_interval,
@@ -86,7 +127,7 @@ pub fn status_stream(
 }
 
 pub fn status_stream_with_docker(
-    docker_binary: PathBuf,
+    docker_command: DockerCommand,
     target: TargetSelector,
     projects: Projects,
     refresh_interval: Duration,
@@ -97,7 +138,7 @@ pub fn status_stream_with_docker(
         .filter_map(|name| {
             let project = projects.get(&name)?.clone();
             Some(project_status_stream_with_docker(
-                docker_binary.clone(),
+                docker_command.clone(),
                 name,
                 project,
                 refresh_interval,
@@ -114,7 +155,7 @@ pub fn project_status_stream(
     refresh_interval: Duration,
 ) -> BoxStream<'static, anyhow::Result<ProjectStatusEvent>> {
     project_status_stream_with_docker(
-        PathBuf::from("docker"),
+        DockerCommand::default(),
         name,
         project,
         refresh_interval,
@@ -122,7 +163,7 @@ pub fn project_status_stream(
 }
 
 pub fn project_status_stream_with_docker(
-    docker_binary: PathBuf,
+    docker_command: DockerCommand,
     name: String,
     project: Project,
     refresh_interval: Duration,
@@ -134,7 +175,7 @@ pub fn project_status_stream_with_docker(
 
         loop {
             match query_project_status_with_docker(
-                &docker_binary,
+                &docker_command,
                 &project.docker_compose,
                 &project.name,
             )
@@ -169,17 +210,6 @@ pub fn project_status_stream_with_docker(
     });
 
     rx.boxed()
-}
-
-fn docker_command(docker_binary: &Path) -> Command {
-    #[cfg(test)]
-    if let Some(cmd) = TEST_DOCKER_CMD.lock().unwrap().clone() {
-        let mut command = Command::new(&cmd[0]);
-        command.args(&cmd[1..]);
-        return command;
-    }
-
-    Command::new(docker_binary)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

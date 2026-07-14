@@ -6,6 +6,7 @@ use nirion_lib::config::{
     build_nix_project_file, load_auth_config, load_locked_images,
     load_projects, nix_config_target,
 };
+use nirion_lib::docker::DockerCommand;
 use nirion_lib::lock::LockedImages;
 use nirion_lib::projects::{
     Project, Projects, ServiceSelector, TargetSelector, parse_selector,
@@ -302,7 +303,7 @@ async fn main() -> anyhow::Result<()> {
         locked_images,
         lock_file,
         oci_client,
-        docker_binary: PathBuf::from("docker"),
+        docker_command: DockerCommand::default(),
     };
 
     handle_command(&cli.command, &context).await?;

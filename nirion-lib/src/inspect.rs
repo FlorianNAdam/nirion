@@ -1,17 +1,11 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
-use std::path::{Path, PathBuf};
-use tokio::process::Command;
 
 use crate::{
-    docker::query_project_status_with_docker,
+    docker::{DockerCommand, query_project_status_with_docker},
     lock::LockedImages,
     projects::{ProjectSelector, Projects, ServiceSelector},
 };
-
-#[cfg(test)]
-static TEST_DOCKER_CMD: std::sync::Mutex<Option<Vec<String>>> =
-    std::sync::Mutex::new(None);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InspectTarget {
@@ -28,7 +22,7 @@ pub async fn inspect_project(
     raw: bool,
 ) -> anyhow::Result<Vec<String>> {
     inspect_project_with_docker(
-        PathBuf::from("docker"),
+        DockerCommand::default(),
         target,
         inspect_target,
         projects,
@@ -40,7 +34,7 @@ pub async fn inspect_project(
 }
 
 pub async fn inspect_project_with_docker(
-    docker_binary: PathBuf,
+    docker_command: DockerCommand,
     target: &ProjectSelector,
     inspect_target: &InspectTarget,
     projects: &Projects,
@@ -57,7 +51,7 @@ pub async fn inspect_project_with_docker(
             service: service.to_string(),
         };
         match inspect_service_with_docker(
-            &docker_binary,
+            &docker_command,
             &service_selector,
             inspect_target,
             projects,
@@ -94,7 +88,7 @@ pub async fn inspect_service(
     raw: bool,
 ) -> anyhow::Result<String> {
     inspect_service_with_docker(
-        Path::new("docker"),
+        &DockerCommand::default(),
         target,
         inspect_target,
         projects,
@@ -106,7 +100,7 @@ pub async fn inspect_service(
 }
 
 pub async fn inspect_service_with_docker(
-    docker_binary: &Path,
+    docker_command: &DockerCommand,
     target: &ServiceSelector,
     inspect_target: &InspectTarget,
     projects: &Projects,
@@ -117,7 +111,7 @@ pub async fn inspect_service_with_docker(
     let output = match inspect_target {
         InspectTarget::Image => {
             inspect_image(
-                docker_binary,
+                docker_command,
                 target,
                 projects,
                 locked_images,
@@ -127,7 +121,7 @@ pub async fn inspect_service_with_docker(
             .await?
         }
         InspectTarget::Container => {
-            inspect_container(docker_binary, target, projects, format, raw)
+            inspect_container(docker_command, target, projects, format, raw)
                 .await?
         }
     };
@@ -135,7 +129,7 @@ pub async fn inspect_service_with_docker(
 }
 
 async fn inspect_image(
-    docker_binary: &Path,
+    docker_command: &DockerCommand,
     target: &ServiceSelector,
     projects: &Projects,
     locked_images: &LockedImages,
@@ -163,7 +157,8 @@ async fn inspect_image(
         base_image.to_string()
     };
 
-    let output = docker_command(docker_binary)
+    let output = docker_command
+        .command()
         .arg("image")
         .arg("inspect")
         .arg("--format")
@@ -193,7 +188,7 @@ async fn inspect_image(
 }
 
 async fn inspect_container(
-    docker_binary: &Path,
+    docker_command: &DockerCommand,
     target: &ServiceSelector,
     projects: &Projects,
     format: &str,
@@ -202,7 +197,7 @@ async fn inspect_container(
     let project = &projects.get(&target.project).unwrap();
 
     let project_status = query_project_status_with_docker(
-        docker_binary,
+        docker_command,
         &project.docker_compose,
         &project.name,
     )
@@ -215,7 +210,8 @@ async fn inspect_container(
             anyhow::anyhow!("Service {} missing from status", &target.service)
         })?;
 
-    let output = docker_command(docker_binary)
+    let output = docker_command
+        .command()
         .arg("inspect")
         .arg("--format")
         .arg(format)
@@ -256,47 +252,11 @@ fn pretty_json(string: &str) -> String {
     }
 }
 
-fn docker_command(docker_binary: &Path) -> Command {
-    #[cfg(test)]
-    if let Some(cmd) = TEST_DOCKER_CMD.lock().unwrap().clone() {
-        let mut command = Command::new(&cmd[0]);
-        command.args(&cmd[1..]);
-        return command;
-    }
-
-    Command::new(docker_binary)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::lock::VersionedImage;
     use std::{fs, io::Write, os::unix::fs::PermissionsExt, path::Path};
-
-    static DOCKER_BIN_LOCK: tokio::sync::Mutex<()> =
-        tokio::sync::Mutex::const_new(());
-
-    struct DockerBinGuard;
-
-    impl DockerBinGuard {
-        fn set(script: String) -> Self {
-            let cmd = vec!["/bin/sh".to_string(), script];
-            *TEST_DOCKER_CMD.lock().unwrap() = Some(cmd.clone());
-            *crate::docker::TEST_DOCKER_CMD
-                .lock()
-                .unwrap() = Some(cmd);
-            Self
-        }
-    }
-
-    impl Drop for DockerBinGuard {
-        fn drop(&mut self) {
-            *TEST_DOCKER_CMD.lock().unwrap() = None;
-            *crate::docker::TEST_DOCKER_CMD
-                .lock()
-                .unwrap() = None;
-        }
-    }
 
     fn projects() -> Projects {
         serde_json::from_value(serde_json::json!({
@@ -409,6 +369,10 @@ exit {inspect_exit_code}
         docker.to_string_lossy().to_string()
     }
 
+    fn fake_docker_command(script: &str) -> DockerCommand {
+        DockerCommand::with_args("/bin/sh", [script])
+    }
+
     fn compose_ps_service(service: &str, id: &str) -> String {
         serde_json::json!({
             "ID": id,
@@ -468,7 +432,6 @@ exit {inspect_exit_code}
 
     #[tokio::test]
     async fn inspect_image_uses_base_image_without_lock_entry() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(
@@ -478,10 +441,9 @@ exit {inspect_exit_code}
             "",
             0,
         );
-        let _docker_bin_guard = DockerBinGuard::set(docker);
 
         let output = inspect_image(
-            Path::new("docker"),
+            &fake_docker_command(&docker),
             &target("web"),
             &projects(),
             &LockedImages::default(),
@@ -500,7 +462,6 @@ exit {inspect_exit_code}
 
     #[tokio::test]
     async fn inspect_image_uses_locked_digest_and_pretty_prints_json() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(
@@ -510,7 +471,6 @@ exit {inspect_exit_code}
             "",
             0,
         );
-        let _docker_bin_guard = DockerBinGuard::set(docker);
         let mut locked_images = LockedImages::default();
         locked_images.insert(
             "myapp.web".into(),
@@ -522,7 +482,7 @@ exit {inspect_exit_code}
         );
 
         let output = inspect_image(
-            Path::new("docker"),
+            &fake_docker_command(&docker),
             &target("web"),
             &projects(),
             &locked_images,
@@ -549,14 +509,12 @@ exit {inspect_exit_code}
     #[tokio::test]
     async fn inspect_image_reports_missing_service_image_before_running_docker()
     {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, "{}", "", 0);
-        let _docker_bin_guard = DockerBinGuard::set(docker);
 
         let err = inspect_image(
-            Path::new("docker"),
+            &fake_docker_command(&docker),
             &target("worker"),
             &projects(),
             &LockedImages::default(),
@@ -572,14 +530,12 @@ exit {inspect_exit_code}
 
     #[tokio::test]
     async fn inspect_image_reports_missing_service_before_running_docker() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, "{}", "", 0);
-        let _docker_bin_guard = DockerBinGuard::set(docker);
 
         let err = inspect_image(
-            Path::new("docker"),
+            &fake_docker_command(&docker),
             &target("missing"),
             &projects(),
             &LockedImages::default(),
@@ -595,7 +551,6 @@ exit {inspect_exit_code}
 
     #[tokio::test]
     async fn inspect_image_reports_docker_failure_with_stderr() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(
@@ -605,10 +560,9 @@ exit {inspect_exit_code}
             "image not found",
             17,
         );
-        let _docker_bin_guard = DockerBinGuard::set(docker);
 
         let err = inspect_image(
-            Path::new("docker"),
+            &fake_docker_command(&docker),
             &target("web"),
             &projects(),
             &LockedImages::default(),
@@ -625,14 +579,13 @@ exit {inspect_exit_code}
 
     #[tokio::test]
     async fn inspect_service_dispatches_image_inspect() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker =
             write_fake_docker(dir.path(), &args_file, r#"{"Id":"abc"}"#, "", 0);
-        let _docker_bin_guard = DockerBinGuard::set(docker);
 
-        let output = inspect_service(
+        let output = inspect_service_with_docker(
+            &fake_docker_command(&docker),
             &target("web"),
             &InspectTarget::Image,
             &projects(),
@@ -653,7 +606,6 @@ exit {inspect_exit_code}
 
     #[tokio::test]
     async fn inspect_container_pretty_prints_container_json() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_container_docker(
@@ -664,10 +616,9 @@ exit {inspect_exit_code}
             "",
             0,
         );
-        let _docker_bin_guard = DockerBinGuard::set(docker);
 
         let output = inspect_container(
-            Path::new("docker"),
+            &fake_docker_command(&docker),
             &target("web"),
             &projects(),
             "{{json .}}",
@@ -691,7 +642,6 @@ exit {inspect_exit_code}
 
     #[tokio::test]
     async fn inspect_service_dispatches_container_inspect_raw() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_container_docker(
@@ -702,9 +652,9 @@ exit {inspect_exit_code}
             "",
             0,
         );
-        let _docker_bin_guard = DockerBinGuard::set(docker);
 
-        let output = inspect_service(
+        let output = inspect_service_with_docker(
+            &fake_docker_command(&docker),
             &target("web"),
             &InspectTarget::Container,
             &projects(),
@@ -720,7 +670,6 @@ exit {inspect_exit_code}
 
     #[tokio::test]
     async fn inspect_container_reports_missing_service_status() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_container_docker(
@@ -731,10 +680,9 @@ exit {inspect_exit_code}
             "",
             0,
         );
-        let _docker_bin_guard = DockerBinGuard::set(docker);
 
         let err = inspect_container(
-            Path::new("docker"),
+            &fake_docker_command(&docker),
             &target("web"),
             &projects(),
             "{{json .}}",
@@ -748,7 +696,6 @@ exit {inspect_exit_code}
 
     #[tokio::test]
     async fn inspect_container_reports_docker_failure_with_stderr() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_container_docker(
@@ -759,10 +706,9 @@ exit {inspect_exit_code}
             "container gone",
             4,
         );
-        let _docker_bin_guard = DockerBinGuard::set(docker);
 
         let err = inspect_container(
-            Path::new("docker"),
+            &fake_docker_command(&docker),
             &target("web"),
             &projects(),
             "{{json .}}",
@@ -778,12 +724,10 @@ exit {inspect_exit_code}
 
     #[tokio::test]
     async fn inspect_project_collects_outputs_for_services() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker =
             write_fake_docker(dir.path(), &args_file, r#"{"ok":true}"#, "", 0);
-        let _docker_bin_guard = DockerBinGuard::set(docker);
         let projects: Projects = serde_json::from_value(serde_json::json!({
             "myapp": {
                 "name": "myapp",
@@ -799,7 +743,8 @@ exit {inspect_exit_code}
         }))
         .unwrap();
 
-        let outputs = inspect_project(
+        let outputs = inspect_project_with_docker(
+            fake_docker_command(&docker),
             &crate::projects::ProjectSelector {
                 name: "myapp".into(),
             },
@@ -817,13 +762,12 @@ exit {inspect_exit_code}
 
     #[tokio::test]
     async fn inspect_project_reports_service_failures() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, "{}", "", 0);
-        let _docker_bin_guard = DockerBinGuard::set(docker);
 
-        let err = inspect_project(
+        let err = inspect_project_with_docker(
+            fake_docker_command(&docker),
             &crate::projects::ProjectSelector {
                 name: "myapp".into(),
             },

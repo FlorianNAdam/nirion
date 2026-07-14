@@ -25,7 +25,7 @@ pub async fn handle_top(
     let cmd: Vec<&str> = vec!["top"];
 
     compose_target_cmd(
-        &context.docker_binary,
+        &context.docker_command,
         &args.target,
         &context.projects,
         &cmd,

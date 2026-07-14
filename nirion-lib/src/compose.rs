@@ -1,17 +1,11 @@
-use std::{
-    ops::Deref,
-    path::{Path, PathBuf},
-    process::Stdio,
-};
+use std::{ops::Deref, process::Stdio};
 
 use anyhow::Context;
 use futures::{StreamExt, channel::mpsc, stream::BoxStream};
-use tokio::{
-    io::{AsyncBufReadExt, BufReader},
-    process::Command,
-};
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::{
+    docker::DockerCommand,
     events::{ComposeEvent, ProcessEvent},
     projects::{ProjectName, Projects, TargetSelector},
 };
@@ -22,26 +16,22 @@ pub enum ComposeConcurrency {
     Parallel,
 }
 
-#[cfg(test)]
-static TEST_DOCKER_CMD: std::sync::Mutex<Option<Vec<String>>> =
-    std::sync::Mutex::new(None);
-
 pub fn compose_target(
     target: TargetSelector,
     projects: Projects,
     args: Vec<String>,
 ) -> BoxStream<'static, anyhow::Result<ComposeEvent>> {
-    compose_target_with_docker(PathBuf::from("docker"), target, projects, args)
+    compose_target_with_docker(DockerCommand::default(), target, projects, args)
 }
 
 pub fn compose_target_with_docker(
-    docker_binary: PathBuf,
+    docker_command: DockerCommand,
     target: TargetSelector,
     projects: Projects,
     args: Vec<String>,
 ) -> BoxStream<'static, anyhow::Result<ComposeEvent>> {
     compose_target_with_concurrency(
-        docker_binary,
+        docker_command,
         target,
         projects,
         args,
@@ -50,7 +40,7 @@ pub fn compose_target_with_docker(
 }
 
 pub fn compose_target_with_concurrency(
-    docker_binary: PathBuf,
+    docker_command: DockerCommand,
     target: TargetSelector,
     projects: Projects,
     args: Vec<String>,
@@ -58,21 +48,24 @@ pub fn compose_target_with_concurrency(
 ) -> BoxStream<'static, anyhow::Result<ComposeEvent>> {
     match concurrency {
         ComposeConcurrency::Sequential => {
-            compose_target_sequential(docker_binary, target, projects, args)
+            compose_target_sequential(docker_command, target, projects, args)
         }
         ComposeConcurrency::Parallel => match target {
             TargetSelector::All => {
-                compose_target_all_parallel(docker_binary, projects, args)
+                compose_target_all_parallel(docker_command, projects, args)
             }
-            target => {
-                compose_target_sequential(docker_binary, target, projects, args)
-            }
+            target => compose_target_sequential(
+                docker_command,
+                target,
+                projects,
+                args,
+            ),
         },
     }
 }
 
 fn compose_target_sequential(
-    docker_binary: PathBuf,
+    docker_command: DockerCommand,
     target: TargetSelector,
     projects: Projects,
     args: Vec<String>,
@@ -91,7 +84,7 @@ fn compose_target_sequential(
                         }));
 
                     let mut stream = compose_cmd(
-                        docker_binary.clone(),
+                        docker_command.clone(),
                         project.docker_compose.clone(),
                         project.name.clone(),
                         args.clone(),
@@ -124,7 +117,7 @@ fn compose_target_sequential(
             TargetSelector::Project(proj) => {
                 let project = projects[&proj.name].clone();
                 let mut stream = compose_cmd(
-                    docker_binary.clone(),
+                    docker_command.clone(),
                     project.docker_compose,
                     project.name,
                     args.clone(),
@@ -155,7 +148,7 @@ fn compose_target_sequential(
                 cmd_args.push(sel.service.clone());
 
                 let mut stream = compose_cmd(
-                    docker_binary,
+                    docker_command,
                     project.docker_compose,
                     project.name,
                     cmd_args,
@@ -197,7 +190,7 @@ fn compose_target_sequential(
 }
 
 fn compose_target_all_parallel(
-    docker_binary: PathBuf,
+    docker_command: DockerCommand,
     projects: Projects,
     args: Vec<String>,
 ) -> BoxStream<'static, anyhow::Result<ComposeEvent>> {
@@ -210,7 +203,7 @@ fn compose_target_all_parallel(
             let name = name.to_string();
             let project = project.clone();
             let args = args.clone();
-            let docker_binary = docker_binary.clone();
+            let docker_command = docker_command.clone();
             let tx = tx.clone();
 
             let _ = tx.unbounded_send(Ok(ComposeEvent::ProjectStarted {
@@ -219,7 +212,7 @@ fn compose_target_all_parallel(
 
             handles.push(tokio::spawn(async move {
                 let mut stream = compose_cmd(
-                    docker_binary,
+                    docker_command,
                     project.docker_compose,
                     project.name,
                     args,
@@ -273,13 +266,13 @@ fn compose_target_all_parallel(
 }
 
 pub fn compose_cmd(
-    docker_binary: PathBuf,
+    docker_command: DockerCommand,
     compose_file: String,
     project_name: ProjectName,
     args: Vec<String>,
 ) -> BoxStream<'static, anyhow::Result<ProcessEvent>> {
     run_docker_compose(
-        docker_binary,
+        docker_command,
         build_compose_args(compose_file, project_name, args),
     )
 }
@@ -301,13 +294,14 @@ fn build_compose_args(
 }
 
 pub fn run_docker_compose(
-    docker_binary: PathBuf,
+    docker_command: DockerCommand,
     cmd_args: Vec<String>,
 ) -> BoxStream<'static, anyhow::Result<ProcessEvent>> {
     let (tx, rx) = mpsc::unbounded();
 
     tokio::spawn(async move {
-        let mut child = match docker_command(&docker_binary)
+        let mut child = match docker_command
+            .command()
             .arg("compose")
             .args(cmd_args)
             .stdout(Stdio::piped())
@@ -390,45 +384,10 @@ pub fn run_docker_compose(
     rx.boxed()
 }
 
-fn docker_command(docker_binary: &Path) -> Command {
-    #[cfg(test)]
-    if let Some(cmd) = TEST_DOCKER_CMD.lock().unwrap().clone() {
-        let mut command = Command::new(&cmd[0]);
-        command.args(&cmd[1..]);
-        return command;
-    }
-
-    Command::new(docker_binary)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::{fs, os::unix::fs::PermissionsExt, path::Path};
-
-    static DOCKER_BIN_LOCK: tokio::sync::Mutex<()> =
-        tokio::sync::Mutex::const_new(());
-
-    struct DockerBinGuard;
-
-    impl DockerBinGuard {
-        fn set_script(script: String) -> Self {
-            *TEST_DOCKER_CMD.lock().unwrap() =
-                Some(vec!["/bin/sh".to_string(), script]);
-            Self
-        }
-
-        fn set_command(command: String) -> Self {
-            *TEST_DOCKER_CMD.lock().unwrap() = Some(vec![command]);
-            Self
-        }
-    }
-
-    impl Drop for DockerBinGuard {
-        fn drop(&mut self) {
-            *TEST_DOCKER_CMD.lock().unwrap() = None;
-        }
-    }
 
     async fn collect_events(
         stream: BoxStream<'static, anyhow::Result<ProcessEvent>>,
@@ -442,8 +401,10 @@ mod tests {
         exit_code: i32,
     ) -> String {
         let docker = dir.join("docker");
-        fs::write(
-            &docker,
+        let tmp = dir.join("docker.tmp");
+        let mut file = fs::File::create(&tmp).unwrap();
+        use std::io::Write;
+        file.write_all(
             format!(
                 r#"#!/bin/sh
 printf '%s\n' "$@" > '{}'
@@ -452,17 +413,25 @@ echo stderr-line >&2
 exit {exit_code}
 "#,
                 args_file.display()
-            ),
+            )
+            .as_bytes(),
         )
         .unwrap();
+        file.sync_all().unwrap();
+        drop(file);
 
-        let mut permissions = fs::metadata(&docker)
+        let mut permissions = fs::metadata(&tmp)
             .unwrap()
             .permissions();
         permissions.set_mode(0o755);
-        fs::set_permissions(&docker, permissions).unwrap();
+        fs::set_permissions(&tmp, permissions).unwrap();
+        fs::rename(&tmp, &docker).unwrap();
 
         docker.to_string_lossy().to_string()
+    }
+
+    fn fake_docker_command(script: &str) -> DockerCommand {
+        DockerCommand::with_args("/bin/sh", [script])
     }
 
     fn projects() -> Projects {
@@ -536,14 +505,12 @@ exit {exit_code}
 
     #[tokio::test]
     async fn run_docker_compose_streams_output_and_exit_status() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
-        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
         let events = collect_events(run_docker_compose(
-            PathBuf::from("docker"),
+            fake_docker_command(&docker),
             vec!["ps".into(), "--format".into(), "json".into()],
         ))
         .await;
@@ -570,14 +537,12 @@ exit {exit_code}
 
     #[tokio::test]
     async fn run_docker_compose_emits_error_for_failed_exit_status() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 42);
-        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
         let events = collect_events(run_docker_compose(
-            PathBuf::from("docker"),
+            fake_docker_command(&docker),
             vec!["up".into()],
         ))
         .await;
@@ -598,17 +563,11 @@ exit {exit_code}
 
     #[tokio::test]
     async fn run_docker_compose_reports_spawn_failure() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let missing_docker = dir.path().join("missing-docker");
-        let _docker_bin_guard = DockerBinGuard::set_command(
-            missing_docker
-                .to_string_lossy()
-                .to_string(),
-        );
 
         let events = collect_events(run_docker_compose(
-            PathBuf::from("docker"),
+            DockerCommand::new(missing_docker),
             vec!["ps".into()],
         ))
         .await;
@@ -621,14 +580,12 @@ exit {exit_code}
 
     #[tokio::test]
     async fn compose_cmd_builds_args_and_streams_events() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
-        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
         let events = collect_events(compose_cmd(
-            PathBuf::from("docker"),
+            fake_docker_command(&docker),
             "compose.yml".into(),
             ProjectName("myapp".into()),
             vec!["logs".into()],
@@ -644,13 +601,12 @@ exit {exit_code}
 
     #[tokio::test]
     async fn compose_target_project_wraps_process_events() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
-        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
-        let events = collect_compose_events(compose_target(
+        let events = collect_compose_events(compose_target_with_docker(
+            fake_docker_command(&docker),
             TargetSelector::Project(crate::projects::ProjectSelector {
                 name: "api".into(),
             }),
@@ -675,13 +631,12 @@ exit {exit_code}
 
     #[tokio::test]
     async fn compose_target_service_appends_service_name() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
-        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
-        let events = collect_compose_events(compose_target(
+        let events = collect_compose_events(compose_target_with_docker(
+            fake_docker_command(&docker),
             TargetSelector::Service(crate::projects::ServiceSelector {
                 project: "api".into(),
                 service: "web".into(),
@@ -700,13 +655,12 @@ exit {exit_code}
 
     #[tokio::test]
     async fn compose_target_service_reports_failure() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 9);
-        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
-        let events = collect_compose_events(compose_target(
+        let events = collect_compose_events(compose_target_with_docker(
+            fake_docker_command(&docker),
             TargetSelector::Service(crate::projects::ServiceSelector {
                 project: "api".into(),
                 service: "web".into(),
@@ -728,13 +682,12 @@ exit {exit_code}
 
     #[tokio::test]
     async fn compose_target_all_emits_project_boundaries() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
-        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
-        let events = collect_compose_events(compose_target(
+        let events = collect_compose_events(compose_target_with_docker(
+            fake_docker_command(&docker),
             TargetSelector::All,
             projects(),
             vec!["pull".into()],
@@ -754,14 +707,12 @@ exit {exit_code}
 
     #[tokio::test]
     async fn compose_target_parallel_all_emits_project_boundaries() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
-        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
         let events = collect_compose_events(compose_target_with_concurrency(
-            PathBuf::from("docker"),
+            fake_docker_command(&docker),
             TargetSelector::All,
             projects(),
             vec!["pull".into()],
@@ -782,13 +733,12 @@ exit {exit_code}
 
     #[tokio::test]
     async fn compose_target_project_reports_failure() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 2);
-        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
-        let events = collect_compose_events(compose_target(
+        let events = collect_compose_events(compose_target_with_docker(
+            fake_docker_command(&docker),
             TargetSelector::Project(crate::projects::ProjectSelector {
                 name: "api".into(),
             }),
@@ -809,13 +759,12 @@ exit {exit_code}
 
     #[tokio::test]
     async fn compose_target_all_collects_failures_and_continues() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 5);
-        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
-        let events = collect_compose_events(compose_target(
+        let events = collect_compose_events(compose_target_with_docker(
+            fake_docker_command(&docker),
             TargetSelector::All,
             projects(),
             vec!["up".into()],
@@ -841,14 +790,12 @@ exit {exit_code}
 
     #[tokio::test]
     async fn compose_target_parallel_all_collects_failures() {
-        let _docker_bin_lock = DOCKER_BIN_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 5);
-        let _docker_bin_guard = DockerBinGuard::set_script(docker);
 
         let events = collect_compose_events(compose_target_with_concurrency(
-            PathBuf::from("docker"),
+            fake_docker_command(&docker),
             TargetSelector::All,
             projects(),
             vec!["up".into()],

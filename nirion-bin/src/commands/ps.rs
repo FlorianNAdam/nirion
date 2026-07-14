@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use crossterm::style::Stylize;
 use nirion_lib::docker::{
-    query_project_status_with_docker, Port, ServiceStatus,
+    query_project_status_with_docker, DockerCommand, Port, ServiceStatus,
 };
 use nirion_tui_lib::table::print_table;
 use std::collections::HashSet;
@@ -126,7 +126,7 @@ async fn legacy_ps(args: &PsArgs, context: &NirionContext) -> Result<()> {
         .collect();
 
     compose_target_cmd(
-        &context.docker_binary,
+        &context.docker_command,
         &args.target,
         &context.projects,
         &cmd_slices,
@@ -142,7 +142,7 @@ async fn fancy_ps(args: &PsArgs, context: &NirionContext) -> Result<()> {
             for (project_name, project) in context.projects.iter() {
                 rows.extend(
                     print_project_status(
-                        &context.docker_binary,
+                        &context.docker_command,
                         project_name,
                         project,
                     )
@@ -155,7 +155,7 @@ async fn fancy_ps(args: &PsArgs, context: &NirionContext) -> Result<()> {
             if let Some(project) = context.projects.get(&sel.name) {
                 rows.extend(
                     print_project_status(
-                        &context.docker_binary,
+                        &context.docker_command,
                         &sel.name,
                         project,
                     )
@@ -168,7 +168,7 @@ async fn fancy_ps(args: &PsArgs, context: &NirionContext) -> Result<()> {
             if let Some(project) = context.projects.get(&sel.project) {
                 let project_name = &project.name;
                 let status = query_project_status_with_docker(
-                    &context.docker_binary,
+                    &context.docker_command,
                     &project.docker_compose,
                     &project_name,
                 )
@@ -187,7 +187,7 @@ async fn fancy_ps(args: &PsArgs, context: &NirionContext) -> Result<()> {
 }
 
 async fn print_project_status(
-    docker_binary: &std::path::Path,
+    docker_command: &DockerCommand,
     project_name: &str,
     project: &Project,
 ) -> anyhow::Result<Vec<String>> {
@@ -197,7 +197,7 @@ async fn print_project_status(
 
     let project_name = &project.name;
     let status = query_project_status_with_docker(
-        docker_binary,
+        docker_command,
         &project.docker_compose,
         project_name,
     )

@@ -51,7 +51,7 @@ pub async fn handle_exec(
     context: &NirionContext,
 ) -> anyhow::Result<()> {
     exec_with_docker(
-        &context.docker_binary,
+        &context.docker_command,
         &context.projects,
         &ExecRequest {
             target: args.target.clone(),
