@@ -14,8 +14,8 @@ use nirion_lib::projects::{
     parse_service_selector,
 };
 use nirion_oci_lib::client::NirionOciClient;
-use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
+use std::{ffi::OsString, path::PathBuf};
 
 mod commands;
 mod docker;
@@ -257,6 +257,12 @@ struct Cli {
     #[arg(long, env = "NIRION_AUTH_FILE", hide_env_values = true)]
     auth_file: Option<PathBuf>,
 
+    #[arg(long, hide = true, value_name = "PROGRAM")]
+    docker_command: Option<PathBuf>,
+
+    #[arg(long, hide = true, value_name = "ARG")]
+    docker_command_arg: Vec<OsString>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -266,6 +272,18 @@ impl Cli {
         &self
     ) -> anyhow::Result<nirion_oci_lib::client::AuthConfig> {
         load_auth_config(self.auth_file.as_deref())
+    }
+
+    fn docker_command(&self) -> DockerCommand {
+        self.docker_command
+            .clone()
+            .map(|program| {
+                DockerCommand::with_args(
+                    program,
+                    self.docker_command_arg.clone(),
+                )
+            })
+            .unwrap_or_default()
     }
 }
 
@@ -304,7 +322,7 @@ async fn main() -> anyhow::Result<()> {
         locked_images,
         lock_file,
         oci_client,
-        docker_command: DockerCommand::default(),
+        docker_command: cli.docker_command(),
     };
 
     handle_command(&cli.command, &context).await?;
