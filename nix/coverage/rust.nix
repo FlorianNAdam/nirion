@@ -25,6 +25,7 @@ pkgs.writeShellApplication {
     cargo
     cargo-tarpaulin
     coreutils
+    distribution
     openssl
     pkg-config
     rustc

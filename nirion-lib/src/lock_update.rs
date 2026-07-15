@@ -240,9 +240,7 @@ mod tests {
 
     #[tokio::test]
     async fn adds_new_image_and_writes_lock_file() -> anyhow::Result<()> {
-        let Some(handle) = RegistryHandle::start_anonymous().await? else {
-            return Ok(());
-        };
+        let handle = RegistryHandle::start_anonymous().await?;
         let test_image = handle
             .push(
                 "library/nirion-lock-update",
@@ -289,9 +287,7 @@ mod tests {
 
     #[tokio::test]
     async fn unchanged_locked_image_reports_up_to_date() -> anyhow::Result<()> {
-        let Some(handle) = RegistryHandle::start_anonymous().await? else {
-            return Ok(());
-        };
+        let handle = RegistryHandle::start_anonymous().await?;
         let test_image = handle
             .push(
                 "library/nirion-lock-update",
@@ -336,9 +332,7 @@ mod tests {
     #[tokio::test]
     async fn stale_locked_image_updates_digest_and_writes_lock_file()
     -> anyhow::Result<()> {
-        let Some(handle) = RegistryHandle::start_anonymous().await? else {
-            return Ok(());
-        };
+        let handle = RegistryHandle::start_anonymous().await?;
         let test_image = handle
             .push(
                 "library/nirion-lock-update",
