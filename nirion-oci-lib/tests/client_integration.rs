@@ -24,11 +24,7 @@ use tokio::{
 #[tokio::test]
 async fn resolves_local_registry_image_with_mocked_docker_hub_metadata()
 -> anyhow::Result<()> {
-    let Some((_handle, test_image)) =
-        push_anonymous_test_image("latest").await?
-    else {
-        return Ok(());
-    };
+    let (_handle, test_image) = push_anonymous_test_image("latest").await?;
 
     let (hub_base_url, hub_server) =
         start_mock_docker_hub(&test_image.digest).await?;
@@ -55,11 +51,7 @@ async fn resolves_local_registry_image_with_mocked_docker_hub_metadata()
 #[tokio::test]
 async fn resolves_local_registry_image_with_generic_oci_tags()
 -> anyhow::Result<()> {
-    let Some((_handle, test_image)) =
-        push_anonymous_test_image("1.2.3").await?
-    else {
-        return Ok(());
-    };
+    let (_handle, test_image) = push_anonymous_test_image("1.2.3").await?;
 
     let client = http_nirion_client().build();
 
@@ -77,11 +69,7 @@ async fn resolves_local_registry_image_with_generic_oci_tags()
 #[tokio::test]
 async fn updated_image_preserves_version_when_digest_is_unchanged()
 -> anyhow::Result<()> {
-    let Some((_handle, test_image)) =
-        push_anonymous_test_image("1.2.3").await?
-    else {
-        return Ok(());
-    };
+    let (_handle, test_image) = push_anonymous_test_image("1.2.3").await?;
 
     let client = http_nirion_client().build();
     let current = VersionedImage {
@@ -102,11 +90,7 @@ async fn updated_image_preserves_version_when_digest_is_unchanged()
 #[tokio::test]
 async fn updated_image_resolves_version_when_digest_changes()
 -> anyhow::Result<()> {
-    let Some((_handle, test_image)) =
-        push_anonymous_test_image("1.2.3").await?
-    else {
-        return Ok(());
-    };
+    let (_handle, test_image) = push_anonymous_test_image("1.2.3").await?;
 
     let client = http_nirion_client().build();
     let current = VersionedImage {
@@ -128,9 +112,7 @@ async fn updated_image_resolves_version_when_digest_changes()
 
 #[tokio::test]
 async fn resolves_repository_scoped_auth() -> anyhow::Result<()> {
-    let Some(handle) = RegistryHandle::start(&[ACCOUNT_A]).await? else {
-        return Ok(());
-    };
+    let handle = RegistryHandle::start(&[ACCOUNT_A]).await?;
 
     let test_image = handle
         .push(
@@ -163,9 +145,7 @@ async fn resolves_repository_scoped_auth() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn falls_back_to_registry_scoped_auth() -> anyhow::Result<()> {
-    let Some(handle) = RegistryHandle::start(&[ACCOUNT_A]).await? else {
-        return Ok(());
-    };
+    let handle = RegistryHandle::start(&[ACCOUNT_A]).await?;
 
     let test_image = handle
         .push(
@@ -198,10 +178,7 @@ async fn falls_back_to_registry_scoped_auth() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn different_scopes_on_same_registry() -> anyhow::Result<()> {
-    let Some(handle) = RegistryHandle::start(&[ACCOUNT_A, ACCOUNT_B]).await?
-    else {
-        return Ok(());
-    };
+    let handle = RegistryHandle::start(&[ACCOUNT_A, ACCOUNT_B]).await?;
 
     let image_a = handle
         .push(
@@ -252,12 +229,8 @@ async fn different_scopes_on_same_registry() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn scoped_auth_isolation_across_registries() -> anyhow::Result<()> {
-    let Some(handle_a) = RegistryHandle::start(&[ACCOUNT_A]).await? else {
-        return Ok(());
-    };
-    let Some(handle_b) = RegistryHandle::start(&[ACCOUNT_B]).await? else {
-        return Ok(());
-    };
+    let handle_a = RegistryHandle::start(&[ACCOUNT_A]).await?;
+    let handle_b = RegistryHandle::start(&[ACCOUNT_B]).await?;
 
     let image_a = handle_a
         .push(
@@ -309,9 +282,7 @@ async fn scoped_auth_isolation_across_registries() -> anyhow::Result<()> {
 #[tokio::test]
 async fn updated_image_resolves_version_with_scoped_auth() -> anyhow::Result<()>
 {
-    let Some(handle) = RegistryHandle::start(&[ACCOUNT_A]).await? else {
-        return Ok(());
-    };
+    let handle = RegistryHandle::start(&[ACCOUNT_A]).await?;
 
     let test_image = handle
         .push(
@@ -461,9 +432,7 @@ async fn docker_hub_client_reports_unparseable_error_status()
 #[tokio::test]
 async fn oci_alias_tags_return_tags_with_matching_digest() -> anyhow::Result<()>
 {
-    let Some(handle) = RegistryHandle::start(&[]).await? else {
-        return Ok(());
-    };
+    let handle = RegistryHandle::start(&[]).await?;
 
     let latest = handle
         .push(

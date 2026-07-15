@@ -1,3 +1,11 @@
+use std::{
+    fs,
+    net::TcpListener,
+    path::PathBuf,
+    process::{Child, Command, Stdio},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use crate::{
     client::{AuthConfig, NirionOciClient, NirionOciClientConfig},
     oci_client::{
@@ -6,11 +14,6 @@ use crate::{
         config::ConfigFile,
         secrets::RegistryAuth,
     },
-};
-use testcontainers::{
-    ContainerRequest, GenericImage, ImageExt,
-    core::{IntoContainerPort, WaitFor},
-    runners::AsyncRunner,
 };
 
 pub struct TestImage {
@@ -38,47 +41,48 @@ pub const ACCOUNT_B: TestAccount = TestAccount {
 };
 
 pub struct RegistryHandle {
-    _container: testcontainers::ContainerAsync<GenericImage>,
+    child: Child,
+    _temp_dir: TempDir,
     pub addr: String,
 }
 
 impl RegistryHandle {
-    pub async fn start(
-        accounts: &[TestAccount]
-    ) -> anyhow::Result<Option<Self>> {
-        let image = if accounts.is_empty() {
-            ContainerRequest::from(registry_image())
-        } else {
-            let htpasswd = accounts
-                .iter()
-                .map(|a| a.htpasswd_line)
-                .collect::<Vec<_>>()
-                .join("\n");
-            ContainerRequest::from(registry_image())
-                .with_env_var("REGISTRY_AUTH", "htpasswd")
-                .with_env_var("REGISTRY_AUTH_HTPASSWD_REALM", "Registry Realm")
-                .with_env_var("REGISTRY_AUTH_HTPASSWD_PATH", "/auth/htpasswd")
-                .with_copy_to("/auth/htpasswd", htpasswd.into_bytes())
-        };
+    pub async fn start(accounts: &[TestAccount]) -> anyhow::Result<Self> {
+        let temp_dir = TempDir::new()?;
+        let port = unused_local_port()?;
+        let addr = format!("127.0.0.1:{port}");
+        let config = write_registry_config(temp_dir.path(), &addr, accounts)?;
+        let command = std::env::var("NIRION_TEST_REGISTRY_COMMAND")
+            .unwrap_or_else(|_| "registry".to_string());
 
-        match image.start().await {
-            Ok(container) => {
-                let port = container
-                    .get_host_port_ipv4(5000.tcp())
-                    .await?;
-                Ok(Some(Self {
-                    _container: container,
-                    addr: format!("127.0.0.1:{port}"),
-                }))
-            }
-            Err(err) => {
-                eprintln!("skipping Docker-backed OCI integration test: {err}");
-                Ok(None)
-            }
+        let child = Command::new(&command)
+            .arg("serve")
+            .arg(&config)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "failed to start test OCI registry using `{command}`; run through nix flake check or set NIRION_TEST_REGISTRY_COMMAND: {err}"
+                )
+            })?;
+
+        let mut handle = Self {
+            child,
+            _temp_dir: temp_dir,
+            addr,
+        };
+        if let Err(err) = handle.wait_until_ready().await {
+            let _ = handle.child.kill();
+            let _ = handle.child.wait();
+            return Err(err);
         }
+
+        Ok(handle)
     }
 
-    pub async fn start_anonymous() -> anyhow::Result<Option<Self>> {
+    pub async fn start_anonymous() -> anyhow::Result<Self> {
         Self::start(&[]).await
     }
 
@@ -88,7 +92,8 @@ impl RegistryHandle {
         tag: &str,
         auth: &RegistryAuth,
     ) -> anyhow::Result<TestImage> {
-        let image = format!("{}/{repository}:{tag}", self.addr);
+        let image = format!("/{repository}:{tag}");
+        let image = format!("{}{image}", self.addr);
         let reference = Reference::try_from(image.as_str())?;
 
         let oci_client = Client::new(ClientConfig {
@@ -122,19 +127,51 @@ impl RegistryHandle {
         self.push(repository, tag, &RegistryAuth::Anonymous)
             .await
     }
+
+    async fn wait_until_ready(&mut self) -> anyhow::Result<()> {
+        let client = reqwest::Client::new();
+        let url = format!("http://{}/v2/", self.addr);
+
+        for _ in 0..100 {
+            if let Some(status) = self.child.try_wait()? {
+                anyhow::bail!(
+                    "test OCI registry exited before becoming ready: {status}"
+                );
+            }
+
+            match client.get(&url).send().await {
+                Ok(response)
+                    if response.status().is_success()
+                        || response.status().as_u16() == 401 =>
+                {
+                    return Ok(());
+                }
+                _ => {
+                    tokio::time::sleep(std::time::Duration::from_millis(50))
+                        .await
+                }
+            }
+        }
+
+        anyhow::bail!("test OCI registry did not become ready at {url}")
+    }
+}
+
+impl Drop for RegistryHandle {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 pub async fn push_anonymous_test_image(
     tag: &str
-) -> anyhow::Result<Option<(RegistryHandle, TestImage)>> {
-    let Some(handle) = RegistryHandle::start_anonymous().await? else {
-        return Ok(None);
-    };
-
+) -> anyhow::Result<(RegistryHandle, TestImage)> {
+    let handle = RegistryHandle::start_anonymous().await?;
     let image = handle
         .push_anonymous("library/nirion-test", tag)
         .await?;
-    Ok(Some((handle, image)))
+    Ok((handle, image))
 }
 
 pub fn http_nirion_client() -> crate::client::NirionOciClientBuilder {
@@ -146,8 +183,87 @@ pub fn http_nirion_client() -> crate::client::NirionOciClientBuilder {
         })
 }
 
-fn registry_image() -> GenericImage {
-    GenericImage::new("registry", "3")
-        .with_exposed_port(5000.tcp())
-        .with_wait_for(WaitFor::message_on_stderr("listening on"))
+fn write_registry_config(
+    dir: &std::path::Path,
+    addr: &str,
+    accounts: &[TestAccount],
+) -> anyhow::Result<PathBuf> {
+    let storage = dir.join("storage");
+    fs::create_dir(&storage)?;
+
+    let auth = if accounts.is_empty() {
+        String::new()
+    } else {
+        let htpasswd = dir.join("htpasswd");
+        fs::write(
+            &htpasswd,
+            accounts
+                .iter()
+                .map(|account| account.htpasswd_line)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )?;
+        format!(
+            r#"
+auth:
+  htpasswd:
+    realm: Registry Realm
+    path: {}
+"#,
+            htpasswd.display()
+        )
+    };
+
+    let config = dir.join("config.yml");
+    fs::write(
+        &config,
+        format!(
+            r#"version: 0.1
+log:
+  level: error
+storage:
+  filesystem:
+    rootdirectory: {}
+http:
+  addr: {}
+{}
+"#,
+            storage.display(),
+            addr,
+            auth
+        ),
+    )?;
+
+    Ok(config)
+}
+
+fn unused_local_port() -> anyhow::Result<u16> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    Ok(listener.local_addr()?.port())
+}
+
+struct TempDir {
+    path: PathBuf,
+}
+
+impl TempDir {
+    fn new() -> anyhow::Result<Self> {
+        let id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)?
+            .as_nanos();
+        let path = std::env::temp_dir()
+            .join(format!("nirion-test-registry-{}-{id}", std::process::id()));
+        fs::create_dir(&path)?;
+        Ok(Self { path })
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
 }
