@@ -142,20 +142,35 @@ pub fn service_selector_completer(
         return completions;
     };
 
-    let (proj_prefix, svc_prefix) = if let Some(pos) = current.find('.') {
-        let (p, s) = current.split_at(pos);
-        (p, &s[1..])
-    } else {
-        (current, "")
-    };
+    let (project_prefix, service_prefix) = current
+        .split_once('.')
+        .map_or((current, None), |(project, service)| {
+            (project, Some(service))
+        });
 
     for (project_name, project) in projects.iter() {
-        if project_name.starts_with(proj_prefix) {
-            for service_name in project.services.keys() {
-                if service_name.starts_with(svc_prefix) {
+        match service_prefix {
+            Some(service_prefix) => {
+                if project_name != project_prefix {
+                    continue;
+                }
+
+                for service_name in project.services.keys() {
+                    if service_name.starts_with(service_prefix) {
+                        completions.push(CompletionCandidate::new(format!(
+                            "{project_name}.{service_name}"
+                        )));
+                    }
+                }
+            }
+            None => {
+                if !project_name.starts_with(project_prefix) {
+                    continue;
+                }
+
+                for service_name in project.services.keys() {
                     completions.push(CompletionCandidate::new(format!(
-                        "{}.{}",
-                        project_name, service_name
+                        "{project_name}.{service_name}"
                     )));
                 }
             }
