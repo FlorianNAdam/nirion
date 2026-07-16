@@ -118,6 +118,7 @@
             package = nirion;
             rust-tests = nirion.tests.rust;
           }
+          // import ./tests/contract { inherit pkgs self; }
           // import ./tests/module { inherit pkgs self; }
           // import ./tests/vm { inherit pkgs self; };
 
