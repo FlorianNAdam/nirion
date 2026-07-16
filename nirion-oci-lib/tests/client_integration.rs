@@ -406,6 +406,22 @@ async fn docker_hub_client_rejects_digest_references() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn docker_hub_client_rejects_unsupported_registry() -> anyhow::Result<()>
+{
+    let client = DockerHubClient::default();
+    let reference = Reference::try_from("ghcr.io/example/nirion-test:1.2.3")?;
+
+    assert!(matches!(
+        client
+            .fetch_all_tags(&reference, 100)
+            .await,
+        Err(DockerHubError::UnsupportedRegistry)
+    ));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn docker_hub_client_reports_unparseable_error_status()
 -> anyhow::Result<()> {
     let (base_url, server) =
@@ -475,26 +491,13 @@ async fn start_mock_docker_hub(
     let body = docker_hub_tags_response(digest);
 
     let server = tokio::spawn(async move {
-        let (mut socket, _) = listener.accept().await?;
-        let mut request = vec![0; 4096];
-        let read = socket.read(&mut request).await?;
-
-        if read == 0 {
-            return Err(std::io::Error::new(
-                ErrorKind::UnexpectedEof,
-                "mock Docker Hub request was empty",
-            )
-            .into());
-        }
-
-        let response = format!(
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-            body.len(),
-            body
-        );
-        socket
-            .write_all(response.as_bytes())
-            .await?;
+        serve_http_response(
+            &listener,
+            200,
+            &body,
+            "/repositories/library/nirion-test/tags?page_size=100&page=1",
+        )
+        .await?;
         Ok(())
     });
 
@@ -512,8 +515,20 @@ async fn start_paginated_mock_docker_hub()
     let second = docker_hub_tags_page(None, &["1.2.3"]);
 
     let server = tokio::spawn(async move {
-        serve_http_response(&listener, 200, &first).await?;
-        serve_http_response(&listener, 200, &second).await?;
+        serve_http_response(
+            &listener,
+            200,
+            &first,
+            "/repositories/library/nirion-test/tags?page_size=1&page=1",
+        )
+        .await?;
+        serve_http_response(
+            &listener,
+            200,
+            &second,
+            "/repositories/library/nirion-test/tags?page_size=1&page=2",
+        )
+        .await?;
         Ok(())
     });
 
@@ -527,7 +542,13 @@ async fn start_error_mock_docker_hub()
     let body = r#"{"detail":"nope","message":"failed"}"#.to_string();
 
     let server = tokio::spawn(async move {
-        serve_http_response(&listener, 500, &body).await?;
+        serve_http_response(
+            &listener,
+            500,
+            &body,
+            "/repositories/library/nirion-test/tags?page_size=100&page=1",
+        )
+        .await?;
         Ok(())
     });
 
@@ -542,7 +563,13 @@ async fn start_single_response_mock_docker_hub(
     let addr = listener.local_addr()?;
 
     let server = tokio::spawn(async move {
-        serve_http_response(&listener, status, &body).await?;
+        serve_http_response(
+            &listener,
+            status,
+            &body,
+            "/namespaces/library/repositories/nirion-test/tags/1.2.3",
+        )
+        .await?;
         Ok(())
     });
 
@@ -553,6 +580,7 @@ async fn serve_http_response(
     listener: &TcpListener,
     status: u16,
     body: &str,
+    expected_target: &str,
 ) -> anyhow::Result<()> {
     let (mut socket, _) = listener.accept().await?;
     let mut request = vec![0; 4096];
@@ -565,6 +593,16 @@ async fn serve_http_response(
         )
         .into());
     }
+
+    let request = std::str::from_utf8(&request[..read])?;
+    let target = request
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .ok_or_else(|| {
+            anyhow::anyhow!("mock Docker Hub request was invalid")
+        })?;
+    assert_eq!(target, expected_target);
 
     let reason = if status == 200 { "OK" } else { "Error" };
     let response = format!(
