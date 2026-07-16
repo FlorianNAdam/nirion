@@ -73,6 +73,53 @@ fn write_empty_projects(path: &Path) {
     .unwrap();
 }
 
+fn write_completion_projects(path: &Path) {
+    fs::write(
+        path,
+        r#"{
+  "app": {
+    "name": "app",
+    "dockerCompose": "app.yml",
+    "services": {
+      "web": {
+        "image": "nginx:latest",
+        "healthcheck": false,
+        "restart": null
+      },
+      "worker": {
+        "image": "alpine:latest",
+        "healthcheck": false,
+        "restart": null
+      }
+    }
+  },
+  "app2": {
+    "name": "app2",
+    "dockerCompose": "app2.yml",
+    "services": {
+      "web": {
+        "image": "nginx:latest",
+        "healthcheck": false,
+        "restart": null
+      }
+    }
+  },
+  "auth": {
+    "name": "auth",
+    "dockerCompose": "auth.yml",
+    "services": {
+      "server": {
+        "image": "authelia/authelia:latest",
+        "healthcheck": false,
+        "restart": null
+      }
+    }
+  }
+}"#,
+    )
+    .unwrap();
+}
+
 fn write_fake_docker(
     path: &Path,
     args_file: &Path,
@@ -166,6 +213,22 @@ fn nirion_command(
     command
 }
 
+fn fish_completion(
+    project_file: &Path,
+    words: &[&str],
+) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_nirion"))
+        .env("COMPLETE", "fish")
+        .env("NIRION_PROJECT_FILE", project_file)
+        .arg("--")
+        .args(words)
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    String::from_utf8(output.stdout).unwrap()
+}
+
 fn assert_success(output: &std::process::Output) {
     assert!(
         output.status.success(),
@@ -182,6 +245,83 @@ fn assert_failure(output: &std::process::Output) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn fish_completion_suggests_subcommands() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nirion"))
+        .env("COMPLETE", "fish")
+        .arg("--")
+        .args(["nirion", "u"])
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    let output = String::from_utf8(output.stdout).unwrap();
+
+    assert!(output.contains("up\tCreate and start service containers\n"));
+    assert!(output.contains("update\tUpdate lock file entries\n"));
+}
+
+#[test]
+fn fish_completion_suggests_projects_and_services_for_target() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    write_completion_projects(&project_file);
+
+    let output = fish_completion(&project_file, &["nirion", "up", "a"]);
+
+    assert!(output.contains("app\n"));
+    assert!(output.contains("app.web\n"));
+    assert!(output.contains("app.worker\n"));
+    assert!(output.contains("app2\n"));
+    assert!(output.contains("app2.web\n"));
+    assert!(output.contains("auth\n"));
+    assert!(output.contains("auth.server\n"));
+}
+
+#[test]
+fn fish_completion_after_dot_requires_exact_project_match() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    write_completion_projects(&project_file);
+
+    let output = fish_completion(&project_file, &["nirion", "up", "app."]);
+
+    assert!(output.contains("app.web\n"));
+    assert!(output.contains("app.worker\n"));
+    assert!(!output.contains("app2.web\n"));
+}
+
+#[test]
+fn fish_completion_for_service_selector_suggests_services_only() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    write_completion_projects(&project_file);
+
+    let output = fish_completion(&project_file, &["nirion", "exec", "a"]);
+
+    assert!(output.contains("app.web\n"));
+    assert!(output.contains("app.worker\n"));
+    assert!(output.contains("app2.web\n"));
+    assert!(output.contains("auth.server\n"));
+    assert!(!output.contains("app\n"));
+    assert!(!output.contains("app2\n"));
+    assert!(!output.contains("*\n"));
+}
+
+#[test]
+fn fish_completion_for_service_selector_after_dot_requires_exact_project_match()
+{
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    write_completion_projects(&project_file);
+
+    let output = fish_completion(&project_file, &["nirion", "exec", "app."]);
+
+    assert!(output.contains("app.web\n"));
+    assert!(output.contains("app.worker\n"));
+    assert!(!output.contains("app2.web\n"));
 }
 
 #[test]
