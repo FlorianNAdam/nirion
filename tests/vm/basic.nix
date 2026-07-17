@@ -44,7 +44,7 @@ in
     nirion("list web | grep -- '- worker'")
     nirion("cat web | grep '18080:8080'")
     nirion("cat web.http | grep 'nirion-test-http:latest'")
-    nirion("ps --no-tui web --services | grep http")
+    nirion("ps web | grep http")
     nirion("exec -T web.http -- /bin/sh -c 'echo exec-ok' | grep exec-ok")
 
     machine.succeed("systemctl reload nirion-web.service")
