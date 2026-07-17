@@ -392,6 +392,7 @@ fn compose_passthrough_commands_are_wired() {
         (&["start", "--no-tui"], "start\n"),
         (&["stop", "--no-tui"], "stop\n"),
         (&["restart", "--no-tui"], "restart\n"),
+        (&["pull"], "pull\n"),
         (&["logs"], "logs\n"),
         (&["top"], "top\n"),
         (&["volumes"], "volumes\n--format\ntable\n"),
@@ -422,6 +423,29 @@ fn compose_passthrough_commands_are_wired() {
             "failed command case: {args:?}"
         );
     }
+}
+
+#[test]
+fn pull_service_target_appends_service_name() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects(&project_file);
+    write_fake_docker(&docker_script, &args_file, "", "", 0);
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("pull")
+        .arg("myapp.web")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    assert_eq!(
+        fs::read_to_string(args_file).unwrap(),
+        "compose\n--file\ncompose.yml\n--project-name\nmyapp\npull\nweb\n"
+    );
 }
 
 #[test]

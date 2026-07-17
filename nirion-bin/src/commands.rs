@@ -46,6 +46,7 @@ define_commands!([
     start,
     stop,
     list,
+    pull,
     update,
     lock,
     exec,
