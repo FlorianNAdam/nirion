@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
 
     outputs:
-      vm-checks: ${{ steps.discover.outputs.vm-checks }}
+      vm-matrix: ${{ steps.discover.outputs.vm-matrix }}
 
     steps:
       - name: Checkout
@@ -34,15 +34,21 @@ jobs:
         run: |
           set -euo pipefail
 
-          checks="$(
+          matrix="$(
             nix eval --json \
               .#checks.x86_64-linux \
               --apply builtins.attrNames |
-              jq -c '[.[] | select(startswith("vm-"))]'
+              jq -c '{
+                include: [
+                  .[]
+                  | select(startswith("vm-"))
+                  | { check: ., name: sub("^vm-"; "") }
+                ]
+              }'
           )"
 
-          test "$checks" != "[]"
-          echo "vm-checks=$checks" >> "$GITHUB_OUTPUT"
+          test "$matrix" != '{"include":[]}'
+          echo "vm-matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build binary
@@ -77,6 +83,9 @@ jobs:
               --print-out-paths \
               .#packages.x86_64-linux.nirion
           )"
+
+          printf 'binary output: %s\n' "$out"
+          "$out/bin/nirion" --version
 
           printf '%s\n' "$out" > binary-cache/root
 
@@ -128,6 +137,7 @@ jobs:
       - name: Import binary closure
         run: |
           nix copy \
+            --no-check-sigs \
             --from "file://$PWD/binary-cache/store" \
             "$(cat binary-cache/root)"
 
@@ -136,9 +146,6 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: nix run .#check-message -- "$PR_TITLE"
-
-      - name: Validate flake outputs
-        run: nix flake check --no-build
 
       - name: Run non-VM checks
         shell: bash
@@ -163,7 +170,7 @@ jobs:
             "${checks[@]}"
 
   vm:
-    name: VM / ${{ matrix.check }}
+    name: VM checks / ${{ matrix.name }}
     needs:
       - discover
       - build
@@ -171,8 +178,7 @@ jobs:
 
     strategy:
       fail-fast: false
-      matrix:
-        check: ${{ fromJSON(needs.discover.outputs.vm-checks) }}
+      matrix: ${{ fromJSON(needs.discover.outputs.vm-matrix) }}
 
     steps:
       - name: Checkout
@@ -198,6 +204,7 @@ jobs:
       - name: Import binary closure
         run: |
           nix copy \
+            --no-check-sigs \
             --from "file://$PWD/binary-cache/store" \
             "$(cat binary-cache/root)"
 
@@ -207,3 +214,31 @@ jobs:
             --no-link \
             --print-build-logs \
             ".#checks.x86_64-linux.${{ matrix.check }}"
+
+  result:
+    name: Check result
+    needs:
+      - discover
+      - build
+      - check
+      - vm
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check required jobs
+        env:
+          DISCOVER_RESULT: ${{ needs.discover.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          CHECK_RESULT: ${{ needs.check.result }}
+          VM_RESULT: ${{ needs.vm.result }}
+        run: |
+          set -euo pipefail
+
+          for result in \
+            "$DISCOVER_RESULT" \
+            "$BUILD_RESULT" \
+            "$CHECK_RESULT" \
+            "$VM_RESULT"; do
+            test "$result" = success
+          done

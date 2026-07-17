@@ -226,6 +226,20 @@ fn assert_failure(output: &std::process::Output) {
 }
 
 #[test]
+fn version_does_not_require_files() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nirion"))
+        .arg("--version")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!("nirion {}\n", env!("CARGO_PKG_VERSION"))
+    );
+}
+
+#[test]
 fn fish_completion_suggests_subcommands() {
     let output = Command::new(env!("CARGO_BIN_EXE_nirion"))
         .env("COMPLETE", "fish")
