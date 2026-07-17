@@ -35,27 +35,27 @@ in
     ${loadImageScript testImage}
     machine.succeed("systemctl stop nirion-web.service || true")
 
-    nirion("up --no-tui web")
+    nirion("up --plain web")
     machine.wait_until_succeeds("curl --fail http://localhost:18080")
 
-    nirion("stop --no-tui web")
+    nirion("stop --plain web")
     machine.wait_until_fails("curl --fail http://localhost:18080")
 
-    nirion("start --no-tui web")
+    nirion("start --plain web")
     machine.wait_until_succeeds("curl --fail http://localhost:18080")
 
-    nirion("restart --no-tui web")
+    nirion("restart --plain web")
     machine.wait_until_succeeds("curl --fail http://localhost:18080")
 
-    nirion("reload --no-tui web")
+    nirion("reload --plain web")
     machine.wait_until_succeeds("curl --fail http://localhost:18080")
 
-    nirion("stop --no-tui web.http")
+    nirion("stop --plain web.http")
     machine.wait_until_fails("curl --fail http://localhost:18080")
-    nirion("start --no-tui web.http")
+    nirion("start --plain web.http")
     machine.wait_until_succeeds("curl --fail http://localhost:18080")
 
-    nirion("down --no-tui web")
+    nirion("down --plain web")
     machine.wait_until_fails("curl --fail http://localhost:18080")
   '';
 }

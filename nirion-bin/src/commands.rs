@@ -1,7 +1,45 @@
 use paste::paste;
 
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 use nirion_lib::context::NirionContext;
+use std::num::NonZeroUsize;
+use tokio::time::Duration;
+
+use crate::lifecycle::{LifecycleOptions, lifecycle_options};
+
+#[derive(Args, Debug, Clone)]
+pub struct LifecycleArgs {
+    /// Use plain Docker Compose output instead of the progress UI
+    #[arg(long)]
+    pub plain: bool,
+
+    /// Refresh interval in seconds for status updates when monitoring
+    #[arg(short = 'r', long, default_value = "250ms", value_parser = humantime::parse_duration)]
+    pub refresh: Duration,
+
+    /// Suppress non-essential output
+    #[arg(short, long)]
+    pub quiet: bool,
+
+    /// Maximum number of projects to run concurrently
+    #[arg(short = 'j', long)]
+    pub jobs: Option<NonZeroUsize>,
+}
+
+impl LifecycleArgs {
+    pub fn options(
+        &self,
+        wait_for_healthchecks: bool,
+    ) -> LifecycleOptions {
+        lifecycle_options(
+            self.plain,
+            self.quiet,
+            self.jobs,
+            self.refresh,
+            wait_for_healthchecks,
+        )
+    }
+}
 
 macro_rules! define_commands {
     (

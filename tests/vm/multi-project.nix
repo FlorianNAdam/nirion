@@ -45,11 +45,11 @@ in
     nirion("list | grep -- '- admin'")
     machine.succeed("docker ps --format '{{.Names}}' | grep nirion-admin-test-http")
 
-    nirion("down --no-tui admin")
+    nirion("down --plain admin")
     machine.wait_until_fails("curl --fail http://localhost:18081")
     machine.wait_until_succeeds("curl --fail http://localhost:18080")
 
-    nirion("up --no-tui admin")
+    nirion("up --plain admin")
     machine.wait_until_succeeds("curl --fail http://localhost:18081")
 
     machine.succeed("systemctl stop nirion-admin.service")
