@@ -57,6 +57,5 @@ define_commands!([
     restart,
     compose_exec,
     monitor,
-    patch,
     inspect
 ]);
