@@ -8,7 +8,7 @@ use nirion_lib::{
 use nirion_tui_lib::table::print_table;
 use std::collections::HashSet;
 
-use crate::{docker::compose_target_cmd, ClapSelector, TargetSelector};
+use crate::{ClapSelector, TargetSelector};
 
 /// List running service containers
 #[derive(Parser, Debug, Clone)]
@@ -20,109 +20,12 @@ pub struct PsArgs {
         add = TargetSelector::clap_completer()
     )]
     pub target: TargetSelector,
-
-    /// Disable TUI table output and use docker compose ps directly
-    #[arg(long, alias = "no-tui")]
-    pub legacy: bool,
-
-    /// Show all containers (including stopped ones)
-    #[arg(short = 'a', long)]
-    pub all: bool,
-
-    /// Filter services by a property (currently only 'status')
-    #[arg(long)]
-    pub filter: Option<String>,
-
-    /// Format output (table, json, Go template)
-    #[arg(short = 'f', long)]
-    pub format: Option<String>,
-
-    /// Short format
-    #[arg(short = 's', long, conflicts_with = "format")]
-    pub short: bool,
-
-    /// Don't truncate output
-    #[arg(long)]
-    pub no_trunc: bool,
-
-    /// Include orphaned services
-    #[arg(long)]
-    pub orphans: Option<bool>,
-
-    /// Only display container IDs
-    #[arg(short = 'q', long)]
-    pub quiet: bool,
-
-    /// Display services
-    #[arg(long)]
-    pub services: bool,
-
-    /// Filter by status (can be repeated)
-    #[arg(long)]
-    pub status: Vec<String>,
 }
 
-pub async fn handle_ps(args: &PsArgs, context: &NirionContext) -> Result<()> {
-    if args.legacy {
-        legacy_ps(args, context).await
-    } else {
-        fancy_ps(args, context).await
-    }
-}
-
-async fn legacy_ps(args: &PsArgs, context: &NirionContext) -> Result<()> {
-    let mut cmd_args: Vec<String> = vec!["ps".into()];
-
-    if args.all {
-        cmd_args.push("--all".into());
-    }
-
-    if let Some(filter) = &args.filter {
-        cmd_args.push("--filter".into());
-        cmd_args.push(filter.clone());
-    }
-
-    if let Some(format) = &args.format {
-        cmd_args.push("--format".into());
-        cmd_args.push(format.clone());
-    } else if args.short {
-        cmd_args.push("--format".into());
-        cmd_args.push(
-            "table{{.Name}}\t{{.RunningFor}}\t{{.Status}}\t{{.Ports}}"
-                .to_string(),
-        );
-    }
-
-    if args.no_trunc {
-        cmd_args.push("--no-trunc".into());
-    }
-
-    if let Some(orphans) = args.orphans {
-        cmd_args.push(format!("--orphans={orphans}"));
-    }
-
-    if args.quiet {
-        cmd_args.push("--quiet".into());
-    }
-
-    if args.services {
-        cmd_args.push("--services".into());
-    }
-
-    for s in &args.status {
-        cmd_args.push("--status".into());
-        cmd_args.push(s.clone());
-    }
-
-    let cmd_slices: Vec<&str> = cmd_args
-        .iter()
-        .map(|s| s.as_str())
-        .collect();
-
-    compose_target_cmd(context, &args.target, &cmd_slices).await
-}
-
-async fn fancy_ps(args: &PsArgs, context: &NirionContext) -> Result<()> {
+pub async fn handle_ps(
+    args: &PsArgs,
+    context: &NirionContext,
+) -> Result<()> {
     let mut rows = vec![];
 
     match &args.target {
@@ -250,7 +153,10 @@ fn collapsed_ports(ports: &[Port]) -> Vec<String> {
     collapsed
 }
 
-fn consecutive_external(previous: &Port, next: &Port) -> bool {
+fn consecutive_external(
+    previous: &Port,
+    next: &Port,
+) -> bool {
     match (&previous.external, &next.external) {
         (None, None) => true,
         (Some(previous), Some(next)) => next.port == previous.port + 1,
@@ -258,7 +164,10 @@ fn consecutive_external(previous: &Port, next: &Port) -> bool {
     }
 }
 
-fn format_port_range(start: &Port, end: &Port) -> String {
+fn format_port_range(
+    start: &Port,
+    end: &Port,
+) -> String {
     let internal = if start.port == end.port {
         start.port.to_string()
     } else {
@@ -282,7 +191,10 @@ mod tests {
     use console::strip_ansi_codes;
     use nirion_lib::docker::{ExternalPort, ServiceState};
 
-    fn port(port: u16, proto: &str) -> Port {
+    fn port(
+        port: u16,
+        proto: &str,
+    ) -> Port {
         Port {
             external: None,
             port,
@@ -290,7 +202,11 @@ mod tests {
         }
     }
 
-    fn mapped_port(external: u16, internal: u16, proto: &str) -> Port {
+    fn mapped_port(
+        external: u16,
+        internal: u16,
+        proto: &str,
+    ) -> Port {
         Port {
             external: Some(ExternalPort {
                 ip: "127.0.0.1".to_string(),
@@ -301,7 +217,10 @@ mod tests {
         }
     }
 
-    fn service_status(status: Option<&str>, ports: Vec<Port>) -> ServiceStatus {
+    fn service_status(
+        status: Option<&str>,
+        ports: Vec<Port>,
+    ) -> ServiceStatus {
         ServiceStatus {
             id: "id".to_string(),
             service: "web".to_string(),

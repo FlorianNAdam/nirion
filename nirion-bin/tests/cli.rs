@@ -372,33 +372,6 @@ fn up_service_target_appends_service_name() {
 }
 
 #[test]
-fn ps_no_tui_forwards_legacy_flags() {
-    let dir = TempDir::new();
-    let project_file = dir.path().join("projects.json");
-    let lock_file = dir.path().join("nirion.lock");
-    let docker_script = dir.path().join("fake-docker.sh");
-    let args_file = dir.path().join("docker-args");
-    write_projects(&project_file);
-    write_fake_docker(&docker_script, &args_file, "container-list", "", 0);
-
-    let output = nirion_command(&project_file, &lock_file, &docker_script)
-        .arg("ps")
-        .arg("--no-tui")
-        .arg("--all")
-        .arg("--format")
-        .arg("json")
-        .output()
-        .unwrap();
-
-    assert_success(&output);
-    assert!(String::from_utf8_lossy(&output.stdout).contains("container-list"));
-    assert_eq!(
-        fs::read_to_string(args_file).unwrap(),
-        "compose\n--file\ncompose.yml\n--project-name\nmyapp\nps\n--all\n--format\njson\n"
-    );
-}
-
-#[test]
 fn inspect_image_raw_prints_docker_output() {
     let dir = TempDir::new();
     let project_file = dir.path().join("projects.json");
