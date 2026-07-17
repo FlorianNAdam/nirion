@@ -7,8 +7,8 @@ let
   nixcovSrc = pkgs.fetchFromGitHub {
     owner = "FlorianNAdam";
     repo = "nixcov";
-    rev = "44c466dc69d3517301b8f46159faa3e33b702104";
-    hash = "sha256-IXivYZpccieuibiU7tQjEEQ1JnnEJuVq7KS7B9Y66OI=";
+    rev = "332d0df1b9f49dbf284ca6e064a48a744536b0a9";
+    hash = "sha256-bgrrO7Dp+yiSH3peyNggyMRfY/6JaeWFDs31HkKNhss=";
   };
 
   nixcov = import nixcovSrc { inherit pkgs naersk; };
