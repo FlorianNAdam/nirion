@@ -12,11 +12,6 @@
       url = "github:cachix/git-hooks.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    nixcov = {
-      url = "github:FlorianNAdam/nixcov";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.naersk.follows = "naersk";
-    };
   };
 
   outputs =
@@ -26,7 +21,6 @@
       nixpkgs,
       flake-utils,
       naersk,
-      nixcov,
     }:
 
     flake-utils.lib.eachSystem
@@ -51,11 +45,11 @@
           check-commit-messages = pkgs.callPackage ./nix/check-commit-messages.nix { };
           check-message = pkgs.callPackage ./nix/check-message.nix { };
           normalize-coverage = pkgs.callPackage ./nix/coverage/normalize.nix { };
-          rust-coverage = pkgs.callPackage ./nix/coverage/rust.nix {
+          rust-coverage = pkgs.callPackage ./nix/coverage/tarpaulin.nix {
             normalizeCoverage = normalize-coverage;
           };
-          nix-coverage = pkgs.callPackage ./nix/coverage/nix.nix {
-            nixcovProgram = nixcov.apps.${system}.default.program;
+          nix-coverage = pkgs.callPackage ./nix/coverage/nixcov.nix {
+            inherit naersk;
           };
           merge-coverage = pkgs.callPackage ./nix/coverage/merge.nix {
             normalizeCoverage = normalize-coverage;
