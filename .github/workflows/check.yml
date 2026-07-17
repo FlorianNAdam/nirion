@@ -14,7 +14,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
+  discover:
+    name: Discover VM checks
+    runs-on: ubuntu-latest
+
+    outputs:
+      vm-checks: ${{ steps.discover.outputs.vm-checks }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Discover VM checks
+        id: discover
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          checks="$(
+            nix eval --json \
+              .#checks.x86_64-linux \
+              --apply builtins.attrNames |
+              jq -c '[.[] | select(startswith("vm-"))]'
+          )"
+
+          test "$checks" != "[]"
+          echo "vm-checks=$checks" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build binary
     runs-on: ubuntu-latest
 
     steps:
@@ -32,14 +63,34 @@ jobs:
             nix-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}-
             nix-${{ runner.os }}-check-
 
-      - name: Validate PR title
-        if: github.event_name == 'pull_request'
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: nix run .#check-message -- "$PR_TITLE"
+      - name: Build binary
+        shell: bash
+        run: |
+          set -euo pipefail
 
-      - name: Check
-        run: nix flake check
+          mkdir -p binary-cache
+
+          out="$(
+            nix build \
+              --no-link \
+              --print-build-logs \
+              --print-out-paths \
+              .#packages.x86_64-linux.nirion
+          )"
+
+          printf '%s\n' "$out" > binary-cache/root
+
+          nix copy \
+            --to "file://$PWD/binary-cache/store" \
+            "$out"
+
+      - name: Upload binary closure
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nirion-binary
+          path: binary-cache
+          retention-days: 1
+          compression-level: 0
 
       - name: Save Nix store
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -47,3 +98,112 @@ jobs:
         with:
           primary-key: nix-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}-${{ github.sha }}
           gc-max-store-size-linux: 6G
+
+  check:
+    name: Non-VM checks
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Restore Nix store
+        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}-${{ github.sha }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}-
+            nix-${{ runner.os }}-check-
+
+      - name: Download binary closure
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nirion-binary
+          path: binary-cache
+
+      - name: Import binary closure
+        run: |
+          nix copy \
+            --from "file://$PWD/binary-cache/store" \
+            "$(cat binary-cache/root)"
+
+      - name: Validate PR title
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: nix run .#check-message -- "$PR_TITLE"
+
+      - name: Validate flake outputs
+        run: nix flake check --no-build
+
+      - name: Run non-VM checks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t checks < <(
+            nix eval --json \
+              .#checks.x86_64-linux \
+              --apply builtins.attrNames |
+              jq -r '
+                .[]
+                | select(startswith("vm-") | not)
+                | ".#checks.x86_64-linux.\(.)"
+              '
+          )
+
+          nix build \
+            --no-link \
+            --keep-going \
+            --print-build-logs \
+            "${checks[@]}"
+
+  vm:
+    name: VM / ${{ matrix.check }}
+    needs:
+      - discover
+      - build
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        check: ${{ fromJSON(needs.discover.outputs.vm-checks) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Restore Nix store
+        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}-${{ github.sha }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}-
+            nix-${{ runner.os }}-check-
+
+      - name: Download binary closure
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nirion-binary
+          path: binary-cache
+
+      - name: Import binary closure
+        run: |
+          nix copy \
+            --from "file://$PWD/binary-cache/store" \
+            "$(cat binary-cache/root)"
+
+      - name: Run VM check
+        run: |
+          nix build \
+            --no-link \
+            --print-build-logs \
+            ".#checks.x86_64-linux.${{ matrix.check }}"
