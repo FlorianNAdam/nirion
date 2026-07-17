@@ -5,7 +5,7 @@ use oci_client::{
     secrets::RegistryAuth,
 };
 
-use crate::version::{NON_VERSION_TAGS, canonical_version_score, clean_tag};
+use crate::version::{canonical_version_score, clean_tag, is_non_version_tag};
 
 pub fn resolve_registry(registry: String) -> String {
     Reference::with_tag(registry, "dummy".to_string(), "dummy".to_string())
@@ -18,7 +18,7 @@ pub fn get_version_from_config(config: &ConfigFile) -> Option<String> {
     let labels = config.labels.as_ref()?;
     labels
         .get("org.opencontainers.image.version")
-        .filter(|version| !NON_VERSION_TAGS.contains(&version.as_str()))
+        .filter(|version| !is_non_version_tag(version))
         .map(|t| clean_tag(t).to_string())
 }
 
@@ -142,7 +142,7 @@ pub async fn get_version_from_oci_tags(
 
     let mut tags = tags
         .into_iter()
-        .filter(|version| !NON_VERSION_TAGS.contains(&version.as_str()))
+        .filter(|version| !is_non_version_tag(version))
         .collect::<Vec<_>>();
 
     tags.sort_by_cached_key(|tag| {
@@ -221,6 +221,12 @@ mod tests {
         assert_eq!(get_version_from_config(&config_with_version(None)), None);
         assert_eq!(
             get_version_from_config(&config_with_version(Some("latest"))),
+            None
+        );
+        assert_eq!(
+            get_version_from_config(&config_with_version(Some(
+                "refs/tags/latest"
+            ))),
             None
         );
     }

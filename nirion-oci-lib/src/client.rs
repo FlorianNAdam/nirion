@@ -429,6 +429,25 @@ mod tests {
     }
 
     #[test]
+    fn deserialization_normalizes_auth_scopes() {
+        let config: AuthConfig = serde_json::from_str(
+            r#"{
+                "docker.io/library": {
+                    "type": "basic",
+                    "username": "user",
+                    "password": "password"
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let image = Reference::try_from("index.docker.io/library/nginx:latest")
+            .unwrap();
+
+        assert_eq!(username(config.auth_for(&image)), Some("user".to_string()));
+    }
+
+    #[test]
     fn builder_add_auth_and_protocol_configures_client() {
         let client = NirionOciClient::builder()
             .add_auth("ghcr.io/example", auth("repo"))

@@ -11,6 +11,7 @@ pkgs.mkShell {
     rustc
     rustfmt
     openssl
+    distribution
   ];
 
   nativeBuildInputs = with pkgs; [
