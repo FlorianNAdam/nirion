@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 
 use crate::commands::LifecycleArgs;
-use crate::progress::run_lifecycle_command;
+use crate::lifecycle::run_lifecycle_command;
 use crate::{ClapSelector, TargetSelector};
 use nirion_lib::context::NirionContext;
 

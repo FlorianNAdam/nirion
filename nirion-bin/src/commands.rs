@@ -5,7 +5,7 @@ use nirion_lib::context::NirionContext;
 use std::num::NonZeroUsize;
 use tokio::time::Duration;
 
-use crate::progress::{LifecycleOptions, lifecycle_options};
+use crate::lifecycle::{LifecycleOptions, lifecycle_options};
 
 #[derive(Args, Debug, Clone)]
 pub struct LifecycleArgs {

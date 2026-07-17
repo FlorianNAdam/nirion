@@ -3,7 +3,7 @@ use clap::Parser;
 use nirion_lib::projects::TargetSelector;
 
 use crate::commands::LifecycleArgs;
-use crate::progress::run_lifecycle_command;
+use crate::lifecycle::run_lifecycle_command;
 use crate::ClapSelector;
 use nirion_lib::context::NirionContext;
 
