@@ -131,6 +131,7 @@ jobs:
       - name: Import binary closure
         run: |
           nix copy \
+            --no-check-sigs \
             --from "file://$PWD/binary-cache/store" \
             "$(cat binary-cache/root)"
 
@@ -201,6 +202,7 @@ jobs:
       - name: Import binary closure
         run: |
           nix copy \
+            --no-check-sigs \
             --from "file://$PWD/binary-cache/store" \
             "$(cat binary-cache/root)"
 
