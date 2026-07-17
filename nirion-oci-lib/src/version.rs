@@ -118,7 +118,7 @@ fn version_depth(tag: &str) -> usize {
 }
 
 pub fn canonical_version_score(tag: &str) -> i32 {
-    if NON_VERSION_TAGS.contains(&tag) {
+    if is_non_version_tag(tag) {
         return -1000;
     }
 
@@ -146,10 +146,14 @@ pub fn canonical_version_score(tag: &str) -> i32 {
 
 pub fn canonical_version_tag(tags: &[String]) -> Option<String> {
     tags.iter()
-        .filter(|version| !NON_VERSION_TAGS.contains(&version.as_str()))
         .map(|t| clean_tag(t))
+        .filter(|version| !is_non_version_tag(version))
         .max_by_key(|t| canonical_version_score(t))
         .map(|t| t.to_string())
+}
+
+pub fn is_non_version_tag(tag: &str) -> bool {
+    NON_VERSION_TAGS.contains(&clean_tag(tag))
 }
 
 #[cfg(test)]
@@ -210,6 +214,13 @@ mod tests {
     #[test]
     fn canonical_version_tag_returns_none_without_version_candidates() {
         let tags = vec!["latest".to_string(), "stable".to_string()];
+
+        assert_eq!(canonical_version_tag(&tags), None);
+    }
+
+    #[test]
+    fn canonical_version_tag_filters_cleaned_non_version_tags() {
+        let tags = vec!["refs/tags/latest".to_string(), " stable ".to_string()];
 
         assert_eq!(canonical_version_tag(&tags), None);
     }
