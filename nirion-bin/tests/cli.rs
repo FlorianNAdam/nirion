@@ -6,6 +6,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use console::strip_ansi_codes;
+
 struct TempDir {
     path: PathBuf,
 }
@@ -537,6 +539,30 @@ fn list_prints_projects_and_services() {
 }
 
 #[test]
+fn list_service_target_prints_only_selected_service() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_completion_projects(&project_file);
+    fs::write(&lock_file, "{}").unwrap();
+    write_fake_docker(&docker_script, &args_file, "", "", 0);
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("list")
+        .arg("app.worker")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Selector 'app.worker'"));
+    assert!(stdout.contains("- worker"));
+    assert!(!stdout.contains("- web"));
+}
+
+#[test]
 fn cat_prints_project_and_service_compose() {
     let dir = TempDir::new();
     let project_file = dir.path().join("projects.json");
@@ -580,6 +606,111 @@ services:
     let stdout = String::from_utf8_lossy(&service_output.stdout);
     assert!(stdout.contains("web:"));
     assert!(!stdout.contains("db:"));
+}
+
+#[test]
+fn cat_all_prints_each_project_with_heading() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let app_compose = dir.path().join("app.yml");
+    let auth_compose = dir.path().join("auth.yml");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+
+    fs::write(
+        &app_compose,
+        r#"
+services:
+  web:
+    image: nginx:latest
+"#,
+    )
+    .unwrap();
+    fs::write(
+        &auth_compose,
+        r#"
+services:
+  server:
+    image: authelia/authelia:latest
+"#,
+    )
+    .unwrap();
+    fs::write(
+        &project_file,
+        format!(
+            r#"{{
+  "app": {{
+    "name": "app",
+    "dockerCompose": "{}",
+    "services": {{
+      "web": {{"image": "nginx:latest", "healthcheck": false, "restart": null}}
+    }}
+  }},
+  "auth": {{
+    "name": "auth",
+    "dockerCompose": "{}",
+    "services": {{
+      "server": {{"image": "authelia/authelia:latest", "healthcheck": false, "restart": null}}
+    }}
+  }}
+}}"#,
+            app_compose.display(),
+            auth_compose.display()
+        ),
+    )
+    .unwrap();
+    fs::write(&lock_file, "{}").unwrap();
+    write_fake_docker(&docker_script, &args_file, "", "", 0);
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("cat")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Project app:"));
+    assert!(stdout.contains("Project auth:"));
+    assert!(stdout.contains("web:"));
+    assert!(stdout.contains("server:"));
+}
+
+#[test]
+fn ps_prints_status_and_collapsed_ports_from_docker_json() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects(&project_file);
+    fs::write(&lock_file, "{}").unwrap();
+    write_fake_docker(
+        &docker_script,
+        &args_file,
+        r#"[{"ID":"abc","Name":"myapp-web-1","Service":"web","Image":"nginx:latest","State":"running","Health":"healthy","ExitCode":0,"RunningFor":"2 minutes","Status":"Up 2 minutes (healthy)","Ports":"127.0.0.1:8080-8081->80-81/tcp","Networks":"default"}]"#,
+        "",
+        0,
+    );
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("ps")
+        .arg("myapp")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = strip_ansi_codes(&stdout);
+    assert!(stdout.contains("[myapp]"));
+    assert!(stdout.contains("myapp-web-1"));
+    assert!(stdout.contains("2 minutes"));
+    assert!(stdout.contains("healthy"));
+    assert!(stdout.contains("8080-8081->80-81/tcp"));
+    assert_eq!(
+        fs::read_to_string(args_file).unwrap(),
+        "compose\n-f\ncompose.yml\n--project-name\nmyapp\nps\n-a\n--format\njson\n"
+    );
 }
 
 #[test]
@@ -691,4 +822,85 @@ fn lock_and_update_report_no_images() {
             "failed command: {command}"
         );
     }
+}
+
+#[test]
+fn lock_skips_services_that_already_have_lock_entries() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects_with_compose(&project_file, "compose.yml");
+    fs::write(
+        &lock_file,
+        r#"{
+  "myapp.web": {
+    "image": "nginx:latest",
+    "version": "1.25.0",
+    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}"#,
+    )
+    .unwrap();
+    write_fake_docker(&docker_script, &args_file, "", "", 0);
+
+    let original_lock = fs::read_to_string(&lock_file).unwrap();
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("lock")
+        .arg("myapp.web")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains("No images found to update")
+    );
+    assert_eq!(fs::read_to_string(lock_file).unwrap(), original_lock);
+}
+
+#[test]
+fn update_invalid_image_reference_does_not_rewrite_lock_file() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    fs::write(
+        &project_file,
+        r#"{
+  "myapp": {
+    "name": "myapp",
+    "dockerCompose": "compose.yml",
+    "services": {
+      "web": {
+        "image": "not a valid image",
+        "healthcheck": false,
+        "restart": null
+      }
+    }
+  }
+}"#,
+    )
+    .unwrap();
+    fs::write(&lock_file, "{}").unwrap();
+    write_fake_docker(&docker_script, &args_file, "", "", 0);
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("update")
+        .arg("myapp.web")
+        .output()
+        .unwrap();
+
+    assert_failure(&output);
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains("Checking myapp.web: not a valid image")
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stdout)
+            .contains("Lock file updated successfully")
+    );
+    assert_eq!(fs::read_to_string(lock_file).unwrap(), "{}");
 }
