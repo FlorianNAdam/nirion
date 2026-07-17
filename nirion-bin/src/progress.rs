@@ -7,7 +7,9 @@ use futures::{StreamExt, stream};
 use nirion_lib::{
     compose::{ComposeConcurrency, compose_target},
     context::NirionContext,
-    docker::{ProjectStatus, query_project_status, status_stream},
+    docker::{
+        ProjectStatus, ProjectStatusEvent, query_project_status, status_stream,
+    },
     events::{ComposeEvent, ProcessEvent},
     projects::{Projects, selected_project_names},
     wait::{WaitTarget, wait_finished},
@@ -285,13 +287,90 @@ fn lifecycle_renderer(
     }
 }
 
+struct LifecycleState {
+    running: BTreeMap<String, bool>,
+    statuses: BTreeMap<String, ProjectStatus>,
+    compose_finished: bool,
+    status_finished: bool,
+    error: Option<anyhow::Error>,
+}
+
+impl LifecycleState {
+    fn new(selected: &[String]) -> Self {
+        Self {
+            running: selected
+                .iter()
+                .map(|name| (name.clone(), true))
+                .collect(),
+            statuses: BTreeMap::new(),
+            compose_finished: false,
+            status_finished: false,
+            error: None,
+        }
+    }
+
+    fn ready(
+        &self,
+        target: &TargetSelector,
+        projects: &Projects,
+        wait_for_healthchecks: bool,
+    ) -> bool {
+        self.error.is_some()
+            || (self.compose_finished
+                && (!wait_for_healthchecks
+                    || wait_finished(
+                        target,
+                        projects,
+                        &self.statuses,
+                        WaitTarget::Healthchecks,
+                    )))
+    }
+
+    fn stop_running_projects(&mut self) {
+        for value in self.running.values_mut() {
+            *value = false;
+        }
+    }
+
+    fn finish_compose(&mut self) {
+        self.compose_finished = true;
+        self.stop_running_projects();
+    }
+
+    fn fail(
+        &mut self,
+        error: anyhow::Error,
+    ) {
+        self.error = Some(error);
+        self.finish_compose();
+    }
+
+    fn handle_status_event(
+        &mut self,
+        event: Option<anyhow::Result<ProjectStatusEvent>>,
+    ) {
+        match event {
+            Some(Ok(event)) => {
+                self.statuses
+                    .insert(event.project, event.status);
+            }
+            Some(Err(error)) => self.fail(error),
+            None => {
+                self.status_finished = true;
+                self.fail(anyhow::anyhow!(
+                    "docker status stream ended before progress finished"
+                ));
+            }
+        }
+    }
+}
+
 pub async fn run_lifecycle_command(
     context: &NirionContext,
     target: &TargetSelector,
     args: &[&str],
     options: LifecycleOptions,
 ) -> anyhow::Result<()> {
-    let selected = selected_project_names(target, &context.projects);
     let args = args
         .iter()
         .map(|arg| arg.to_string())
@@ -302,105 +381,56 @@ pub async fn run_lifecycle_command(
         args,
         ComposeConcurrency::Jobs(options.jobs),
     );
-    let mut status_events = stream::pending().boxed();
-    let mut status_stream_started = false;
-    let mut running = selected
-        .iter()
-        .map(|name| (name.clone(), true))
-        .collect::<BTreeMap<_, _>>();
-    let mut statuses = BTreeMap::new();
-    let mut compose_finished = false;
-    let mut compose_error = None;
-    let mut status_finished = false;
+
+    let selected = selected_project_names(target, &context.projects);
+    let mut state = LifecycleState::new(&selected);
+
     let mut renderer = lifecycle_renderer(options.presentation);
 
-    renderer.start(context, &selected, &running, &statuses)?;
+    let needs_status = renderer.needs_status_during_compose()
+        || (options.wait_for_healthchecks
+            && !wait_finished(
+                target,
+                &context.projects,
+                &BTreeMap::new(),
+                WaitTarget::Healthchecks,
+            ));
+    let mut status_events = if needs_status {
+        status_stream(context, target.clone(), options.refresh_interval)
+    } else {
+        stream::pending().boxed()
+    };
 
-    loop {
-        let ready = compose_error.is_some()
-            || (compose_finished
-                && (!options.wait_for_healthchecks
-                    || wait_finished(
-                        target,
-                        &context.projects,
-                        &statuses,
-                        WaitTarget::Healthchecks,
-                    )));
+    renderer.start(context, &selected, &state.running, &state.statuses)?;
 
-        if ready {
-            break;
-        }
-
-        let poll_status = renderer.needs_status_during_compose()
-            || (compose_finished && options.wait_for_healthchecks);
-
-        if poll_status && !status_stream_started {
-            status_events = status_stream(
-                context,
-                target.clone(),
-                options.refresh_interval,
-            );
-            status_stream_started = true;
-        }
-
+    while !state.ready(target, &context.projects, options.wait_for_healthchecks)
+    {
         tokio::select! {
-            event = compose_stream.next(), if !compose_finished => {
+            event = compose_stream.next(), if !state.compose_finished => {
                 match event {
                     Some(Ok(event)) => {
-                        handle_compose_event(&event, &mut running);
+                        handle_compose_event(&event, &mut state.running);
                         renderer.compose_event(&event)?;
                     }
-                    Some(Err(error)) => {
-                        compose_error = Some(error);
-                        compose_finished = true;
-                        for value in running.values_mut() {
-                            *value = false;
-                        }
-                    }
-                    None => {
-                        compose_finished = true;
-                        for value in running.values_mut() {
-                            *value = false;
-                        }
-                    }
+                    Some(Err(error)) => state.fail(error),
+                    None => state.finish_compose(),
                 }
             }
-            event = status_events.next(), if poll_status && !status_finished => {
-                match event {
-                    Some(Ok(event)) => {
-                        statuses.insert(event.project, event.status);
-                    }
-                    Some(Err(error)) => {
-                        compose_error = Some(error);
-                        compose_finished = true;
-                        for value in running.values_mut() {
-                            *value = false;
-                        }
-                    }
-                    None => {
-                        status_finished = true;
-                        if renderer.needs_status_during_compose() || options.wait_for_healthchecks {
-                            compose_error = Some(anyhow::anyhow!("docker status stream ended before progress finished"));
-                            compose_finished = true;
-                            for value in running.values_mut() {
-                                *value = false;
-                            }
-                        }
-                    }
-                }
+            event = status_events.next(), if !state.status_finished => {
+                state.handle_status_event(event);
             }
         }
 
-        renderer.tick(context, &selected, &running, &statuses)?;
+        renderer.tick(context, &selected, &state.running, &state.statuses)?;
     }
 
-    if compose_error.is_none() && renderer.needs_status_during_compose() {
-        refresh_statuses(context, &selected, &mut statuses).await?;
+    if state.error.is_none() && renderer.needs_status_during_compose() {
+        refresh_statuses(context, &selected, &mut state.statuses).await?;
     }
 
-    renderer.finish(context, &selected, &running, &statuses)?;
+    renderer.finish(context, &selected, &state.running, &state.statuses)?;
 
-    if let Some(error) = compose_error {
+    if let Some(error) = state.error {
         return Err(error);
     }
 
