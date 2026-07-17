@@ -2,8 +2,9 @@ use std::{
     env, fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    process::Command,
-    time::{SystemTime, UNIX_EPOCH},
+    process::{Command, Stdio},
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use console::strip_ansi_codes;
@@ -482,6 +483,105 @@ fn compose_passthrough_commands_are_wired() {
             "failed command case: {args:?}"
         );
     }
+}
+
+#[test]
+fn logs_reconnect_re_runs_following_logs() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects(&project_file);
+    write_fake_docker_append(&docker_script, &args_file, "", "", 0);
+
+    let mut child = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("logs")
+        .arg("--follow")
+        .arg("--reconnect")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            panic!("nirion logs exited early with status {status}");
+        }
+
+        let args = fs::read_to_string(&args_file).unwrap_or_default();
+        if args.matches("---\n").count() >= 2 {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            assert!(args.contains("logs\n--follow\n"));
+            return;
+        }
+
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for reconnect; args:\n{args}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn logs_reconnect_reports_successful_exits() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects(&project_file);
+    write_fake_docker_append(&docker_script, &args_file, "", "", 0);
+
+    let mut child = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("logs")
+        .arg("--follow")
+        .arg("--reconnect")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let args = fs::read_to_string(&args_file).unwrap_or_default();
+        if args.matches("---\n").count() >= 2 {
+            child.kill().unwrap();
+            let output = child.wait_with_output().unwrap();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains("logs exited; reconnecting"));
+            return;
+        }
+
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for reconnect; args:\n{args}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn logs_reconnect_requires_follow() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects(&project_file);
+    write_fake_docker(&docker_script, &args_file, "", "", 0);
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("logs")
+        .arg("--reconnect")
+        .output()
+        .unwrap();
+
+    assert_failure(&output);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--follow"));
 }
 
 #[test]

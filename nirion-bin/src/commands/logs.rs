@@ -19,6 +19,10 @@ pub struct LogsArgs {
     #[arg(short = 'f', long)]
     pub follow: bool,
 
+    /// Re-run log streaming when containers are missing or recreated
+    #[arg(long, requires = "follow")]
+    pub reconnect: bool,
+
     /// Produce monochrome output
     #[arg(long)]
     pub no_color: bool,
@@ -77,5 +81,12 @@ pub async fn handle_logs(
 
     let cmd_slices: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
 
-    compose_target_cmd(context, &args.target, &cmd_slices).await
+    loop {
+        compose_target_cmd(context, &args.target, &cmd_slices).await?;
+        if !args.reconnect {
+            return Ok(());
+        }
+
+        eprintln!("logs exited; reconnecting");
+    }
 }
