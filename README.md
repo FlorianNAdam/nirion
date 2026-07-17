@@ -5,7 +5,7 @@
 [![coverage](https://img.shields.io/coverallsCoverage/github/FlorianNAdam/nirion?branch=main&style=flat-square&label=coverage)](https://coveralls.io/github/FlorianNAdam/nirion?branch=main)
 
 **Nirion** is a Docker Compose manager for simpler Nix-based home lab Docker setups and management.  
-It streamlines container management, Nix evaluation, and service patching for reproducible and maintainable workflows.\
+It streamlines container management and Nix evaluation for reproducible and maintainable workflows.\
 By adding a lock-file mechanism, it makes deployments even more deterministic and reproducible.
 
 ---
@@ -15,7 +15,6 @@ By adding a lock-file mechanism, it makes deployments even more deterministic an
 - Start, stop, and manage Docker services with ease
 - NixOS module for Docker Compose projects
 - Lock file support for deterministic deployments
-- Patch service files using `mirage-patch`
 - Inspect and monitor running containers
 - Works with Docker Compose under the hood
 
@@ -196,7 +195,6 @@ nirion [OPTIONS] <COMMAND>
 | `restart`      | Restart service containers                            |
 | `compose-exec` | Run a Docker Compose command for a project or service |
 | `monitor`      | Monitor running containers (TBD)                      |
-| `patch`        | Patch service files using `mirage-patch`              |
 | `inspect`      | Inspect images and services                           |
 | `help`         | Print help message for commands                       |
 
@@ -244,14 +242,6 @@ Print the Docker Compose file:
 ```bash
 nirion cat
 ```
-
-Patch service files:
-
-```bash
-nirion patch
-```
-
----
 
 ## License
 
