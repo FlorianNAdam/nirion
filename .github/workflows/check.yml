@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
 
     outputs:
-      vm-checks: ${{ steps.discover.outputs.vm-checks }}
+      vm-matrix: ${{ steps.discover.outputs.vm-matrix }}
 
     steps:
       - name: Checkout
@@ -34,15 +34,21 @@ jobs:
         run: |
           set -euo pipefail
 
-          checks="$(
+          matrix="$(
             nix eval --json \
               .#checks.x86_64-linux \
               --apply builtins.attrNames |
-              jq -c '[.[] | select(startswith("vm-"))]'
+              jq -c '{
+                include: [
+                  .[]
+                  | select(startswith("vm-"))
+                  | { check: ., name: sub("^vm-"; "") }
+                ]
+              }'
           )"
 
-          test "$checks" != "[]"
-          echo "vm-checks=$checks" >> "$GITHUB_OUTPUT"
+          test "$matrix" != '{"include":[]}'
+          echo "vm-matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build binary
@@ -167,7 +173,7 @@ jobs:
             "${checks[@]}"
 
   vm:
-    name: VM / ${{ matrix.check }}
+    name: VM checks / ${{ matrix.name }}
     needs:
       - discover
       - build
@@ -175,8 +181,7 @@ jobs:
 
     strategy:
       fail-fast: false
-      matrix:
-        check: ${{ fromJSON(needs.discover.outputs.vm-checks) }}
+      matrix: ${{ fromJSON(needs.discover.outputs.vm-matrix) }}
 
     steps:
       - name: Checkout
