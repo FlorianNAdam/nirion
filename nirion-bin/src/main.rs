@@ -182,8 +182,9 @@ pub fn service_selector_completer(
 
 #[derive(Parser, Debug)]
 #[command(
+    name = "nirion",
+    version,
     disable_help_flag = true,
-    disable_version_flag = true,
     allow_hyphen_values = true,
     ignore_errors = true
 )]
