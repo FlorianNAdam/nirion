@@ -166,11 +166,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1783935943,
-        "narHash": "sha256-JYj1dROUmrgihr6iBE6MAeWHpEbaafX+aF9ase8JLmY=",
+        "lastModified": 1784296414,
+        "narHash": "sha256-JQIyyD6zARqRoblP0WAyntROYjhlxwzW/pOyo+3Fxlw=",
         "owner": "FlorianNAdam",
         "repo": "nixcov",
-        "rev": "3fc90ba15c771a987cca6dd79dcdf7da4a119067",
+        "rev": "afdbead8f9bb8df969c63916a41e47fe5fbde578",
         "type": "github"
       },
       "original": {
