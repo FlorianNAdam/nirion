@@ -325,22 +325,34 @@ fn fish_completion_for_service_selector_after_dot_requires_exact_project_match()
 }
 
 #[test]
-fn up_no_tui_uses_configured_docker_command() {
+fn up_plain_uses_configured_docker_command() {
     let dir = TempDir::new();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
     let args_file = dir.path().join("docker-args");
     write_projects(&project_file);
-    write_fake_docker(&docker_script, &args_file, "", "", 0);
+    write_fake_docker(
+        &docker_script,
+        &args_file,
+        "compose-out",
+        "compose-err",
+        0,
+    );
 
     let output = nirion_command(&project_file, &lock_file, &docker_script)
         .arg("up")
-        .arg("--no-tui")
+        .arg("--plain")
+        .arg("--jobs")
+        .arg("1")
         .output()
         .unwrap();
 
     assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("compose-out"));
+    assert!(stderr.contains("compose-err"));
     assert_eq!(
         fs::read_to_string(args_file).unwrap(),
         "compose\n--file\ncompose.yml\n--project-name\nmyapp\nup\n-d\n"
@@ -360,7 +372,7 @@ fn up_service_target_appends_service_name() {
     let output = nirion_command(&project_file, &lock_file, &docker_script)
         .arg("up")
         .arg("myapp.web")
-        .arg("--no-tui")
+        .arg("--plain")
         .output()
         .unwrap();
 
@@ -368,6 +380,37 @@ fn up_service_target_appends_service_name() {
     assert_eq!(
         fs::read_to_string(args_file).unwrap(),
         "compose\n--file\ncompose.yml\n--project-name\nmyapp\nup\n-d\nweb\n"
+    );
+}
+
+#[test]
+fn up_quiet_suppresses_compose_output() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects(&project_file);
+    write_fake_docker(
+        &docker_script,
+        &args_file,
+        "compose-out",
+        "compose-err",
+        0,
+    );
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("up")
+        .arg("--quiet")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        fs::read_to_string(args_file).unwrap(),
+        "compose\n--file\ncompose.yml\n--project-name\nmyapp\nup\n-d\n"
     );
 }
 
@@ -410,10 +453,10 @@ fn inspect_image_raw_prints_docker_output() {
 #[test]
 fn compose_passthrough_commands_are_wired() {
     let cases: &[(&[&str], &str)] = &[
-        (&["down", "--no-tui"], "down\n"),
-        (&["start", "--no-tui"], "start\n"),
-        (&["stop", "--no-tui"], "stop\n"),
-        (&["restart", "--no-tui"], "restart\n"),
+        (&["down", "--plain"], "down\n"),
+        (&["start", "--plain"], "start\n"),
+        (&["stop", "--plain"], "stop\n"),
+        (&["restart", "--plain"], "restart\n"),
         (&["pull"], "pull\n"),
         (&["logs"], "logs\n"),
         (&["top"], "top\n"),
@@ -607,7 +650,7 @@ fn exec_requires_command() {
 }
 
 #[test]
-fn reload_legacy_runs_down_then_up() {
+fn reload_plain_runs_down_then_up() {
     let dir = TempDir::new();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
@@ -620,7 +663,7 @@ fn reload_legacy_runs_down_then_up() {
     let output = nirion_command(&project_file, &lock_file, &docker_script)
         .arg("reload")
         .arg("myapp")
-        .arg("--no-tui")
+        .arg("--plain")
         .output()
         .unwrap();
 

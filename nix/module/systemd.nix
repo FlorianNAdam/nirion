@@ -22,16 +22,16 @@ lib.mkIf (cfg.projects != { }) {
         pkgs.docker
       ];
       script = ''
-        nirion up --no-tui ${lib.escapeShellArg projectName}
+        nirion up --plain ${lib.escapeShellArg projectName}
       '';
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
         ExecReload = ''
-          ${nirionPkg}/bin/nirion reload --no-tui ${lib.escapeShellArg projectName}
+          ${nirionPkg}/bin/nirion reload --plain ${lib.escapeShellArg projectName}
         '';
         ExecStop = ''
-          ${nirionPkg}/bin/nirion down --no-tui ${lib.escapeShellArg projectName}
+          ${nirionPkg}/bin/nirion down --plain ${lib.escapeShellArg projectName}
         '';
       };
     }

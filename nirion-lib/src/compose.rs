@@ -1,7 +1,7 @@
 use std::{ops::Deref, process::Stdio};
 
 use anyhow::Context;
-use futures::{StreamExt, channel::mpsc, stream::BoxStream};
+use futures::{StreamExt, channel::mpsc, stream, stream::BoxStream};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::{
@@ -12,8 +12,23 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComposeConcurrency {
-    Sequential,
-    Parallel,
+    Jobs(usize),
+}
+
+impl ComposeConcurrency {
+    pub fn sequential() -> Self {
+        Self::Jobs(1)
+    }
+
+    pub fn unbounded() -> Self {
+        Self::Jobs(usize::MAX)
+    }
+
+    fn jobs(self) -> usize {
+        match self {
+            Self::Jobs(jobs) => jobs.max(1),
+        }
+    }
 }
 
 pub fn compose_target(
@@ -22,18 +37,15 @@ pub fn compose_target(
     args: Vec<String>,
     concurrency: ComposeConcurrency,
 ) -> BoxStream<'static, anyhow::Result<ComposeEvent>> {
-    match concurrency {
-        ComposeConcurrency::Sequential => {
-            compose_target_sequential(context, target, args)
-        }
-        ComposeConcurrency::Parallel => match target {
-            TargetSelector::All => compose_target_all_parallel(context, args),
-            target => compose_target_sequential(context, target, args),
-        },
+    let jobs = concurrency.jobs();
+
+    match target {
+        TargetSelector::All => compose_target_all(context, args, jobs),
+        target => compose_target_single(context, target, args),
     }
 }
 
-fn compose_target_sequential(
+fn compose_target_single(
     context: NirionContext,
     target: TargetSelector,
     args: Vec<String>,
@@ -41,46 +53,9 @@ fn compose_target_sequential(
     let (tx, rx) = mpsc::unbounded();
 
     tokio::spawn(async move {
-        let mut failures = Vec::new();
-
         match target {
             TargetSelector::All => {
-                for (name, project) in context.projects.iter() {
-                    let _ =
-                        tx.unbounded_send(Ok(ComposeEvent::ProjectStarted {
-                            project: name.to_string(),
-                        }));
-
-                    let mut stream = compose_cmd(
-                        context.clone(),
-                        project.docker_compose.clone(),
-                        project.name.clone(),
-                        args.clone(),
-                    );
-
-                    while let Some(event) = stream.next().await {
-                        match event {
-                            Ok(event) => {
-                                let _ = tx.unbounded_send(Ok(
-                                    ComposeEvent::Process {
-                                        project: Some(name.to_string()),
-                                        event,
-                                    },
-                                ));
-                            }
-                            Err(e) => {
-                                let error = e.to_string();
-                                let _ = tx.unbounded_send(Ok(
-                                    ComposeEvent::ProjectFailed {
-                                        project: name.to_string(),
-                                        error: error.clone(),
-                                    },
-                                ));
-                                failures.push(format!("{name}: {error}"));
-                            }
-                        }
-                    }
-                }
+                unreachable!("all targets use compose_target_all")
             }
             TargetSelector::Project(proj) => {
                 let project = context.projects[&proj.name].clone();
@@ -144,81 +119,74 @@ fn compose_target_sequential(
                 }
             }
         }
-
-        if !failures.is_empty() {
-            let _ = tx.unbounded_send(Err(anyhow::anyhow!(
-                "docker compose failed for {} project(s): {}",
-                failures.len(),
-                failures.join("; ")
-            )));
-        }
     });
 
     rx.boxed()
 }
 
-fn compose_target_all_parallel(
+fn compose_target_all(
     context: NirionContext,
     args: Vec<String>,
+    jobs: usize,
 ) -> BoxStream<'static, anyhow::Result<ComposeEvent>> {
     let (tx, rx) = mpsc::unbounded();
 
     tokio::spawn(async move {
-        let mut handles = Vec::new();
+        let projects = context
+            .projects
+            .iter()
+            .map(|(name, project)| (name.to_string(), project.clone()))
+            .collect::<Vec<_>>();
 
-        for (name, project) in context.projects.iter() {
-            let name = name.to_string();
-            let project = project.clone();
-            let args = args.clone();
-            let context = context.clone();
-            let tx = tx.clone();
+        let failures = stream::iter(projects)
+            .map(|(name, project)| {
+                let args = args.clone();
+                let context = context.clone();
+                let tx = tx.clone();
 
-            let _ = tx.unbounded_send(Ok(ComposeEvent::ProjectStarted {
-                project: name.clone(),
-            }));
+                async move {
+                    let _ =
+                        tx.unbounded_send(Ok(ComposeEvent::ProjectStarted {
+                            project: name.clone(),
+                        }));
 
-            handles.push(tokio::spawn(async move {
-                let mut stream = compose_cmd(
-                    context,
-                    project.docker_compose,
-                    project.name,
-                    args,
-                );
+                    let mut stream = compose_cmd(
+                        context,
+                        project.docker_compose,
+                        project.name,
+                        args,
+                    );
 
-                while let Some(event) = stream.next().await {
-                    match event {
-                        Ok(event) => {
-                            let _ =
-                                tx.unbounded_send(Ok(ComposeEvent::Process {
-                                    project: Some(name.clone()),
-                                    event,
-                                }));
-                        }
-                        Err(e) => {
-                            let error = e.to_string();
-                            let _ = tx.unbounded_send(Ok(
-                                ComposeEvent::ProjectFailed {
-                                    project: name.clone(),
-                                    error: error.clone(),
-                                },
-                            ));
-                            return Some(format!("{name}: {error}"));
+                    while let Some(event) = stream.next().await {
+                        match event {
+                            Ok(event) => {
+                                let _ = tx.unbounded_send(Ok(
+                                    ComposeEvent::Process {
+                                        project: Some(name.clone()),
+                                        event,
+                                    },
+                                ));
+                            }
+                            Err(e) => {
+                                let error = e.to_string();
+                                let _ = tx.unbounded_send(Ok(
+                                    ComposeEvent::ProjectFailed {
+                                        project: name.clone(),
+                                        error: error.clone(),
+                                    },
+                                ));
+                                return Some(format!("{name}: {error}"));
+                            }
                         }
                     }
+
+                    None
                 }
-
-                None
-            }));
-        }
-
-        let mut failures = Vec::new();
-        for handle in handles {
-            match handle.await {
-                Ok(Some(failure)) => failures.push(failure),
-                Ok(None) => {}
-                Err(error) => failures.push(error.to_string()),
-            }
-        }
+            })
+            .buffer_unordered(jobs)
+            .filter_map(|failure| async move { failure })
+            .collect::<Vec<_>>()
+            .await;
 
         if !failures.is_empty() {
             let _ = tx.unbounded_send(Err(anyhow::anyhow!(
@@ -637,7 +605,7 @@ exit 0
                 name: "api".into(),
             }),
             vec!["up".into(), "-d".into()],
-            ComposeConcurrency::Sequential,
+            ComposeConcurrency::sequential(),
         ))
         .await;
 
@@ -668,7 +636,7 @@ exit 0
                 service: "web".into(),
             }),
             vec!["restart".into()],
-            ComposeConcurrency::Sequential,
+            ComposeConcurrency::sequential(),
         ))
         .await;
 
@@ -692,7 +660,7 @@ exit 0
                 service: "web".into(),
             }),
             vec!["restart".into()],
-            ComposeConcurrency::Sequential,
+            ComposeConcurrency::sequential(),
         ))
         .await;
 
@@ -716,7 +684,7 @@ exit 0
             context(fake_docker_command(&docker)),
             TargetSelector::All,
             vec!["pull".into()],
-            ComposeConcurrency::Sequential,
+            ComposeConcurrency::sequential(),
         ))
         .await;
 
@@ -741,7 +709,7 @@ exit 0
             context(fake_docker_command(&docker)),
             TargetSelector::All,
             vec!["pull".into()],
-            ComposeConcurrency::Parallel,
+            ComposeConcurrency::unbounded(),
         ))
         .await;
 
@@ -766,7 +734,7 @@ exit 0
             context(fake_docker_command(&docker)),
             TargetSelector::All,
             vec!["up".into()],
-            ComposeConcurrency::Sequential,
+            ComposeConcurrency::sequential(),
         ))
         .await;
 
@@ -787,7 +755,7 @@ exit 0
             context(fake_docker_command(&docker)),
             TargetSelector::All,
             vec!["up".into()],
-            ComposeConcurrency::Parallel,
+            ComposeConcurrency::unbounded(),
         ))
         .await;
 
@@ -814,7 +782,7 @@ exit 0
                 name: "api".into(),
             }),
             vec!["up".into()],
-            ComposeConcurrency::Sequential,
+            ComposeConcurrency::sequential(),
         ))
         .await;
 
@@ -838,7 +806,7 @@ exit 0
             context(fake_docker_command(&docker)),
             TargetSelector::All,
             vec!["up".into()],
-            ComposeConcurrency::Sequential,
+            ComposeConcurrency::sequential(),
         ))
         .await;
 
@@ -869,7 +837,7 @@ exit 0
             context(fake_docker_command(&docker)),
             TargetSelector::All,
             vec!["up".into()],
-            ComposeConcurrency::Parallel,
+            ComposeConcurrency::unbounded(),
         ))
         .await;
 

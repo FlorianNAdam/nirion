@@ -163,7 +163,7 @@ To update images simply use `nirion update` to update the lock file and then reb
 
 ### NixOS Module Behavior
 
-Generated systemd units call `nirion up --no-tui`, `nirion reload --no-tui`, and `nirion down --no-tui` for start, reload, and stop. Systemd restart uses stop plus start. The Rust CLI shells out to Docker Compose v2 (`docker compose`) under the hood.
+Generated systemd units call `nirion up --plain`, `nirion reload --plain`, and `nirion down --plain` for start, reload, and stop. Systemd restart uses stop plus start. The Rust CLI shells out to Docker Compose v2 (`docker compose`) under the hood.
 
 `virtualisation.nirion.sops.overrideComposeFile` is intentionally opt-in. If it is enabled, generated compose files are written through sops-nix templates. A module that provides `sops.templates`, such as sops-nix, must also be imported.
 

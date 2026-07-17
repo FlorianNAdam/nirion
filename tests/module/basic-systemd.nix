@@ -63,15 +63,15 @@ in
     message = "project metadata was not rendered as expected";
   }
   {
-    assertion = lib.hasInfix "nirion up --no-tui web" unit.script;
+    assertion = lib.hasInfix "nirion up --plain web" unit.script;
     message = "systemd start script does not call nirion up";
   }
   {
-    assertion = lib.hasInfix "nirion reload --no-tui web" unit.serviceConfig.ExecReload;
+    assertion = lib.hasInfix "nirion reload --plain web" unit.serviceConfig.ExecReload;
     message = "systemd reload command does not call nirion reload";
   }
   {
-    assertion = lib.hasInfix "nirion down --no-tui web" unit.serviceConfig.ExecStop;
+    assertion = lib.hasInfix "nirion down --plain web" unit.serviceConfig.ExecStop;
     message = "systemd stop command does not call nirion down";
   }
 ]

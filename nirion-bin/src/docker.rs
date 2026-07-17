@@ -18,7 +18,7 @@ pub async fn compose_target_cmd(
         args.iter()
             .map(|arg| arg.to_string())
             .collect(),
-        ComposeConcurrency::Sequential,
+        ComposeConcurrency::sequential(),
     );
 
     while let Some(event) = stream.next().await {

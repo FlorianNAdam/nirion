@@ -43,6 +43,26 @@ pub fn healthchecks_finished(
             None => continue,
         };
 
+        let has_healthcheck =
+            project
+                .services
+                .iter()
+                .any(|(service_name, service)| {
+                    if let TargetSelector::Service(sel) = target {
+                        if sel.project == project_name
+                            && sel.service != *service_name
+                        {
+                            return false;
+                        }
+                    }
+
+                    service.healthcheck
+                });
+
+        if !has_healthcheck {
+            continue;
+        }
+
         let status = match statuses.get(project_name) {
             Some(s) => s,
             None => return false,

@@ -3,7 +3,7 @@ use crossterm::{
     execute,
     style::{Color, Stylize},
 };
-use futures::StreamExt;
+use futures::{StreamExt, stream};
 use nirion_lib::{
     compose::{ComposeConcurrency, compose_target},
     context::NirionContext,
@@ -18,10 +18,51 @@ use nirion_tui_lib::{
 };
 use std::collections::BTreeMap;
 use std::io::{Write, stdout};
+use std::num::NonZeroUsize;
 use tokio::time::Duration;
 
 use crate::TargetSelector;
 use crate::status_display::{project_state_icon, project_status_segments};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifecyclePresentation {
+    Progress,
+    Plain,
+    Hidden,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct LifecycleOptions {
+    pub presentation: LifecyclePresentation,
+    pub jobs: usize,
+    pub refresh_interval: Duration,
+    pub wait_for_healthchecks: bool,
+}
+
+pub fn lifecycle_options(
+    plain: bool,
+    quiet: bool,
+    jobs: Option<NonZeroUsize>,
+    refresh_interval: Duration,
+    wait_for_healthchecks: bool,
+) -> LifecycleOptions {
+    let presentation = if quiet {
+        LifecyclePresentation::Hidden
+    } else if plain {
+        LifecyclePresentation::Plain
+    } else {
+        LifecyclePresentation::Progress
+    };
+
+    LifecycleOptions {
+        presentation,
+        jobs: jobs
+            .map(usize::from)
+            .unwrap_or(usize::MAX),
+        refresh_interval,
+        wait_for_healthchecks,
+    }
+}
 
 struct CursorGuard;
 
@@ -111,19 +152,145 @@ fn print_progress(
     Ok(())
 }
 
-pub async fn run_command_with_progress(
+trait LifecycleRenderer {
+    fn needs_status_during_compose(&self) -> bool {
+        false
+    }
+
+    fn start(
+        &mut self,
+        _context: &NirionContext,
+        _selected: &[String],
+        _running: &BTreeMap<String, bool>,
+        _statuses: &BTreeMap<String, ProjectStatus>,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn compose_event(
+        &mut self,
+        _event: &ComposeEvent,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn tick(
+        &mut self,
+        _context: &NirionContext,
+        _selected: &[String],
+        _running: &BTreeMap<String, bool>,
+        _statuses: &BTreeMap<String, ProjectStatus>,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn finish(
+        &mut self,
+        _context: &NirionContext,
+        _selected: &[String],
+        _running: &BTreeMap<String, bool>,
+        _statuses: &BTreeMap<String, ProjectStatus>,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct ProgressRenderer {
+    spinner: Spinner,
+    cursor: Option<CursorGuard>,
+}
+
+impl LifecycleRenderer for ProgressRenderer {
+    fn needs_status_during_compose(&self) -> bool {
+        true
+    }
+
+    fn start(
+        &mut self,
+        context: &NirionContext,
+        selected: &[String],
+        running: &BTreeMap<String, bool>,
+        statuses: &BTreeMap<String, ProjectStatus>,
+    ) -> anyhow::Result<()> {
+        self.cursor = Some(CursorGuard::hide()?);
+        print_progress(
+            selected,
+            &self.spinner,
+            running,
+            statuses,
+            &context.projects,
+            true,
+        )
+    }
+
+    fn tick(
+        &mut self,
+        context: &NirionContext,
+        selected: &[String],
+        running: &BTreeMap<String, bool>,
+        statuses: &BTreeMap<String, ProjectStatus>,
+    ) -> anyhow::Result<()> {
+        print_progress(
+            selected,
+            &self.spinner,
+            running,
+            statuses,
+            &context.projects,
+            true,
+        )
+    }
+
+    fn finish(
+        &mut self,
+        context: &NirionContext,
+        selected: &[String],
+        running: &BTreeMap<String, bool>,
+        statuses: &BTreeMap<String, ProjectStatus>,
+    ) -> anyhow::Result<()> {
+        print_progress(
+            selected,
+            &self.spinner,
+            running,
+            statuses,
+            &context.projects,
+            false,
+        )
+    }
+}
+
+struct PlainRenderer;
+
+impl LifecycleRenderer for PlainRenderer {
+    fn compose_event(
+        &mut self,
+        event: &ComposeEvent,
+    ) -> anyhow::Result<()> {
+        render_compose_event(event);
+        Ok(())
+    }
+}
+
+struct HiddenRenderer;
+
+impl LifecycleRenderer for HiddenRenderer {}
+
+fn lifecycle_renderer(
+    presentation: LifecyclePresentation
+) -> Box<dyn LifecycleRenderer> {
+    match presentation {
+        LifecyclePresentation::Progress => Box::<ProgressRenderer>::default(),
+        LifecyclePresentation::Plain => Box::new(PlainRenderer),
+        LifecyclePresentation::Hidden => Box::new(HiddenRenderer),
+    }
+}
+
+pub async fn run_lifecycle_command(
     context: &NirionContext,
     target: &TargetSelector,
     args: &[&str],
-    no_monitor: bool,
-    quiet: bool,
-    refresh_interval: Duration,
-    wait_for_healthchecks: bool,
+    options: LifecycleOptions,
 ) -> anyhow::Result<()> {
-    if no_monitor {
-        return run_compose_hidden(context, target, args).await;
-    }
-
     let selected = selected_project_names(target, &context.projects);
     let args = args
         .iter()
@@ -133,11 +300,10 @@ pub async fn run_command_with_progress(
         context.clone(),
         target.clone(),
         args,
-        ComposeConcurrency::Parallel,
+        ComposeConcurrency::Jobs(options.jobs),
     );
-    let mut status_stream =
-        status_stream(context, target.clone(), refresh_interval);
-    let spinner = Spinner::default();
+    let mut status_events = stream::pending().boxed();
+    let mut status_stream_started = false;
     let mut running = selected
         .iter()
         .map(|name| (name.clone(), true))
@@ -145,24 +311,15 @@ pub async fn run_command_with_progress(
     let mut statuses = BTreeMap::new();
     let mut compose_finished = false;
     let mut compose_error = None;
+    let mut status_finished = false;
+    let mut renderer = lifecycle_renderer(options.presentation);
 
-    let _cursor = CursorGuard::hide()?;
-
-    if !quiet {
-        print_progress(
-            &selected,
-            &spinner,
-            &running,
-            &statuses,
-            &context.projects,
-            true,
-        )?;
-    }
+    renderer.start(context, &selected, &running, &statuses)?;
 
     loop {
         let ready = compose_error.is_some()
             || (compose_finished
-                && (!wait_for_healthchecks
+                && (!options.wait_for_healthchecks
                     || wait_finished(
                         target,
                         &context.projects,
@@ -174,10 +331,25 @@ pub async fn run_command_with_progress(
             break;
         }
 
+        let poll_status = renderer.needs_status_during_compose()
+            || (compose_finished && options.wait_for_healthchecks);
+
+        if poll_status && !status_stream_started {
+            status_events = status_stream(
+                context,
+                target.clone(),
+                options.refresh_interval,
+            );
+            status_stream_started = true;
+        }
+
         tokio::select! {
             event = compose_stream.next(), if !compose_finished => {
                 match event {
-                    Some(Ok(event)) => handle_compose_event(event, &mut running),
+                    Some(Ok(event)) => {
+                        handle_compose_event(&event, &mut running);
+                        renderer.compose_event(&event)?;
+                    }
                     Some(Err(error)) => {
                         compose_error = Some(error);
                         compose_finished = true;
@@ -193,7 +365,7 @@ pub async fn run_command_with_progress(
                     }
                 }
             }
-            event = status_stream.next() => {
+            event = status_events.next(), if poll_status && !status_finished => {
                 match event {
                     Some(Ok(event)) => {
                         statuses.insert(event.project, event.status);
@@ -206,42 +378,27 @@ pub async fn run_command_with_progress(
                         }
                     }
                     None => {
-                        compose_error = Some(anyhow::anyhow!("docker status stream ended before progress finished"));
-                        compose_finished = true;
-                        for value in running.values_mut() {
-                            *value = false;
+                        status_finished = true;
+                        if renderer.needs_status_during_compose() || options.wait_for_healthchecks {
+                            compose_error = Some(anyhow::anyhow!("docker status stream ended before progress finished"));
+                            compose_finished = true;
+                            for value in running.values_mut() {
+                                *value = false;
+                            }
                         }
                     }
                 }
             }
         }
 
-        if !quiet {
-            print_progress(
-                &selected,
-                &spinner,
-                &running,
-                &statuses,
-                &context.projects,
-                true,
-            )?;
-        }
+        renderer.tick(context, &selected, &running, &statuses)?;
     }
 
-    if compose_error.is_none() {
+    if compose_error.is_none() && renderer.needs_status_during_compose() {
         refresh_statuses(context, &selected, &mut statuses).await?;
     }
 
-    if !quiet {
-        print_progress(
-            &selected,
-            &spinner,
-            &running,
-            &statuses,
-            &context.projects,
-            false,
-        )?;
-    }
+    renderer.finish(context, &selected, &running, &statuses)?;
 
     if let Some(error) = compose_error {
         return Err(error);
@@ -250,45 +407,47 @@ pub async fn run_command_with_progress(
     Ok(())
 }
 
-async fn run_compose_hidden(
-    context: &NirionContext,
-    target: &TargetSelector,
-    args: &[&str],
-) -> anyhow::Result<()> {
-    let args = args
-        .iter()
-        .map(|arg| arg.to_string())
-        .collect::<Vec<_>>();
-    let mut stream = compose_target(
-        context.clone(),
-        target.clone(),
-        args,
-        ComposeConcurrency::Parallel,
-    );
-
-    while let Some(event) = stream.next().await {
-        event?;
+fn render_compose_event(event: &ComposeEvent) {
+    match event {
+        ComposeEvent::ProjectStarted { project } => {
+            println!("[{}]", project.as_str().cyan());
+        }
+        ComposeEvent::Process { event, .. } => render_process_event(event),
+        ComposeEvent::ProjectFailed { project, error } => {
+            eprintln!("Project '{}' failed: {}", project, error);
+            println!();
+        }
     }
+}
 
-    Ok(())
+fn render_process_event(event: &ProcessEvent) {
+    match event {
+        ProcessEvent::StdoutLine(line) => println!("{}", line),
+        ProcessEvent::StderrLine(line) => {
+            if !line.contains("the attribute `version` is obsolete") {
+                eprintln!("{}", line);
+            }
+        }
+        ProcessEvent::Exited(_) => {}
+    }
 }
 
 fn handle_compose_event(
-    event: ComposeEvent,
+    event: &ComposeEvent,
     running: &mut BTreeMap<String, bool>,
 ) {
     match event {
         ComposeEvent::ProjectStarted { project } => {
-            running.insert(project, true);
+            running.insert(project.clone(), true);
         }
         ComposeEvent::ProjectFailed { project, .. } => {
-            running.insert(project, false);
+            running.insert(project.clone(), false);
         }
         ComposeEvent::Process {
             project: Some(project),
             event: ProcessEvent::Exited(_),
         } => {
-            running.insert(project, false);
+            running.insert(project.clone(), false);
         }
         ComposeEvent::Process { .. } => {}
     }
@@ -358,7 +517,7 @@ mod tests {
         let mut running = BTreeMap::new();
 
         handle_compose_event(
-            ComposeEvent::ProjectStarted {
+            &ComposeEvent::ProjectStarted {
                 project: "app".to_string(),
             },
             &mut running,
@@ -366,7 +525,7 @@ mod tests {
         assert_eq!(running.get("app"), Some(&true));
 
         handle_compose_event(
-            ComposeEvent::Process {
+            &ComposeEvent::Process {
                 project: Some("app".to_string()),
                 event: ProcessEvent::Exited(ExitStatus {
                     code: Some(0),
@@ -378,7 +537,7 @@ mod tests {
         assert_eq!(running.get("app"), Some(&false));
 
         handle_compose_event(
-            ComposeEvent::ProjectFailed {
+            &ComposeEvent::ProjectFailed {
                 project: "app".to_string(),
                 error: "failed".to_string(),
             },
@@ -392,7 +551,7 @@ mod tests {
         let mut running = BTreeMap::from([("app".to_string(), true)]);
 
         handle_compose_event(
-            ComposeEvent::Process {
+            &ComposeEvent::Process {
                 project: None,
                 event: ProcessEvent::Exited(ExitStatus {
                     code: Some(0),

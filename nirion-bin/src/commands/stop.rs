@@ -1,9 +1,8 @@
 use anyhow::Result;
 use clap::Parser;
-use tokio::time::Duration;
 
-use crate::docker::compose_target_cmd;
-use crate::progress::run_command_with_progress;
+use crate::commands::LifecycleArgs;
+use crate::progress::run_lifecycle_command;
 use crate::{ClapSelector, TargetSelector};
 use nirion_lib::context::NirionContext;
 
@@ -18,40 +17,19 @@ pub struct StopArgs {
     )]
     pub target: TargetSelector,
 
-    /// Disable real-time monitoring of container status after starting containers
-    #[arg(long)]
-    pub no_monitor: bool,
-
-    /// Refresh interval in seconds for status updates when monitoring
-    #[arg(short = 'r', long, default_value = "250ms", value_parser = humantime::parse_duration)]
-    pub refresh: Duration,
-
-    /// Suppress non-essential output
-    #[arg(short, long)]
-    pub quiet: bool,
-
-    /// Disable TUI progress output and use docker compose directly
-    #[arg(short, long, alias = "no-tui")]
-    pub legacy: bool,
+    #[command(flatten)]
+    pub lifecycle: LifecycleArgs,
 }
 
 pub async fn handle_stop(
     args: &StopArgs,
     context: &NirionContext,
 ) -> Result<()> {
-    if !args.legacy && !matches!(args.target, TargetSelector::Service(_)) {
-        run_command_with_progress(
-            context,
-            &args.target,
-            &["stop"],
-            args.no_monitor,
-            args.quiet,
-            args.refresh,
-            false,
-        )
-        .await?;
-    } else {
-        compose_target_cmd(context, &args.target, &["stop"]).await?;
-    }
-    Ok(())
+    run_lifecycle_command(
+        context,
+        &args.target,
+        &["stop"],
+        args.lifecycle.options(false),
+    )
+    .await
 }
