@@ -15,11 +15,13 @@ concurrency:
 
 jobs:
   discover:
-    name: Discover VM checks
+    name: Discover checks
     runs-on: ubuntu-latest
 
     outputs:
       vm-matrix: ${{ steps.discover.outputs.vm-matrix }}
+      rust-checks: ${{ steps.discover.outputs.rust-checks }}
+      nix-checks: ${{ steps.discover.outputs.nix-checks }}
 
     steps:
       - name: Checkout
@@ -28,27 +30,52 @@ jobs:
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
-      - name: Discover VM checks
+      - name: Discover checks
         id: discover
         shell: bash
         run: |
           set -euo pipefail
 
-          matrix="$(
+          checks="$(
             nix eval --json \
               .#checks.x86_64-linux \
-              --apply builtins.attrNames |
-              jq -c '{
-                include: [
-                  .[]
-                  | select(startswith("vm-"))
-                  | { check: ., name: sub("^vm-"; "") }
-                ]
-              }'
+              --apply builtins.attrNames
           )"
 
-          test "$matrix" != '{"include":[]}'
-          echo "vm-matrix=$matrix" >> "$GITHUB_OUTPUT"
+          vm_matrix="$(
+            jq -c '{
+              include: [
+                .[]
+                | select(startswith("vm-"))
+                | { check: ., name: sub("^vm-"; "") }
+              ]
+            }' <<< "$checks"
+          )"
+
+          rust_checks="$(
+            jq -c '[.[] | select(. == "rust-tests")]' <<< "$checks"
+          )"
+
+          nix_checks="$(
+            jq -c '[
+              .[]
+              | select(
+                (startswith("vm-") | not)
+                and . != "rust-tests"
+                and . != "package"
+              )
+            ]' <<< "$checks"
+          )"
+
+          test "$vm_matrix" != '{"include":[]}'
+          test "$rust_checks" != '[]'
+          test "$nix_checks" != '[]'
+
+          {
+            echo "vm-matrix=$vm_matrix"
+            echo "rust-checks=$rust_checks"
+            echo "nix-checks=$nix_checks"
+          } >> "$GITHUB_OUTPUT"
 
   build:
     name: Build binary
@@ -108,9 +135,48 @@ jobs:
           primary-key: nix-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}-${{ github.sha }}
           gc-max-store-size-linux: 6G
 
-  check:
-    name: Non-VM checks
-    needs: build
+  rust:
+    name: Rust tests
+    needs: discover
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Restore Nix store
+        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}-${{ github.sha }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-check-${{ hashFiles('flake.lock') }}-
+            nix-${{ runner.os }}-check-
+
+      - name: Run Rust tests
+        shell: bash
+        env:
+          RUST_CHECKS: ${{ needs.discover.outputs.rust-checks }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t checks < <(
+            jq -r '.[] | ".#checks.x86_64-linux.\(.)"' <<< "$RUST_CHECKS"
+          )
+
+          nix build \
+            --no-link \
+            --keep-going \
+            --print-build-logs \
+            "${checks[@]}"
+
+  nix:
+    name: Nix checks
+    needs:
+      - discover
+      - build
     runs-on: ubuntu-latest
 
     steps:
@@ -147,20 +213,15 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: nix run .#check-message -- "$PR_TITLE"
 
-      - name: Run non-VM checks
+      - name: Run Nix checks
         shell: bash
+        env:
+          NIX_CHECKS: ${{ needs.discover.outputs.nix-checks }}
         run: |
           set -euo pipefail
 
           mapfile -t checks < <(
-            nix eval --json \
-              .#checks.x86_64-linux \
-              --apply builtins.attrNames |
-              jq -r '
-                .[]
-                | select(startswith("vm-") | not)
-                | ".#checks.x86_64-linux.\(.)"
-              '
+            jq -r '.[] | ".#checks.x86_64-linux.\(.)"' <<< "$NIX_CHECKS"
           )
 
           nix build \
@@ -220,7 +281,8 @@ jobs:
     needs:
       - discover
       - build
-      - check
+      - rust
+      - nix
       - vm
     if: always()
     runs-on: ubuntu-latest
@@ -230,7 +292,8 @@ jobs:
         env:
           DISCOVER_RESULT: ${{ needs.discover.result }}
           BUILD_RESULT: ${{ needs.build.result }}
-          CHECK_RESULT: ${{ needs.check.result }}
+          RUST_RESULT: ${{ needs.rust.result }}
+          NIX_RESULT: ${{ needs.nix.result }}
           VM_RESULT: ${{ needs.vm.result }}
         run: |
           set -euo pipefail
@@ -238,7 +301,8 @@ jobs:
           for result in \
             "$DISCOVER_RESULT" \
             "$BUILD_RESULT" \
-            "$CHECK_RESULT" \
+            "$RUST_RESULT" \
+            "$NIX_RESULT" \
             "$VM_RESULT"; do
             test "$result" = success
           done
