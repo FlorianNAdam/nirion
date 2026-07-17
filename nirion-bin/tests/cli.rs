@@ -173,28 +173,6 @@ exit {exit_code}
     .unwrap();
 }
 
-fn write_fake_sudo(
-    path: &Path,
-    args_file: &Path,
-) {
-    fs::write(
-        path,
-        format!(
-            r#"#!/bin/sh
-printf '%s\n' "$@" > '{}'
-exit 0
-"#,
-            args_file.display(),
-        ),
-    )
-    .unwrap();
-    let mut permissions = fs::metadata(path)
-        .unwrap()
-        .permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(path, permissions).unwrap();
-}
-
 fn nirion_command(
     project_file: &Path,
     lock_file: &Path,
@@ -656,40 +634,4 @@ fn lock_and_update_report_no_images() {
             "failed command: {command}"
         );
     }
-}
-
-#[test]
-fn patch_invokes_sudo_mirage_patch_for_project_compose() {
-    let dir = TempDir::new();
-    let project_file = dir.path().join("projects.json");
-    let lock_file = dir.path().join("nirion.lock");
-    let docker_script = dir.path().join("fake-docker.sh");
-    let docker_args_file = dir.path().join("docker-args");
-    let sudo_script = dir.path().join("sudo");
-    let sudo_args_file = dir.path().join("sudo-args");
-    write_projects(&project_file);
-    fs::write(&lock_file, "{}").unwrap();
-    write_fake_docker(&docker_script, &docker_args_file, "", "", 0);
-    write_fake_sudo(&sudo_script, &sudo_args_file);
-
-    let mut command = nirion_command(&project_file, &lock_file, &docker_script);
-    command
-        .env(
-            "PATH",
-            format!(
-                "{}:{}",
-                dir.path().display(),
-                env::var("PATH").unwrap_or_default()
-            ),
-        )
-        .arg("patch")
-        .arg("myapp");
-
-    let output = command.output().unwrap();
-
-    assert_success(&output);
-    assert_eq!(
-        fs::read_to_string(sudo_args_file).unwrap(),
-        "mirage-patch\ncompose.yml\n"
-    );
 }

@@ -10,7 +10,7 @@ use nirion_lib::{
 
 use crate::ClapSelector;
 
-/// Patch service files using mirage-patch
+/// Inspect images and services
 #[derive(Parser, Debug, Clone)]
 pub struct InspectArgs {
     /// Target selector: *, project, or project.service
