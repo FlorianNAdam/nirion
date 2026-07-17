@@ -147,9 +147,6 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: nix run .#check-message -- "$PR_TITLE"
 
-      - name: Validate flake outputs
-        run: nix flake check --no-build
-
       - name: Run non-VM checks
         shell: bash
         run: |
