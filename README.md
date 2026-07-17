@@ -184,6 +184,7 @@ nirion [OPTIONS] <COMMAND>
 | `down`         | Stop and remove service containers and networks       |
 | `reload`       | Stop and recreate service containers                  |
 | `list`         | List projects or services                             |
+| `pull`         | Pull service images                                   |
 | `update`       | Update lock file entries                              |
 | `lock`         | Create missing lock file entries                      |
 | `exec`         | Execute a command in a running service container      |
