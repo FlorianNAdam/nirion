@@ -37,7 +37,7 @@ pub async fn handle_lock(
     let mut operation = update_images(context, images, args.jobs);
 
     while let Some(event) = operation.events.next().await {
-        render_lock_update_event(event?);
+        println!("{}", format_lock_update_event(event?));
     }
 
     operation.finish().await?;
@@ -45,25 +45,26 @@ pub async fn handle_lock(
     Ok(())
 }
 
-pub fn render_lock_update_event(event: LockUpdateEvent) {
+pub fn format_lock_update_event(event: LockUpdateEvent) -> String {
     match event {
-        LockUpdateEvent::NoImages => println!("No images found to update"),
+        LockUpdateEvent::NoImages => "No images found to update".to_string(),
         LockUpdateEvent::ImageStarted { service, image } => {
-            println!("Checking {service}: {image}");
+            format!("Checking {service}: {image}")
         }
         LockUpdateEvent::ImageResolved { service } => {
-            println!("Resolved {service}");
+            format!("Resolved {service}")
         }
         LockUpdateEvent::UpToDate => {
-            println!("All images are already up-to-date")
+            "All images are already up-to-date".to_string()
         }
         LockUpdateEvent::ChangesDetected { diffs } => {
-            println!("\nChanges:");
-            print!("{}", format_diff(&diffs));
+            format!("\nChanges:\n{}", format_diff(&diffs).trim_end())
         }
-        LockUpdateEvent::WritingLockFile => println!("\nUpdating lock file..."),
+        LockUpdateEvent::WritingLockFile => {
+            "\nUpdating lock file...".to_string()
+        }
         LockUpdateEvent::LockFileWritten => {
-            println!("Lock file updated successfully")
+            "Lock file updated successfully".to_string()
         }
     }
 }
@@ -174,5 +175,63 @@ mod tests {
         assert!(old_version < new_version);
         assert!(new_version < removed);
         assert!(removed < removed_version);
+    }
+
+    #[test]
+    fn format_lock_update_event_mentions_key_words() {
+        let no_images = format_lock_update_event(LockUpdateEvent::NoImages);
+        let no_images = no_images.to_lowercase();
+        assert!(no_images.contains("no"));
+        assert!(no_images.contains("image"));
+
+        let up_to_date = format_lock_update_event(LockUpdateEvent::UpToDate);
+        assert!(up_to_date
+            .to_lowercase()
+            .contains("up-to-date"));
+
+        let checking =
+            format_lock_update_event(LockUpdateEvent::ImageStarted {
+                service: "app.web".to_string(),
+                image: "nginx:1.27".to_string(),
+            });
+        let checking = checking.to_lowercase();
+        assert!(checking.contains("checking"));
+        assert!(checking.contains("app"));
+        assert!(checking.contains("web"));
+        assert!(checking.contains("nginx"));
+
+        let resolved =
+            format_lock_update_event(LockUpdateEvent::ImageResolved {
+                service: "app.web".to_string(),
+            });
+        assert!(resolved
+            .to_lowercase()
+            .contains("resolved"));
+
+        let changes =
+            format_lock_update_event(LockUpdateEvent::ChangesDetected {
+                diffs: vec![DiffEntry::Added {
+                    service: "app.web".to_string(),
+                    new: image("nginx:1.27", None, "sha256:added"),
+                }],
+            });
+        let changes = strip_ansi_codes(&changes).to_lowercase();
+        assert!(changes.contains("changes"));
+        assert!(changes.contains("app"));
+        assert!(changes.contains("web"));
+        assert!(changes.contains("sha256:added"));
+
+        let writing =
+            format_lock_update_event(LockUpdateEvent::WritingLockFile);
+        assert!(writing
+            .to_lowercase()
+            .contains("updating"));
+
+        let written =
+            format_lock_update_event(LockUpdateEvent::LockFileWritten);
+        let written = written.to_lowercase();
+        assert!(written.contains("lock"));
+        assert!(written.contains("file"));
+        assert!(written.contains("success"));
     }
 }

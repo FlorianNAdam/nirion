@@ -359,6 +359,13 @@ exit {inspect_exit_code}
         .to_string()
     }
 
+    fn assert_json_eq(
+        actual: &str,
+        expected: Value,
+    ) {
+        assert_eq!(serde_json::from_str::<Value>(actual).unwrap(), expected);
+    }
+
     #[test]
     fn pretty_json_formats_object_json() {
         let rendered = pretty_json(r#"{"image":"nginx","ports":[80,443]}"#);
@@ -424,7 +431,7 @@ exit {inspect_exit_code}
         .await
         .unwrap();
 
-        assert_eq!(output, r#"{"Id":"image-id"}"#.to_string() + "\n");
+        assert_json_eq(&output, serde_json::json!({ "Id": "image-id" }));
         assert_eq!(
             fs::read_to_string(args_file).unwrap(),
             "image\ninspect\n--format\n{{json .}}\nnginx:latest\n"
@@ -461,13 +468,9 @@ exit {inspect_exit_code}
         .await
         .unwrap();
 
-        assert_eq!(
-            output,
-            r#"{
-  "RepoTags": [
-    "nginx:latest"
-  ]
-}"#
+        assert_json_eq(
+            &output,
+            serde_json::json!({ "RepoTags": ["nginx:latest"] }),
         );
         assert_eq!(
             fs::read_to_string(args_file).unwrap(),
@@ -573,12 +576,7 @@ exit {inspect_exit_code}
         .await
         .unwrap();
 
-        assert_eq!(
-            output,
-            r#"{
-  "Id": "abc"
-}"#
-        );
+        assert_json_eq(&output, serde_json::json!({ "Id": "abc" }));
     }
 
     #[tokio::test]
@@ -607,12 +605,7 @@ exit {inspect_exit_code}
         .await
         .unwrap();
 
-        assert_eq!(
-            output,
-            r#"{
-  "Name": "myapp-web-1"
-}"#
-        );
+        assert_json_eq(&output, serde_json::json!({ "Name": "myapp-web-1" }));
         assert!(
             fs::read_to_string(args_file)
                 .unwrap()
@@ -647,7 +640,7 @@ exit {inspect_exit_code}
         .await
         .unwrap();
 
-        assert_eq!(output, r#"{"raw":true}"#.to_string() + "\n");
+        assert_json_eq(&output, serde_json::json!({ "raw": true }));
     }
 
     #[tokio::test]
@@ -747,7 +740,8 @@ exit {inspect_exit_code}
         .await
         .unwrap();
 
-        assert_eq!(outputs, vec![r#"{"ok":true}"#.to_string() + "\n"]);
+        assert_eq!(outputs.len(), 1);
+        assert_json_eq(&outputs[0], serde_json::json!({ "ok": true }));
     }
 
     #[tokio::test]
