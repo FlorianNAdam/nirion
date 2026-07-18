@@ -1,7 +1,7 @@
-use crossterm::style::{Color, Stylize};
 use nirion_lib::docker::{
     ProjectState, ProjectStatus, ServiceState, ServiceStatus,
 };
+use nirion_tui_lib::color::{Color, Colorize, DARK_GREY, GREY};
 
 pub fn project_state_icon(state: &ProjectState) -> String {
     use ProjectState::*;
@@ -50,23 +50,23 @@ fn service_state_order(state: &ServiceState) -> usize {
 
 fn service_state_color(state: &ServiceState) -> Color {
     match state {
-        ServiceState::Created => Color::Grey,
-        ServiceState::Starting => Color::DarkGrey,
+        ServiceState::Created => GREY,
+        ServiceState::Starting => DARK_GREY,
         ServiceState::Running => Color::Yellow,
         ServiceState::Paused => Color::Blue,
-        ServiceState::Restarting => Color::DarkGrey,
+        ServiceState::Restarting => DARK_GREY,
         ServiceState::Succeeded => Color::Cyan,
         ServiceState::Failed => Color::Magenta,
         ServiceState::Healthy => Color::Green,
         ServiceState::Unhealthy => Color::Red,
-        ServiceState::Unknown => Color::Grey,
+        ServiceState::Unknown => GREY,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use console::strip_ansi_codes;
+    use nirion_tui_lib::ansi::strip_ansi_codes;
     use std::collections::BTreeMap;
 
     fn service_status(

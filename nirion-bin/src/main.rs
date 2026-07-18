@@ -1,7 +1,6 @@
 use crate::commands::{Commands, handle_command};
 use clap::{CommandFactory, Parser};
 use clap_complete::{ArgValueCompleter, CompletionCandidate};
-use crossterm::style::Stylize;
 use nirion_lib::config::{
     build_nix_project_file, load_auth_config, load_locked_images,
     load_projects, nix_config_target,
@@ -14,6 +13,7 @@ use nirion_lib::projects::{
     parse_service_selector,
 };
 use nirion_oci_lib::client::NirionOciClient;
+use nirion_tui_lib::color::Colorize;
 use std::sync::{Arc, OnceLock};
 use std::{ffi::OsString, path::PathBuf};
 

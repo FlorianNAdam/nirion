@@ -7,7 +7,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use console::strip_ansi_codes;
+use nirion_tui_lib::ansi::strip_ansi_codes;
 
 struct TempDir {
     path: PathBuf,

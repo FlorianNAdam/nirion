@@ -1,4 +1,4 @@
-use console::strip_ansi_codes;
+pub use console::strip_ansi_codes;
 
 pub fn ansi_len(ansi_str: &str) -> usize {
     strip_ansi_codes(ansi_str)
@@ -19,11 +19,11 @@ pub fn lpad_ansi(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use console::style;
+    use crate::color::Colorize;
 
     #[test]
     fn ansi_len_ignores_ansi_escape_codes() {
-        let text = style("hello").red().bold().to_string();
+        let text = "hello".red().bold().to_string();
 
         assert_eq!(ansi_len(&text), 5);
     }
@@ -35,7 +35,7 @@ mod tests {
 
     #[test]
     fn lpad_ansi_pads_to_visible_width() {
-        let text = style("up").green().to_string();
+        let text = "up".green().to_string();
 
         assert_eq!(lpad_ansi(&text, 5), format!("{}   ", text));
     }

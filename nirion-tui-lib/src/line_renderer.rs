@@ -1,8 +1,3 @@
-use crossterm::{
-    cursor::{MoveDown, MoveToColumn, MoveUp},
-    execute,
-    terminal::{Clear, ClearType},
-};
 use std::io::{Write, stdout};
 
 #[derive(Default)]
@@ -32,7 +27,8 @@ impl LineRenderer {
         }
 
         if !wanted.is_empty() {
-            execute!(out, MoveUp(wanted.len() as u16), MoveToColumn(0))?;
+            move_up(out, wanted.len())?;
+            move_to_column(out, 0)?;
         }
         out.flush()?;
 
@@ -80,11 +76,8 @@ impl LineRenderer {
         self.render_with_writer(wanted, out)?;
 
         if !self.current.is_empty() {
-            execute!(
-                out,
-                MoveDown(self.current.len() as u16),
-                MoveToColumn(0)
-            )?;
+            move_down(out, self.current.len())?;
+            move_to_column(out, 0)?;
         }
         out.flush()?;
 
@@ -108,21 +101,53 @@ impl LineRenderer {
             }
 
             if row > 0 {
-                execute!(out, MoveDown(row as u16))?;
+                move_down(out, row)?;
             }
-            execute!(out, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
+            move_to_column(out, 0)?;
+            clear_current_line(out)?;
             if let Some(line) = wanted {
                 write!(out, "{line}")?;
             }
             if row > 0 {
-                execute!(out, MoveUp(row as u16))?;
+                move_up(out, row)?;
             }
-            execute!(out, MoveToColumn(0))?;
+            move_to_column(out, 0)?;
         }
 
         out.flush()?;
         Ok(())
     }
+}
+
+fn move_up(
+    out: &mut impl Write,
+    lines: usize,
+) -> std::io::Result<()> {
+    if lines > 0 {
+        write!(out, "\x1b[{lines}A")?;
+    }
+    Ok(())
+}
+
+fn move_down(
+    out: &mut impl Write,
+    lines: usize,
+) -> std::io::Result<()> {
+    if lines > 0 {
+        write!(out, "\x1b[{lines}B")?;
+    }
+    Ok(())
+}
+
+fn move_to_column(
+    out: &mut impl Write,
+    column: usize,
+) -> std::io::Result<()> {
+    write!(out, "\x1b[{}G", column + 1)
+}
+
+fn clear_current_line(out: &mut impl Write) -> std::io::Result<()> {
+    write!(out, "\x1b[2K")
 }
 
 fn split_lines(text: &str) -> Vec<String> {
