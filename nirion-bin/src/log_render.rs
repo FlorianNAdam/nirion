@@ -165,3 +165,197 @@ impl LogRenderer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nirion_tui_lib::ansi::strip_ansi_codes;
+
+    fn source() -> LogSource {
+        LogSource::new("project", "service", "abc", "container", Some(7), true)
+    }
+
+    #[test]
+    fn show_events_auto_follows_follow_mode() {
+        assert!(
+            LogRenderer::new(
+                LogLabelFormat::ProjectService,
+                LogEventsMode::Auto,
+                true,
+            )
+            .show_events()
+        );
+        assert!(
+            !LogRenderer::new(
+                LogLabelFormat::ProjectService,
+                LogEventsMode::Auto,
+                false,
+            )
+            .show_events()
+        );
+        assert!(
+            LogRenderer::new(
+                LogLabelFormat::ProjectService,
+                LogEventsMode::Always,
+                false,
+            )
+            .show_events()
+        );
+        assert!(
+            !LogRenderer::new(
+                LogLabelFormat::ProjectService,
+                LogEventsMode::Never,
+                true,
+            )
+            .show_events()
+        );
+    }
+
+    #[test]
+    fn format_label_supports_all_label_modes() {
+        let source = source();
+        assert_eq!(
+            LogRenderer::new(
+                LogLabelFormat::ProjectService,
+                LogEventsMode::Never,
+                false,
+            )
+            .format_label(&source),
+            Some("project.service".to_string())
+        );
+        assert_eq!(
+            LogRenderer::new(
+                LogLabelFormat::Service,
+                LogEventsMode::Never,
+                false
+            )
+            .format_label(&source),
+            Some("service".to_string())
+        );
+        assert_eq!(
+            LogRenderer::new(
+                LogLabelFormat::Container,
+                LogEventsMode::Never,
+                false
+            )
+            .format_label(&source),
+            Some("container".to_string())
+        );
+        assert_eq!(
+            LogRenderer::new(LogLabelFormat::None, LogEventsMode::Never, false)
+                .format_label(&source),
+            None
+        );
+    }
+
+    #[test]
+    fn format_label_falls_back_to_project_for_missing_parts() {
+        let renderer = LogRenderer::new(
+            LogLabelFormat::ProjectService,
+            LogEventsMode::Never,
+            false,
+        );
+        assert_eq!(
+            renderer.format_label_parts("project", "", ""),
+            Some("project".to_string())
+        );
+
+        let renderer = LogRenderer::new(
+            LogLabelFormat::Service,
+            LogEventsMode::Never,
+            false,
+        );
+        assert_eq!(
+            renderer.format_label_parts("project", "", ""),
+            Some("project".to_string())
+        );
+
+        let renderer = LogRenderer::new(
+            LogLabelFormat::Container,
+            LogEventsMode::Never,
+            false,
+        );
+        assert_eq!(
+            renderer.format_label_parts("project", "service", ""),
+            Some("project".to_string())
+        );
+    }
+
+    #[test]
+    fn format_with_label_uses_requested_label_color() {
+        let renderer = LogRenderer::new(
+            LogLabelFormat::ProjectService,
+            LogEventsMode::Never,
+            false,
+        );
+        let source = source();
+
+        for color in [
+            LogLabelColor::Stdout,
+            LogLabelColor::Stderr,
+            LogLabelColor::Event,
+        ] {
+            assert_eq!(
+                strip_ansi_codes(
+                    &renderer.format_with_label(&source, "line", color)
+                ),
+                "[project.service] line"
+            );
+        }
+    }
+
+    #[test]
+    fn render_lifecycle_events_can_be_suppressed() {
+        let mut renderer =
+            LogRenderer::new(LogLabelFormat::None, LogEventsMode::Never, true);
+        let source = source();
+
+        renderer
+            .render(LogEvent::SourceAttached(source.clone()))
+            .unwrap();
+        renderer
+            .render(LogEvent::SourceExited(source.clone()))
+            .unwrap();
+        renderer
+            .render(LogEvent::SourceDetached(source))
+            .unwrap();
+    }
+
+    #[test]
+    fn render_lifecycle_events_when_enabled() {
+        let mut renderer = LogRenderer::new(
+            LogLabelFormat::None,
+            LogEventsMode::Always,
+            false,
+        );
+        let source = source();
+
+        renderer
+            .render(LogEvent::SourceAttached(source.clone()))
+            .unwrap();
+        renderer
+            .render(LogEvent::SourceExited(source.clone()))
+            .unwrap();
+        renderer
+            .render(LogEvent::SourceDetached(source))
+            .unwrap();
+    }
+
+    #[test]
+    fn render_source_exited_without_exit_code() {
+        let mut renderer =
+            LogRenderer::new(LogLabelFormat::None, LogEventsMode::Never, false);
+        let source = LogSource::new(
+            "project",
+            "service",
+            "abc",
+            "container",
+            None,
+            true,
+        );
+
+        renderer
+            .render(LogEvent::SourceExited(source))
+            .unwrap();
+    }
+}

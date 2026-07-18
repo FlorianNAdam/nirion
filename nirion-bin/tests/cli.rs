@@ -637,6 +637,32 @@ fn logs_discovers_container_and_streams_docker_logs() {
 }
 
 #[test]
+fn logs_reports_compose_ps_failure() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects(&project_file);
+    write_fake_docker(&docker_script, &args_file, "", "compose ps failed", 17);
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("logs")
+        .arg("myapp.web")
+        .output()
+        .unwrap();
+
+    assert_failure(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("docker compose ps failed with status"));
+    assert!(stderr.contains("compose ps failed"));
+    assert_eq!(
+        fs::read_to_string(args_file).unwrap(),
+        "compose\n-f\ncompose.yml\n--project-name\nmyapp\nps\n-a\n--format\njson\n"
+    );
+}
+
+#[test]
 fn logs_label_none_suppresses_prefix() {
     let dir = TempDir::new();
     let project_file = dir.path().join("projects.json");
