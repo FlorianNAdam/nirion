@@ -1,4 +1,3 @@
-use crossterm::style::Stylize;
 use futures::StreamExt;
 use nirion_lib::{
     compose::{ComposeConcurrency, compose_target},
@@ -6,6 +5,7 @@ use nirion_lib::{
     events::{ComposeEvent, ProcessEvent},
     projects::TargetSelector,
 };
+use nirion_tui_lib::color::Colorize;
 
 pub async fn compose_target_cmd(
     context: &NirionContext,

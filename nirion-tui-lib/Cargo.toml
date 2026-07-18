@@ -6,4 +6,3 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.101"
 console = "0.16.2"
-crossterm = "0.29.0"

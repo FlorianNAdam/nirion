@@ -1,5 +1,4 @@
 use clap::Parser;
-use crossterm::style::Stylize;
 use futures::StreamExt;
 use nirion_lib::{
     context::NirionContext,
@@ -8,6 +7,7 @@ use nirion_lib::{
     lock_update::update_images,
     projects::{get_images, TargetSelector},
 };
+use nirion_tui_lib::color::Colorize;
 
 use crate::ClapSelector;
 
@@ -75,10 +75,7 @@ fn format_diff(diffs: &[DiffEntry]) -> String {
     for entry in diffs {
         match entry {
             DiffEntry::Added { service, new } => {
-                output.push_str(&format!(
-                    "  + {}:\n",
-                    service.to_string().green()
-                ));
+                output.push_str(&format!("  + {}:\n", service.green()));
                 if let Some(version) = &new.version {
                     output
                         .push_str(&format!("      new version: {}\n", version));
@@ -86,10 +83,7 @@ fn format_diff(diffs: &[DiffEntry]) -> String {
                 output.push_str(&format!("      new digest: {}\n", new.digest));
             }
             DiffEntry::Updated { service, old, new } => {
-                output.push_str(&format!(
-                    "  ~ {}:\n",
-                    service.to_string().cyan()
-                ));
+                output.push_str(&format!("  ~ {}:\n", service.cyan()));
                 if let Some(version) = &new.version {
                     let old_version = old
                         .version
@@ -107,10 +101,7 @@ fn format_diff(diffs: &[DiffEntry]) -> String {
                 output.push_str(&format!("      new digest: {}\n", new.digest));
             }
             DiffEntry::Removed { service, old } => {
-                output.push_str(&format!(
-                    "  - {}:\n",
-                    service.to_string().yellow()
-                ));
+                output.push_str(&format!("  - {}:\n", service.yellow()));
                 if let Some(version) = &old.version {
                     output
                         .push_str(&format!("      old version: {}\n", version));
@@ -126,8 +117,8 @@ fn format_diff(diffs: &[DiffEntry]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use console::strip_ansi_codes;
     use nirion_lib::lock::VersionedImage;
+    use nirion_tui_lib::ansi::strip_ansi_codes;
 
     fn image(
         image: &str,

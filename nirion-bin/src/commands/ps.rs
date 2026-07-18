@@ -1,10 +1,10 @@
 use anyhow::Result;
 use clap::Parser;
-use crossterm::style::Stylize;
 use nirion_lib::{
     context::NirionContext,
     docker::{query_project_status, Port, ServiceStatus},
 };
+use nirion_tui_lib::color::Colorize;
 use nirion_tui_lib::table::print_table;
 use std::collections::HashSet;
 
@@ -188,8 +188,8 @@ fn format_port_range(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use console::strip_ansi_codes;
     use nirion_lib::docker::{ExternalPort, ServiceState};
+    use nirion_tui_lib::ansi::strip_ansi_codes;
 
     fn port(
         port: u16,

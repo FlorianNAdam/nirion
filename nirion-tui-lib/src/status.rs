@@ -1,6 +1,5 @@
-use crossterm::style::{Color, Stylize};
-
 use crate::ansi::{ansi_len, lpad_ansi};
+use crate::color::{Color, Colorize};
 
 pub struct Status {
     pub entries: Vec<StatusEntry>,
@@ -91,11 +90,11 @@ fn render_status_bar(
         out.push_str(
             "█"
                 .repeat(width.saturating_sub(1))
-                .with(*color)
+                .fg(*color)
                 .to_string()
                 .as_str(),
         );
-        out.push_str("▊".with(*color).to_string().as_str());
+        out.push_str("▊".fg(*color).to_string().as_str());
     }
     out
 }

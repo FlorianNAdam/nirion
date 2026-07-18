@@ -45,7 +45,7 @@ pub fn format_table(lines: Vec<String>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use console::style;
+    use crate::color::Colorize;
 
     #[test]
     fn format_table_aligns_tab_separated_columns() {
@@ -63,7 +63,7 @@ mod tests {
 
     #[test]
     fn format_table_uses_visible_width_for_ansi_columns() {
-        let green_ok = style("ok").green().to_string();
+        let green_ok = "ok".green().to_string();
         let output = format_table(vec![
             format!("{}\tweb", green_ok),
             "failed\tdb".to_string(),

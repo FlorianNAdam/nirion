@@ -1,7 +1,3 @@
-use crossterm::{
-    cursor, execute,
-    style::{Color, Stylize},
-};
 use nirion_lib::{
     context::NirionContext,
     docker::ProjectStatus,
@@ -9,12 +5,13 @@ use nirion_lib::{
     projects::Projects,
 };
 use nirion_tui_lib::{
+    color::{Colorize, GREY},
     line_renderer::LineRenderer,
     spinner::Spinner,
     status::{Status, StatusEntry},
+    terminal::HiddenCursorGuard,
 };
 use std::collections::BTreeMap;
-use std::io::{Write, stdout};
 
 use crate::status_display::{project_state_icon, project_status_segments};
 
@@ -23,24 +20,6 @@ pub enum ProgressPresentation {
     Progress,
     Plain,
     Hidden,
-}
-
-struct CursorGuard;
-
-impl CursorGuard {
-    fn hide() -> anyhow::Result<Self> {
-        let mut stdout = stdout();
-        execute!(stdout, cursor::Hide)?;
-        Ok(Self)
-    }
-}
-
-impl Drop for CursorGuard {
-    fn drop(&mut self) {
-        let mut stdout = stdout();
-        let _ = execute!(stdout, cursor::Show);
-        let _ = stdout.flush();
-    }
 }
 
 fn empty_status() -> ProjectStatus {
@@ -80,7 +59,7 @@ fn create_status(
         let mut segments = project_status_segments(&project_status);
 
         for _ in 0..(num_services.saturating_sub(segments.len())) {
-            segments.push(Color::Grey);
+            segments.push(GREY);
         }
 
         let suffix = format!("({progressing}/{num_services})    ");
@@ -198,7 +177,7 @@ where
 pub(crate) struct StatusProgressRenderer {
     spinner: Option<Spinner>,
     lines: LineRenderer,
-    cursor: Option<CursorGuard>,
+    cursor: Option<HiddenCursorGuard>,
 }
 
 impl StatusProgressRenderer {
@@ -235,7 +214,7 @@ impl ProgressRenderer for StatusProgressRenderer {
         running: &BTreeMap<String, bool>,
         statuses: &BTreeMap<String, ProjectStatus>,
     ) -> anyhow::Result<()> {
-        self.cursor = Some(CursorGuard::hide()?);
+        self.cursor = Some(HiddenCursorGuard::hide()?);
         let progress = render_progress(
             self.spinner(),
             selected,
@@ -387,7 +366,7 @@ mod tests {
             create_status(None, &selected, &running, &statuses, &projects);
 
         assert_eq!(status.entries.len(), 1);
-        assert_eq!(status.entries[0].segments, vec![Color::Grey, Color::Grey]);
+        assert_eq!(status.entries[0].segments, vec![GREY, GREY]);
         assert_eq!(status.entries[0].suffix, "(0/2)    ");
     }
 
@@ -415,7 +394,7 @@ mod tests {
             status.entries[0].segments[0],
             project_status_segments(&statuses["app"])[0]
         );
-        assert_eq!(status.entries[0].segments[1], Color::Grey);
+        assert_eq!(status.entries[0].segments[1], GREY);
         assert_eq!(status.entries[0].suffix, "(1/2)    ");
     }
 
