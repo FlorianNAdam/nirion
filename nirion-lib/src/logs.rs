@@ -94,6 +94,12 @@ impl LogSource {
 
 type LogEventTx = mpsc::UnboundedSender<anyhow::Result<LogEvent>>;
 
+#[derive(Clone, Copy)]
+enum LogReadMode {
+    Follow,
+    Snapshot,
+}
+
 struct FollowLogCoordinator {
     context: NirionContext,
     target: TargetSelector,
@@ -172,8 +178,15 @@ impl FollowLogCoordinator {
             }
 
             if source.exited {
-                self.emit_event(source.end_event());
-                self.attached.insert(key, source);
+                self.attached
+                    .insert(key, source.clone());
+                tokio::spawn(read_logs(
+                    self.context.clone(),
+                    self.options.clone(),
+                    source,
+                    self.tx.clone(),
+                    LogReadMode::Snapshot,
+                ));
                 continue;
             }
 
@@ -184,6 +197,7 @@ impl FollowLogCoordinator {
                 self.options.clone(),
                 source,
                 self.tx.clone(),
+                LogReadMode::Follow,
             ));
         }
     }
@@ -265,6 +279,7 @@ async fn bounded_logs(
                     options.clone(),
                     source,
                     tx.clone(),
+                    LogReadMode::Snapshot,
                 ));
             }
         }
@@ -388,8 +403,11 @@ async fn read_logs(
     options: LogStreamOptions,
     source: LogSource,
     tx: LogEventTx,
+    mode: LogReadMode,
 ) -> Option<LogSource> {
-    if options.follow && !container_is_running(&context, &source).await {
+    if matches!(mode, LogReadMode::Follow)
+        && !container_is_running(&context, &source).await
+    {
         return Some(source);
     }
 
@@ -400,9 +418,14 @@ async fn read_logs(
         return None;
     }
 
-    let mut child = match docker_logs_command(&context, &options, &source)
-        .spawn()
-        .context("failed to execute docker logs")
+    let mut child = match docker_logs_command(
+        &context,
+        &options,
+        &source,
+        matches!(mode, LogReadMode::Follow),
+    )
+    .spawn()
+    .context("failed to execute docker logs")
     {
         Ok(child) => child,
         Err(error) => {
@@ -441,11 +464,11 @@ async fn read_logs(
 
     match status {
         Ok(status) if status.success() => {
-            let _ = tx.unbounded_send(Ok(source.detached_event()));
+            let _ = tx.unbounded_send(Ok(source.end_event()));
             Some(source)
         }
         Ok(status) => {
-            if options.follow {
+            if matches!(mode, LogReadMode::Follow) {
                 let _ = tx.unbounded_send(Ok(source.detached_event()));
                 return Some(source);
             }
@@ -491,10 +514,11 @@ fn docker_logs_command(
     context: &NirionContext,
     options: &LogStreamOptions,
     source: &LogSource,
+    follow: bool,
 ) -> Command {
     let mut command = context.docker_command.command();
     command.arg("logs");
-    if options.follow {
+    if follow {
         command.arg("--follow");
     }
     if options.timestamps {

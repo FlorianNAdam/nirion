@@ -791,8 +791,7 @@ case "$1" in
     if [ "$count" -eq 1 ]; then
       printf '%s\n' 'stdout-line'
     else
-      printf '%s\n' 'Error response from daemon: can not get logs from container which is dead or marked for removal' >&2
-      exit 1
+      printf '%s\n' 'historical-exited-line'
     fi
     ;;
 esac
@@ -837,7 +836,11 @@ esac
             .ok()
             .and_then(|count| count.parse::<usize>().ok())
             .unwrap_or(0);
-        if ps_count >= 2 {
+        let logs_count = fs::read_to_string(&logs_count_file)
+            .ok()
+            .and_then(|count| count.parse::<usize>().ok())
+            .unwrap_or(0);
+        if ps_count >= 2 && logs_count >= 2 {
             child.kill().unwrap();
             child.wait().unwrap();
             break;
@@ -850,7 +853,10 @@ esac
         thread::sleep(Duration::from_millis(10));
     }
 
-    assert_eq!(fs::read_to_string(logs_count_file).unwrap(), "1");
+    assert_eq!(fs::read_to_string(logs_count_file).unwrap(), "2");
+    let args = fs::read_to_string(args_file).unwrap();
+    assert!(args.contains("logs\n--follow\nabc\n"));
+    assert!(args.contains("logs\nabc\n"));
 }
 
 #[test]
