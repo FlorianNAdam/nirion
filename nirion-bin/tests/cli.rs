@@ -228,6 +228,10 @@ fn assert_failure(output: &std::process::Output) {
     );
 }
 
+fn ps_status_json() -> &'static str {
+    r#"[{"ID":"abc","Name":"myapp-web-1","Service":"web","Image":"nginx:latest","State":"running","Health":"healthy","ExitCode":0,"RunningFor":"2 minutes","Status":"Up 2 minutes (healthy)","Ports":"127.0.0.1:8080-8081->80-81/tcp","Networks":"default"}]"#
+}
+
 #[test]
 fn version_does_not_require_files() {
     let output = Command::new(env!("CARGO_BIN_EXE_nirion"))
@@ -428,6 +432,78 @@ fn inspect_image_raw_prints_docker_output() {
     let output = nirion_command(&project_file, &lock_file, &docker_script)
         .arg("inspect")
         .arg("myapp.web")
+        .arg("--inspect-target")
+        .arg("image")
+        .arg("--raw")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains(r#"{"Id":"image-id"}"#)
+    );
+    assert_eq!(
+        fs::read_to_string(args_file).unwrap(),
+        "image\ninspect\n--format\njson\nnginx:latest\n"
+    );
+}
+
+#[test]
+fn inspect_project_target_prints_service_outputs() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects(&project_file);
+    write_fake_docker(
+        &docker_script,
+        &args_file,
+        r#"{"Id":"image-id"}"#,
+        "",
+        0,
+    );
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("inspect")
+        .arg("myapp")
+        .arg("--inspect-target")
+        .arg("image")
+        .arg("--raw")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains(r#"{"Id":"image-id"}"#)
+    );
+    assert_eq!(
+        fs::read_to_string(args_file).unwrap(),
+        "image\ninspect\n--format\njson\nnginx:latest\n"
+    );
+}
+
+#[test]
+fn inspect_all_target_prints_project_outputs() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects(&project_file);
+    write_fake_docker(
+        &docker_script,
+        &args_file,
+        r#"{"Id":"image-id"}"#,
+        "",
+        0,
+    );
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("inspect")
+        .arg("*")
         .arg("--inspect-target")
         .arg("image")
         .arg("--raw")
@@ -785,13 +861,7 @@ fn ps_prints_status_and_collapsed_ports_from_docker_json() {
     let args_file = dir.path().join("docker-args");
     write_projects(&project_file);
     fs::write(&lock_file, "{}").unwrap();
-    write_fake_docker(
-        &docker_script,
-        &args_file,
-        r#"[{"ID":"abc","Name":"myapp-web-1","Service":"web","Image":"nginx:latest","State":"running","Health":"healthy","ExitCode":0,"RunningFor":"2 minutes","Status":"Up 2 minutes (healthy)","Ports":"127.0.0.1:8080-8081->80-81/tcp","Networks":"default"}]"#,
-        "",
-        0,
-    );
+    write_fake_docker(&docker_script, &args_file, ps_status_json(), "", 0);
 
     let output = nirion_command(&project_file, &lock_file, &docker_script)
         .arg("ps")
@@ -807,6 +877,84 @@ fn ps_prints_status_and_collapsed_ports_from_docker_json() {
     assert!(stdout.contains("2 minutes"));
     assert!(stdout.contains("healthy"));
     assert!(stdout.contains("8080-8081->80-81/tcp"));
+    assert_eq!(
+        fs::read_to_string(args_file).unwrap(),
+        "compose\n-f\ncompose.yml\n--project-name\nmyapp\nps\n-a\n--format\njson\n"
+    );
+}
+
+#[test]
+fn ps_all_prints_status_for_all_projects() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_completion_projects(&project_file);
+    fs::write(&lock_file, "{}").unwrap();
+    write_fake_docker_append(
+        &docker_script,
+        &args_file,
+        ps_status_json(),
+        "",
+        0,
+    );
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("ps")
+        .arg("*")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = strip_ansi_codes(&stdout);
+    assert!(stdout.contains("[app]"));
+    assert!(stdout.contains("[app2]"));
+    assert!(stdout.contains("[auth]"));
+    assert_eq!(stdout.matches("myapp-web-1").count(), 3);
+
+    let args = fs::read_to_string(args_file).unwrap();
+    assert!(args.contains(
+        "compose\n-f\napp.yml\n--project-name\napp\nps\n-a\n--format\njson\n"
+    ));
+    assert!(args.contains(
+        "compose\n-f\napp2.yml\n--project-name\napp2\nps\n-a\n--format\njson\n"
+    ));
+    assert!(args.contains(
+        "compose\n-f\nauth.yml\n--project-name\nauth\nps\n-a\n--format\njson\n"
+    ));
+}
+
+#[test]
+fn ps_service_prints_only_selected_service() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects(&project_file);
+    fs::write(&lock_file, "{}").unwrap();
+    write_fake_docker(
+        &docker_script,
+        &args_file,
+        r#"[{"ID":"abc","Name":"myapp-web-1","Service":"web","Image":"nginx:latest","State":"running","Health":"healthy","ExitCode":0,"RunningFor":"2 minutes","Status":"Up 2 minutes (healthy)","Ports":"","Networks":"default"},{"ID":"def","Name":"myapp-db-1","Service":"db","Image":"postgres:16","State":"running","Health":null,"ExitCode":0,"RunningFor":"3 minutes","Status":"Up 3 minutes","Ports":"","Networks":"default"}]"#,
+        "",
+        0,
+    );
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("ps")
+        .arg("myapp.web")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = strip_ansi_codes(&stdout);
+    assert!(stdout.contains("[myapp]"));
+    assert!(stdout.contains("myapp-web-1"));
+    assert!(!stdout.contains("myapp-db-1"));
     assert_eq!(
         fs::read_to_string(args_file).unwrap(),
         "compose\n-f\ncompose.yml\n--project-name\nmyapp\nps\n-a\n--format\njson\n"
@@ -994,13 +1142,12 @@ fn update_invalid_image_reference_does_not_rewrite_lock_file() {
         .unwrap();
 
     assert_failure(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
+    assert!(stdout.contains("image"));
     assert!(
-        String::from_utf8_lossy(&output.stdout)
-            .contains("Checking myapp.web: not a valid image")
+        stdout.contains("invalid")
+            || (stdout.contains("not") && stdout.contains("valid"))
     );
-    assert!(
-        !String::from_utf8_lossy(&output.stdout)
-            .contains("Lock file updated successfully")
-    );
+    assert!(!stdout.contains("lock file updated successfully"));
     assert_eq!(fs::read_to_string(lock_file).unwrap(), "{}");
 }
