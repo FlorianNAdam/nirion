@@ -1,8 +1,28 @@
-use clap::Parser;
-use nirion_lib::projects::TargetSelector;
+use clap::{Parser, ValueEnum};
+use futures::StreamExt;
+use nirion_lib::{
+    context::NirionContext,
+    logs::{logs_stream, LogStreamOptions},
+    projects::TargetSelector,
+};
+use std::time::Duration;
 
-use crate::{docker::compose_target_cmd, ClapSelector};
-use nirion_lib::context::NirionContext;
+use crate::{log_render::LogRenderer, ClapSelector};
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogLabelFormat {
+    ProjectService,
+    Service,
+    Container,
+    None,
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogEventsMode {
+    Auto,
+    Always,
+    Never,
+}
 
 /// View output from service containers
 #[derive(Parser, Debug, Clone)]
@@ -19,24 +39,24 @@ pub struct LogsArgs {
     #[arg(short = 'f', long)]
     pub follow: bool,
 
-    /// Re-run log streaming when containers are missing or recreated
-    #[arg(long, requires = "follow")]
-    pub reconnect: bool,
-
-    /// Produce monochrome output
-    #[arg(long)]
-    pub no_color: bool,
+    /// Refresh interval for discovering container changes when following
+    #[arg(short = 'r', long, default_value = "250ms", value_parser = humantime::parse_duration)]
+    pub refresh: Duration,
 
     /// Don't print prefix in logs
-    #[arg(long)]
-    pub no_log_prefix: bool,
+    #[arg(long, value_enum, default_value = "project-service")]
+    pub label: LogLabelFormat,
+
+    /// Print lifecycle events such as attach, detach, and exit
+    #[arg(long, value_enum, default_value = "auto")]
+    pub events: LogEventsMode,
 
     /// Show logs since timestamp
     #[arg(long)]
     pub since: Option<String>,
 
     /// Show logs before timestamp
-    #[arg(long)]
+    #[arg(long, conflicts_with = "follow")]
     pub until: Option<String>,
 
     /// Number of lines to show from the end
@@ -52,41 +72,20 @@ pub async fn handle_logs(
     args: &LogsArgs,
     context: &NirionContext,
 ) -> anyhow::Result<()> {
-    let mut cmd = vec!["logs".into()];
+    let options = LogStreamOptions {
+        follow: args.follow,
+        refresh_interval: args.refresh,
+        since: args.since.clone(),
+        until: args.until.clone(),
+        tail: args.tail.clone(),
+        timestamps: args.timestamps,
+    };
+    let mut renderer = LogRenderer::new(args.label, args.events, args.follow);
+    let mut stream = logs_stream(context.clone(), args.target.clone(), options);
 
-    if args.follow {
-        cmd.push("--follow".into());
-    }
-    if args.no_color {
-        cmd.push("--no-color".into());
-    }
-    if args.no_log_prefix {
-        cmd.push("--no-log-prefix".into());
-    }
-    if args.timestamps {
-        cmd.push("--timestamps".into());
-    }
-    if let Some(ref since) = args.since {
-        cmd.push("--since".into());
-        cmd.push(since.clone());
-    }
-    if let Some(ref until) = args.until {
-        cmd.push("--until".into());
-        cmd.push(until.clone());
-    }
-    if let Some(ref tail) = args.tail {
-        cmd.push("--tail".into());
-        cmd.push(tail.clone());
+    while let Some(event) = stream.next().await {
+        renderer.render(event?)?;
     }
 
-    let cmd_slices: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
-
-    loop {
-        compose_target_cmd(context, &args.target, &cmd_slices).await?;
-        if !args.reconnect {
-            return Ok(());
-        }
-
-        eprintln!("logs exited; reconnecting");
-    }
+    Ok(())
 }
