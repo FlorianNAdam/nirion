@@ -360,4 +360,20 @@ mod tests {
         assert_eq!(strip_ansi_codes(&stderr), "text");
         assert!(stderr.contains("\x1b["));
     }
+
+    #[test]
+    fn direct_style_controls_use_colorize_trait_methods() {
+        let forced_text = Colorize::force_styling("text", true).to_string();
+        assert_eq!(strip_ansi_codes(&forced_text), "text");
+
+        let bright = Colorize::bright("text")
+            .force_styling(true)
+            .to_string();
+        assert_eq!(strip_ansi_codes(&bright), "text");
+
+        let on_bright = Colorize::on_bright("text")
+            .force_styling(true)
+            .to_string();
+        assert_eq!(strip_ansi_codes(&on_bright), "text");
+    }
 }

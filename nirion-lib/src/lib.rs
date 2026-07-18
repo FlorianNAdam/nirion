@@ -8,5 +8,6 @@ pub mod exec;
 pub mod inspect;
 pub mod lock;
 pub mod lock_update;
+pub mod logs;
 pub mod projects;
 pub mod wait;

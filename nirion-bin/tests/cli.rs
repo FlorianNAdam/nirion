@@ -529,7 +529,6 @@ fn compose_passthrough_commands_are_wired() {
         (&["stop", "--plain"], "stop\n"),
         (&["restart", "--plain"], "restart\n"),
         (&["pull"], "pull\n"),
-        (&["logs"], "logs\n"),
         (&["top"], "top\n"),
         (&["volumes"], "volumes\n--format\ntable\n"),
         (&["compose-exec", "*", "pull"], "pull\n"),
@@ -561,20 +560,394 @@ fn compose_passthrough_commands_are_wired() {
     }
 }
 
+fn write_fake_logs_docker(
+    path: &Path,
+    args_file: &Path,
+    stdout: &str,
+    stderr: &str,
+) {
+    fs::write(
+        path,
+        format!(
+            r#"printf '%s\n' '---' >> '{}'
+printf '%s\n' "$@" >> '{}'
+case "$1" in
+  compose)
+    printf '%s\n' '{}'
+    ;;
+  inspect)
+    printf '%s\n' true
+    ;;
+  logs)
+    printf '%s\n' '{}'
+    printf '%s\n' '{}' >&2
+    ;;
+esac
+"#,
+            args_file.display(),
+            args_file.display(),
+            ps_status_json(),
+            stdout,
+            stderr,
+        ),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(path)
+        .unwrap()
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
 #[test]
-fn logs_reconnect_re_runs_following_logs() {
+fn logs_discovers_container_and_streams_docker_logs() {
     let dir = TempDir::new();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
     let args_file = dir.path().join("docker-args");
     write_projects(&project_file);
-    write_fake_docker_append(&docker_script, &args_file, "", "", 0);
+    write_fake_logs_docker(
+        &docker_script,
+        &args_file,
+        "stdout-line",
+        "stderr-line",
+    );
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("logs")
+        .arg("myapp.web")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "[myapp.web] stdout-line\n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "[myapp.web] stderr-line\n"
+    );
+    let args = fs::read_to_string(args_file).unwrap();
+    assert!(args.contains(
+        "compose\n-f\ncompose.yml\n--project-name\nmyapp\nps\n-a\n--format\njson\n"
+    ));
+    assert!(args.contains("logs\nabc\n"));
+}
+
+#[test]
+fn logs_reports_compose_ps_failure() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects(&project_file);
+    write_fake_docker(&docker_script, &args_file, "", "compose ps failed", 17);
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("logs")
+        .arg("myapp.web")
+        .output()
+        .unwrap();
+
+    assert_failure(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("docker compose ps failed with status"));
+    assert!(stderr.contains("compose ps failed"));
+    assert_eq!(
+        fs::read_to_string(args_file).unwrap(),
+        "compose\n-f\ncompose.yml\n--project-name\nmyapp\nps\n-a\n--format\njson\n"
+    );
+}
+
+#[test]
+fn logs_label_none_suppresses_prefix() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects(&project_file);
+    write_fake_logs_docker(&docker_script, &args_file, "stdout-line", "");
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("logs")
+        .arg("myapp.web")
+        .arg("--label")
+        .arg("none")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "stdout-line\n");
+}
+
+#[test]
+fn logs_until_is_passed_to_docker_logs() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects(&project_file);
+    write_fake_logs_docker(&docker_script, &args_file, "", "");
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("logs")
+        .arg("myapp.web")
+        .arg("--until")
+        .arg("2026-07-18T12:00:00Z")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    assert!(
+        fs::read_to_string(args_file)
+            .unwrap()
+            .contains("logs\n--until\n2026-07-18T12:00:00Z\nabc\n")
+    );
+}
+
+#[test]
+fn logs_until_conflicts_with_follow() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects(&project_file);
+    write_fake_docker(&docker_script, &args_file, "", "", 0);
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("logs")
+        .arg("--follow")
+        .arg("--until")
+        .arg("2026-07-18T12:00:00Z")
+        .output()
+        .unwrap();
+
+    assert_failure(&output);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--follow"));
+}
+
+#[test]
+fn logs_follow_reattaches_when_reader_exits_for_same_container() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects(&project_file);
+    write_fake_logs_docker(&docker_script, &args_file, "stdout-line", "");
 
     let mut child = nirion_command(&project_file, &lock_file, &docker_script)
         .arg("logs")
+        .arg("myapp.web")
         .arg("--follow")
-        .arg("--reconnect")
+        .arg("--refresh")
+        .arg("10ms")
+        .arg("--events")
+        .arg("never")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(4);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            panic!("nirion logs exited early with status {status}");
+        }
+
+        let args = fs::read_to_string(&args_file).unwrap_or_default();
+        if args
+            .matches("logs\n--follow\nabc\n")
+            .count()
+            >= 2
+        {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            return;
+        }
+
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for reattach; args:\n{args}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn logs_follow_does_not_reattach_to_exited_container() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    let ps_count_file = dir.path().join("ps-count");
+    let logs_count_file = dir.path().join("logs-count");
+    write_projects(&project_file);
+
+    fs::write(
+        &docker_script,
+        format!(
+            r#"printf '%s\n' '---' >> '{}'
+printf '%s\n' "$@" >> '{}'
+case "$1" in
+  compose)
+    count=$(cat '{}' 2>/dev/null || printf 0)
+    count=$((count + 1))
+    printf '%s' "$count" > '{}'
+    if [ "$count" -eq 1 ]; then
+      printf '%s\n' '{}'
+    else
+      printf '%s\n' '{}'
+    fi
+    ;;
+  inspect)
+    printf '%s\n' true
+    ;;
+  logs)
+    count=$(cat '{}' 2>/dev/null || printf 0)
+    count=$((count + 1))
+    printf '%s' "$count" > '{}'
+    if [ "$count" -eq 1 ]; then
+      printf '%s\n' 'stdout-line'
+    else
+      printf '%s\n' 'historical-exited-line'
+    fi
+    ;;
+esac
+"#,
+            args_file.display(),
+            args_file.display(),
+            ps_count_file.display(),
+            ps_count_file.display(),
+            ps_status_json(),
+            r#"[{"ID":"abc","Name":"myapp-web-1","Service":"web","Image":"nginx:latest","State":"exited","Health":null,"ExitCode":0,"RunningFor":"","Status":"Exited (0)","Ports":"","Networks":"default"}]"#,
+            logs_count_file.display(),
+            logs_count_file.display(),
+        ),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&docker_script)
+        .unwrap()
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&docker_script, permissions).unwrap();
+
+    let mut child = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("logs")
+        .arg("myapp.web")
+        .arg("--follow")
+        .arg("--refresh")
+        .arg("10ms")
+        .arg("--events")
+        .arg("never")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(4);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            panic!("nirion logs exited early with status {status}");
+        }
+
+        let ps_count = fs::read_to_string(&ps_count_file)
+            .ok()
+            .and_then(|count| count.parse::<usize>().ok())
+            .unwrap_or(0);
+        let logs_count = fs::read_to_string(&logs_count_file)
+            .ok()
+            .and_then(|count| count.parse::<usize>().ok())
+            .unwrap_or(0);
+        if ps_count >= 2 && logs_count >= 2 {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            break;
+        }
+
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for exited status"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    assert_eq!(fs::read_to_string(logs_count_file).unwrap(), "2");
+    let args = fs::read_to_string(args_file).unwrap();
+    assert!(args.contains("logs\n--follow\nabc\n"));
+    assert!(args.contains("logs\nabc\n"));
+}
+
+#[test]
+fn logs_follow_treats_missing_container_as_transient_detach() {
+    let dir = TempDir::new();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    let logs_count_file = dir.path().join("logs-count");
+    write_projects(&project_file);
+
+    fs::write(
+        &docker_script,
+        format!(
+            r#"printf '%s\n' '---' >> '{}'
+printf '%s\n' "$@" >> '{}'
+case "$1" in
+  compose)
+    printf '%s\n' '{}'
+    ;;
+  inspect)
+    count=$(cat '{}' 2>/dev/null || printf 0)
+    if [ "$count" -eq 0 ]; then
+      printf '%s\n' true
+    else
+      printf '%s\n' false
+    fi
+    ;;
+  logs)
+    count=$(cat '{}' 2>/dev/null || printf 0)
+    count=$((count + 1))
+    printf '%s' "$count" > '{}'
+    if [ "$count" -eq 1 ]; then
+      printf '%s\n' 'stdout-line'
+    else
+      printf '%s\n' 'Error response from daemon: No such container: abc' >&2
+      exit 1
+    fi
+    ;;
+esac
+"#,
+            args_file.display(),
+            args_file.display(),
+            ps_status_json(),
+            logs_count_file.display(),
+            logs_count_file.display(),
+            logs_count_file.display(),
+        ),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&docker_script)
+        .unwrap()
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&docker_script, permissions).unwrap();
+
+    let mut child = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("logs")
+        .arg("myapp.web")
+        .arg("--follow")
+        .arg("--refresh")
+        .arg("10ms")
+        .arg("--events")
+        .arg("never")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -587,61 +960,27 @@ fn logs_reconnect_re_runs_following_logs() {
         }
 
         let args = fs::read_to_string(&args_file).unwrap_or_default();
-        if args.matches("---\n").count() >= 2 {
+        if args
+            .matches("inspect\n--format\n{{.State.Running}}\nabc\n")
+            .count()
+            >= 2
+        {
             child.kill().unwrap();
             child.wait().unwrap();
-            assert!(args.contains("logs\n--follow\n"));
-            return;
+            break;
         }
-
         assert!(
             std::time::Instant::now() < deadline,
-            "timed out waiting for reconnect; args:\n{args}"
+            "timed out waiting for second inspect; args:\n{args}"
         );
         thread::sleep(Duration::from_millis(10));
     }
+
+    assert_eq!(fs::read_to_string(logs_count_file).unwrap(), "1");
 }
 
 #[test]
-fn logs_reconnect_reports_successful_exits() {
-    let dir = TempDir::new();
-    let project_file = dir.path().join("projects.json");
-    let lock_file = dir.path().join("nirion.lock");
-    let docker_script = dir.path().join("fake-docker.sh");
-    let args_file = dir.path().join("docker-args");
-    write_projects(&project_file);
-    write_fake_docker_append(&docker_script, &args_file, "", "", 0);
-
-    let mut child = nirion_command(&project_file, &lock_file, &docker_script)
-        .arg("logs")
-        .arg("--follow")
-        .arg("--reconnect")
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    loop {
-        let args = fs::read_to_string(&args_file).unwrap_or_default();
-        if args.matches("---\n").count() >= 2 {
-            child.kill().unwrap();
-            let output = child.wait_with_output().unwrap();
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            assert!(stderr.contains("logs exited; reconnecting"));
-            return;
-        }
-
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for reconnect; args:\n{args}"
-        );
-        thread::sleep(Duration::from_millis(10));
-    }
-}
-
-#[test]
-fn logs_reconnect_requires_follow() {
+fn logs_rejects_removed_reconnect_option() {
     let dir = TempDir::new();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
@@ -657,7 +996,7 @@ fn logs_reconnect_requires_follow() {
         .unwrap();
 
     assert_failure(&output);
-    assert!(String::from_utf8_lossy(&output.stderr).contains("--follow"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--reconnect"));
 }
 
 #[test]
