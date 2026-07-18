@@ -7,7 +7,9 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WaitTarget {
+    NoWait,
     Healthchecks,
+    Forever,
 }
 
 pub fn wait_finished(
@@ -17,9 +19,11 @@ pub fn wait_finished(
     wait_target: WaitTarget,
 ) -> bool {
     match wait_target {
+        WaitTarget::NoWait => true,
         WaitTarget::Healthchecks => {
             healthchecks_finished(target, projects, statuses)
         }
+        WaitTarget::Forever => false,
     }
 }
 
@@ -154,6 +158,26 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn wait_finished_no_wait_is_immediate() {
+        assert!(wait_finished(
+            &TargetSelector::All,
+            &projects(),
+            &BTreeMap::new(),
+            WaitTarget::NoWait,
+        ));
+    }
+
+    #[test]
+    fn wait_finished_forever_never_finishes() {
+        assert!(!wait_finished(
+            &TargetSelector::All,
+            &projects(),
+            &BTreeMap::new(),
+            WaitTarget::Forever,
+        ));
     }
 
     #[test]

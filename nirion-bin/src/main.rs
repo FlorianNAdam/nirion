@@ -20,7 +20,8 @@ use std::{ffi::OsString, path::PathBuf};
 mod commands;
 mod docker;
 mod lifecycle;
-mod monitor;
+mod progress;
+mod progress_render;
 mod status_display;
 
 pub static PROJECTS: OnceLock<Projects> = OnceLock::new();

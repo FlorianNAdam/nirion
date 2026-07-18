@@ -5,7 +5,9 @@ use nirion_lib::context::NirionContext;
 use std::num::NonZeroUsize;
 use tokio::time::Duration;
 
-use crate::lifecycle::{LifecycleOptions, lifecycle_options};
+use crate::lifecycle::LifecycleOptions;
+use crate::progress_render::ProgressPresentation;
+use nirion_lib::wait::WaitTarget;
 
 #[derive(Args, Debug, Clone)]
 pub struct LifecycleArgs {
@@ -29,15 +31,34 @@ pub struct LifecycleArgs {
 impl LifecycleArgs {
     pub fn options(
         &self,
-        wait_for_healthchecks: bool,
+        wait: WaitTarget,
     ) -> LifecycleOptions {
-        lifecycle_options(
-            self.plain,
-            self.quiet,
-            self.jobs,
-            self.refresh,
-            wait_for_healthchecks,
-        )
+        LifecycleOptions {
+            presentation: self.presentation(),
+            jobs: self.jobs(),
+            refresh_interval: self.refresh_interval(),
+            wait,
+        }
+    }
+
+    pub fn presentation(&self) -> ProgressPresentation {
+        if self.quiet {
+            ProgressPresentation::Hidden
+        } else if self.plain {
+            ProgressPresentation::Plain
+        } else {
+            ProgressPresentation::Progress
+        }
+    }
+
+    pub fn jobs(&self) -> usize {
+        self.jobs
+            .map(usize::from)
+            .unwrap_or(usize::MAX)
+    }
+
+    pub fn refresh_interval(&self) -> Duration {
+        self.refresh
     }
 }
 
