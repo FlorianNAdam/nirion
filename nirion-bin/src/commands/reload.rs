@@ -5,6 +5,7 @@ use crate::commands::LifecycleArgs;
 use crate::lifecycle::run_lifecycle_command;
 use crate::{ClapSelector, TargetSelector};
 use nirion_lib::context::NirionContext;
+use nirion_lib::wait::WaitTarget;
 
 /// Stop and recreate service containers
 #[derive(Parser, Debug, Clone)]
@@ -33,7 +34,8 @@ pub async fn handle_reload(
         context,
         &args.target,
         &["down"],
-        args.lifecycle.options(false),
+        args.lifecycle
+            .options(WaitTarget::NoWait),
     )
     .await?;
     run_lifecycle_command(
@@ -41,7 +43,11 @@ pub async fn handle_reload(
         &args.target,
         &["up", "-d"],
         args.lifecycle
-            .options(!args.skip_healthcheck),
+            .options(if args.skip_healthcheck {
+                WaitTarget::NoWait
+            } else {
+                WaitTarget::Healthchecks
+            }),
     )
     .await
 }

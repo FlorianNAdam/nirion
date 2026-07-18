@@ -1,8 +1,13 @@
 use clap::Parser;
+use futures::stream;
+use nirion_lib::{
+    context::NirionContext, docker::status_stream, wait::WaitTarget,
+};
 use std::time::Duration;
 
-use crate::{monitor::monitor, ClapSelector, TargetSelector};
-use nirion_lib::context::NirionContext;
+use crate::progress::run_progress;
+use crate::progress_render::StaticStatusRenderer;
+use crate::{ClapSelector, TargetSelector};
 
 #[derive(Parser, Debug, Clone)]
 pub struct MonitorArgs {
@@ -23,6 +28,15 @@ pub async fn handle_monitor(
     args: &MonitorArgs,
     context: &NirionContext,
 ) -> anyhow::Result<()> {
-    monitor(context, &args.target, args.refresh).await?;
+    run_progress(
+        context,
+        &args.target,
+        stream::empty(),
+        status_stream(context, args.target.clone(), args.refresh),
+        StaticStatusRenderer::default(),
+        WaitTarget::Forever,
+    )
+    .await?;
+
     Ok(())
 }

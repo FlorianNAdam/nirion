@@ -16,8 +16,14 @@ use nirion_tui_lib::{
 use std::collections::BTreeMap;
 use std::io::{Write, stdout};
 
-use crate::lifecycle::LifecyclePresentation;
 use crate::status_display::{project_state_icon, project_status_segments};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgressPresentation {
+    Progress,
+    Plain,
+    Hidden,
+}
 
 struct CursorGuard;
 
@@ -44,7 +50,7 @@ fn empty_status() -> ProjectStatus {
 }
 
 fn create_status(
-    spinner: &Spinner,
+    spinner: Option<&Spinner>,
     selected: &[String],
     running: &BTreeMap<String, bool>,
     statuses: &BTreeMap<String, ProjectStatus>,
@@ -59,7 +65,9 @@ fn create_status(
             .unwrap_or_else(empty_status);
         let project = &projects[name];
 
-        let icon = if *running.get(name).unwrap_or(&false) {
+        let icon = if let Some(spinner) = spinner
+            && *running.get(name).unwrap_or(&false)
+        {
             spinner.get().yellow().to_string()
         } else {
             project_state_icon(&project_status.project_state())
@@ -89,7 +97,7 @@ fn create_status(
 
 fn print_progress(
     selected: &[String],
-    spinner: &Spinner,
+    spinner: Option<&Spinner>,
     running: &BTreeMap<String, bool>,
     statuses: &BTreeMap<String, ProjectStatus>,
     projects: &Projects,
@@ -107,7 +115,7 @@ fn print_progress(
     Ok(())
 }
 
-pub(super) trait LifecycleRenderer {
+pub(crate) trait ProgressRenderer {
     fn needs_status_during_compose(&self) -> bool {
         false
     }
@@ -150,13 +158,59 @@ pub(super) trait LifecycleRenderer {
     }
 }
 
+impl<T> ProgressRenderer for Box<T>
+where
+    T: ProgressRenderer + ?Sized,
+{
+    fn needs_status_during_compose(&self) -> bool {
+        (**self).needs_status_during_compose()
+    }
+
+    fn start(
+        &mut self,
+        context: &NirionContext,
+        selected: &[String],
+        running: &BTreeMap<String, bool>,
+        statuses: &BTreeMap<String, ProjectStatus>,
+    ) -> anyhow::Result<()> {
+        (**self).start(context, selected, running, statuses)
+    }
+
+    fn compose_event(
+        &mut self,
+        event: &ComposeEvent,
+    ) -> anyhow::Result<()> {
+        (**self).compose_event(event)
+    }
+
+    fn tick(
+        &mut self,
+        context: &NirionContext,
+        selected: &[String],
+        running: &BTreeMap<String, bool>,
+        statuses: &BTreeMap<String, ProjectStatus>,
+    ) -> anyhow::Result<()> {
+        (**self).tick(context, selected, running, statuses)
+    }
+
+    fn finish(
+        &mut self,
+        context: &NirionContext,
+        selected: &[String],
+        running: &BTreeMap<String, bool>,
+        statuses: &BTreeMap<String, ProjectStatus>,
+    ) -> anyhow::Result<()> {
+        (**self).finish(context, selected, running, statuses)
+    }
+}
+
 #[derive(Default)]
-struct ProgressRenderer {
+struct ProgressStatusRenderer {
     spinner: Spinner,
     cursor: Option<CursorGuard>,
 }
 
-impl LifecycleRenderer for ProgressRenderer {
+impl ProgressRenderer for ProgressStatusRenderer {
     fn needs_status_during_compose(&self) -> bool {
         true
     }
@@ -171,7 +225,7 @@ impl LifecycleRenderer for ProgressRenderer {
         self.cursor = Some(CursorGuard::hide()?);
         print_progress(
             selected,
-            &self.spinner,
+            Some(&self.spinner),
             running,
             statuses,
             &context.projects,
@@ -188,7 +242,7 @@ impl LifecycleRenderer for ProgressRenderer {
     ) -> anyhow::Result<()> {
         print_progress(
             selected,
-            &self.spinner,
+            Some(&self.spinner),
             running,
             statuses,
             &context.projects,
@@ -205,7 +259,66 @@ impl LifecycleRenderer for ProgressRenderer {
     ) -> anyhow::Result<()> {
         print_progress(
             selected,
-            &self.spinner,
+            Some(&self.spinner),
+            running,
+            statuses,
+            &context.projects,
+            false,
+        )
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct StaticStatusRenderer {
+    cursor: Option<CursorGuard>,
+}
+
+impl ProgressRenderer for StaticStatusRenderer {
+    fn start(
+        &mut self,
+        context: &NirionContext,
+        selected: &[String],
+        running: &BTreeMap<String, bool>,
+        statuses: &BTreeMap<String, ProjectStatus>,
+    ) -> anyhow::Result<()> {
+        self.cursor = Some(CursorGuard::hide()?);
+        print_progress(
+            selected,
+            None,
+            running,
+            statuses,
+            &context.projects,
+            true,
+        )
+    }
+
+    fn tick(
+        &mut self,
+        context: &NirionContext,
+        selected: &[String],
+        running: &BTreeMap<String, bool>,
+        statuses: &BTreeMap<String, ProjectStatus>,
+    ) -> anyhow::Result<()> {
+        print_progress(
+            selected,
+            None,
+            running,
+            statuses,
+            &context.projects,
+            true,
+        )
+    }
+
+    fn finish(
+        &mut self,
+        context: &NirionContext,
+        selected: &[String],
+        running: &BTreeMap<String, bool>,
+        statuses: &BTreeMap<String, ProjectStatus>,
+    ) -> anyhow::Result<()> {
+        print_progress(
+            selected,
+            None,
             running,
             statuses,
             &context.projects,
@@ -216,7 +329,7 @@ impl LifecycleRenderer for ProgressRenderer {
 
 struct PlainRenderer;
 
-impl LifecycleRenderer for PlainRenderer {
+impl ProgressRenderer for PlainRenderer {
     fn compose_event(
         &mut self,
         event: &ComposeEvent,
@@ -228,15 +341,17 @@ impl LifecycleRenderer for PlainRenderer {
 
 struct HiddenRenderer;
 
-impl LifecycleRenderer for HiddenRenderer {}
+impl ProgressRenderer for HiddenRenderer {}
 
-pub(super) fn lifecycle_renderer(
-    presentation: LifecyclePresentation
-) -> Box<dyn LifecycleRenderer> {
+pub(crate) fn progress_renderer(
+    presentation: ProgressPresentation
+) -> Box<dyn ProgressRenderer> {
     match presentation {
-        LifecyclePresentation::Progress => Box::<ProgressRenderer>::default(),
-        LifecyclePresentation::Plain => Box::new(PlainRenderer),
-        LifecyclePresentation::Hidden => Box::new(HiddenRenderer),
+        ProgressPresentation::Progress => {
+            Box::<ProgressStatusRenderer>::default()
+        }
+        ProgressPresentation::Plain => Box::new(PlainRenderer),
+        ProgressPresentation::Hidden => Box::new(HiddenRenderer),
     }
 }
 
@@ -308,6 +423,21 @@ mod tests {
     }
 
     #[test]
+    fn create_status_uses_empty_status_when_project_has_no_status() {
+        let projects = projects();
+        let selected = vec!["app".to_string()];
+        let running = BTreeMap::new();
+        let statuses = BTreeMap::new();
+
+        let status =
+            create_status(None, &selected, &running, &statuses, &projects);
+
+        assert_eq!(status.entries.len(), 1);
+        assert_eq!(status.entries[0].segments, vec![Color::Grey, Color::Grey]);
+        assert_eq!(status.entries[0].suffix, "(0/2)    ");
+    }
+
+    #[test]
     fn create_status_pads_missing_service_segments() {
         let projects = projects();
         let selected = vec!["app".to_string()];
@@ -322,13 +452,8 @@ mod tests {
             },
         )]);
 
-        let status = create_status(
-            &Spinner::default(),
-            &selected,
-            &running,
-            &statuses,
-            &projects,
-        );
+        let status =
+            create_status(None, &selected, &running, &statuses, &projects);
 
         assert_eq!(status.entries.len(), 1);
         assert_eq!(status.entries[0].segments.len(), 2);
