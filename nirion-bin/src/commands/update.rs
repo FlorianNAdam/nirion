@@ -6,7 +6,7 @@ use nirion_lib::{
     projects::{get_images, TargetSelector},
 };
 
-use crate::{commands::lock::render_lock_update_event, ClapSelector};
+use crate::{commands::lock::format_lock_update_event, ClapSelector};
 
 /// Update lock file entries
 #[derive(Parser, Debug, Clone)]
@@ -32,7 +32,7 @@ pub async fn handle_update(
     let mut operation = update_images(context, images, args.jobs);
 
     while let Some(event) = operation.events.next().await {
-        render_lock_update_event(event?);
+        println!("{}", format_lock_update_event(event?));
     }
 
     operation.finish().await?;
