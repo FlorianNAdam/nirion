@@ -6,7 +6,7 @@ use nirion_lib::{
 use std::time::Duration;
 
 use crate::progress::run_progress;
-use crate::progress_render::StaticStatusRenderer;
+use crate::progress_render::StatusProgressRenderer;
 use crate::{ClapSelector, TargetSelector};
 
 #[derive(Parser, Debug, Clone)]
@@ -33,7 +33,7 @@ pub async fn handle_monitor(
         &args.target,
         stream::empty(),
         status_stream(context, args.target.clone(), args.refresh),
-        StaticStatusRenderer::default(),
+        StatusProgressRenderer::without_spinner(),
         WaitTarget::Forever,
     )
     .await?;

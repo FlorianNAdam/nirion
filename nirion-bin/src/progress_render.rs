@@ -1,6 +1,5 @@
 use crossterm::{
-    cursor::{self, MoveUp},
-    execute,
+    cursor, execute,
     style::{Color, Stylize},
 };
 use nirion_lib::{
@@ -10,6 +9,7 @@ use nirion_lib::{
     projects::Projects,
 };
 use nirion_tui_lib::{
+    line_renderer::LineRenderer,
     spinner::Spinner,
     status::{Status, StatusEntry},
 };
@@ -95,24 +95,15 @@ fn create_status(
     Status { entries }
 }
 
-fn print_progress(
-    selected: &[String],
+fn render_progress(
     spinner: Option<&Spinner>,
+    selected: &[String],
     running: &BTreeMap<String, bool>,
     statuses: &BTreeMap<String, ProjectStatus>,
     projects: &Projects,
-    move_up: bool,
-) -> anyhow::Result<()> {
-    let mut stdout = stdout();
+) -> String {
     let status = create_status(spinner, selected, running, statuses, projects);
-    status.print()?;
-
-    if move_up {
-        execute!(stdout, MoveUp((selected.len() * 2 + 1) as u16))?;
-    }
-
-    stdout.flush()?;
-    Ok(())
+    status.render()
 }
 
 pub(crate) trait ProgressRenderer {
@@ -204,15 +195,37 @@ where
     }
 }
 
-#[derive(Default)]
-struct ProgressStatusRenderer {
-    spinner: Spinner,
+pub(crate) struct StatusProgressRenderer {
+    spinner: Option<Spinner>,
+    lines: LineRenderer,
     cursor: Option<CursorGuard>,
 }
 
-impl ProgressRenderer for ProgressStatusRenderer {
+impl StatusProgressRenderer {
+    pub(crate) fn with_spinner() -> Self {
+        Self {
+            spinner: Some(Spinner::default()),
+            lines: LineRenderer::default(),
+            cursor: None,
+        }
+    }
+
+    pub(crate) fn without_spinner() -> Self {
+        Self {
+            spinner: None,
+            lines: LineRenderer::default(),
+            cursor: None,
+        }
+    }
+
+    fn spinner(&self) -> Option<&Spinner> {
+        self.spinner.as_ref()
+    }
+}
+
+impl ProgressRenderer for StatusProgressRenderer {
     fn needs_status_during_compose(&self) -> bool {
-        true
+        self.spinner.is_some()
     }
 
     fn start(
@@ -223,14 +236,14 @@ impl ProgressRenderer for ProgressStatusRenderer {
         statuses: &BTreeMap<String, ProjectStatus>,
     ) -> anyhow::Result<()> {
         self.cursor = Some(CursorGuard::hide()?);
-        print_progress(
+        let progress = render_progress(
+            self.spinner(),
             selected,
-            Some(&self.spinner),
             running,
             statuses,
             &context.projects,
-            true,
-        )
+        );
+        self.lines.start(&progress)
     }
 
     fn tick(
@@ -240,14 +253,14 @@ impl ProgressRenderer for ProgressStatusRenderer {
         running: &BTreeMap<String, bool>,
         statuses: &BTreeMap<String, ProjectStatus>,
     ) -> anyhow::Result<()> {
-        print_progress(
+        let progress = render_progress(
+            self.spinner(),
             selected,
-            Some(&self.spinner),
             running,
             statuses,
             &context.projects,
-            true,
-        )
+        );
+        self.lines.render(&progress)
     }
 
     fn finish(
@@ -257,73 +270,14 @@ impl ProgressRenderer for ProgressStatusRenderer {
         running: &BTreeMap<String, bool>,
         statuses: &BTreeMap<String, ProjectStatus>,
     ) -> anyhow::Result<()> {
-        print_progress(
+        let progress = render_progress(
+            self.spinner(),
             selected,
-            Some(&self.spinner),
             running,
             statuses,
             &context.projects,
-            false,
-        )
-    }
-}
-
-#[derive(Default)]
-pub(crate) struct StaticStatusRenderer {
-    cursor: Option<CursorGuard>,
-}
-
-impl ProgressRenderer for StaticStatusRenderer {
-    fn start(
-        &mut self,
-        context: &NirionContext,
-        selected: &[String],
-        running: &BTreeMap<String, bool>,
-        statuses: &BTreeMap<String, ProjectStatus>,
-    ) -> anyhow::Result<()> {
-        self.cursor = Some(CursorGuard::hide()?);
-        print_progress(
-            selected,
-            None,
-            running,
-            statuses,
-            &context.projects,
-            true,
-        )
-    }
-
-    fn tick(
-        &mut self,
-        context: &NirionContext,
-        selected: &[String],
-        running: &BTreeMap<String, bool>,
-        statuses: &BTreeMap<String, ProjectStatus>,
-    ) -> anyhow::Result<()> {
-        print_progress(
-            selected,
-            None,
-            running,
-            statuses,
-            &context.projects,
-            true,
-        )
-    }
-
-    fn finish(
-        &mut self,
-        context: &NirionContext,
-        selected: &[String],
-        running: &BTreeMap<String, bool>,
-        statuses: &BTreeMap<String, ProjectStatus>,
-    ) -> anyhow::Result<()> {
-        print_progress(
-            selected,
-            None,
-            running,
-            statuses,
-            &context.projects,
-            false,
-        )
+        );
+        self.lines.finish(&progress)
     }
 }
 
@@ -348,7 +302,7 @@ pub(crate) fn progress_renderer(
 ) -> Box<dyn ProgressRenderer> {
     match presentation {
         ProgressPresentation::Progress => {
-            Box::<ProgressStatusRenderer>::default()
+            Box::new(StatusProgressRenderer::with_spinner())
         }
         ProgressPresentation::Plain => Box::new(PlainRenderer),
         ProgressPresentation::Hidden => Box::new(HiddenRenderer),
@@ -463,5 +417,35 @@ mod tests {
         );
         assert_eq!(status.entries[0].segments[1], Color::Grey);
         assert_eq!(status.entries[0].suffix, "(1/2)    ");
+    }
+
+    #[test]
+    fn status_progress_renderer_needs_status_when_using_spinner() {
+        assert!(
+            StatusProgressRenderer::with_spinner()
+                .needs_status_during_compose()
+        );
+    }
+
+    #[test]
+    fn status_progress_renderer_without_spinner_is_status_only() {
+        assert!(
+            !StatusProgressRenderer::without_spinner()
+                .needs_status_during_compose()
+        );
+    }
+
+    #[test]
+    fn render_progress_formats_status_without_spinner() {
+        let projects = projects();
+        let selected = vec!["app".to_string()];
+        let running = BTreeMap::new();
+        let statuses = BTreeMap::new();
+
+        let output =
+            render_progress(None, &selected, &running, &statuses, &projects);
+
+        assert!(output.contains("app"));
+        assert!(output.contains("(0/2)"));
     }
 }
