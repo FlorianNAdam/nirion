@@ -1,5 +1,10 @@
 use std::io::{Write, stdout};
 
+use crate::terminal::{
+    write_clear_current_line, write_move_cursor_down,
+    write_move_cursor_to_column, write_move_cursor_up,
+};
+
 #[derive(Default)]
 pub struct LineRenderer {
     current: Vec<String>,
@@ -27,8 +32,8 @@ impl LineRenderer {
         }
 
         if !wanted.is_empty() {
-            move_up(out, wanted.len())?;
-            move_to_column(out, 0)?;
+            write_move_cursor_up(out, wanted.len())?;
+            write_move_cursor_to_column(out, 0)?;
         }
         out.flush()?;
 
@@ -76,8 +81,8 @@ impl LineRenderer {
         self.render_with_writer(wanted, out)?;
 
         if !self.current.is_empty() {
-            move_down(out, self.current.len())?;
-            move_to_column(out, 0)?;
+            write_move_cursor_down(out, self.current.len())?;
+            write_move_cursor_to_column(out, 0)?;
         }
         out.flush()?;
 
@@ -101,53 +106,22 @@ impl LineRenderer {
             }
 
             if row > 0 {
-                move_down(out, row)?;
+                write_move_cursor_down(out, row)?;
             }
-            move_to_column(out, 0)?;
-            clear_current_line(out)?;
+            write_move_cursor_to_column(out, 0)?;
+            write_clear_current_line(out)?;
             if let Some(line) = wanted {
                 write!(out, "{line}")?;
             }
             if row > 0 {
-                move_up(out, row)?;
+                write_move_cursor_up(out, row)?;
             }
-            move_to_column(out, 0)?;
+            write_move_cursor_to_column(out, 0)?;
         }
 
         out.flush()?;
         Ok(())
     }
-}
-
-fn move_up(
-    out: &mut impl Write,
-    lines: usize,
-) -> std::io::Result<()> {
-    if lines > 0 {
-        write!(out, "\x1b[{lines}A")?;
-    }
-    Ok(())
-}
-
-fn move_down(
-    out: &mut impl Write,
-    lines: usize,
-) -> std::io::Result<()> {
-    if lines > 0 {
-        write!(out, "\x1b[{lines}B")?;
-    }
-    Ok(())
-}
-
-fn move_to_column(
-    out: &mut impl Write,
-    column: usize,
-) -> std::io::Result<()> {
-    write!(out, "\x1b[{}G", column + 1)
-}
-
-fn clear_current_line(out: &mut impl Write) -> std::io::Result<()> {
-    write!(out, "\x1b[2K")
 }
 
 fn split_lines(text: &str) -> Vec<String> {
