@@ -1,11 +1,11 @@
-use clap::Parser;
+use clap::Args;
 use nirion_lib::projects::TargetSelector;
 
 use crate::{docker::compose_target_cmd, ClapSelector};
 use nirion_lib::context::NirionContext;
 
 /// Run a docker compose command for a project or service
-#[derive(Parser, Debug, Clone)]
+#[derive(Args, Debug, Clone)]
 pub struct ComposeExecArgs {
     /// Target selector: *, project, or project.service
     #[arg(

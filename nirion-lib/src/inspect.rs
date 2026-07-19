@@ -7,16 +7,9 @@ use crate::{
     projects::{ProjectSelector, ServiceSelector},
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum InspectTarget {
-    Image,
-    Container,
-}
-
-pub async fn inspect_project(
+pub async fn inspect_project_images(
     context: &NirionContext,
     target: &ProjectSelector,
-    inspect_target: &InspectTarget,
     format: &str,
     raw: bool,
 ) -> anyhow::Result<Vec<String>> {
@@ -31,15 +24,7 @@ pub async fn inspect_project(
             project: target.name.to_string(),
             service: service.to_string(),
         };
-        match inspect_service(
-            context,
-            &service_selector,
-            inspect_target,
-            format,
-            raw,
-        )
-        .await
-        {
+        match inspect_image(context, &service_selector, format, raw).await {
             Ok(output) => outputs.push(output),
             Err(e) => {
                 failures.push(format!("{}.{}: {}", target.name, service, e))
@@ -58,25 +43,43 @@ pub async fn inspect_project(
     Ok(outputs)
 }
 
-pub async fn inspect_service(
+pub async fn inspect_project_containers(
     context: &NirionContext,
-    target: &ServiceSelector,
-    inspect_target: &InspectTarget,
+    target: &ProjectSelector,
     format: &str,
     raw: bool,
-) -> anyhow::Result<String> {
-    let output = match inspect_target {
-        InspectTarget::Image => {
-            inspect_image(context, target, format, raw).await?
+) -> anyhow::Result<Vec<String>> {
+    let mut failures = Vec::new();
+    let mut outputs = Vec::new();
+
+    for service in context.projects[&target.name]
+        .services
+        .keys()
+    {
+        let service_selector = ServiceSelector {
+            project: target.name.to_string(),
+            service: service.to_string(),
+        };
+        match inspect_container(context, &service_selector, format, raw).await {
+            Ok(output) => outputs.push(output),
+            Err(e) => {
+                failures.push(format!("{}.{}: {}", target.name, service, e))
+            }
         }
-        InspectTarget::Container => {
-            inspect_container(context, target, format, raw).await?
-        }
-    };
-    Ok(output)
+    }
+
+    if !failures.is_empty() {
+        anyhow::bail!(
+            "failed to inspect {} service(s): {}",
+            failures.len(),
+            failures.join("; ")
+        );
+    }
+
+    Ok(outputs)
 }
 
-async fn inspect_image(
+pub async fn inspect_image(
     context: &NirionContext,
     target: &ServiceSelector,
     format: &str,
@@ -135,7 +138,7 @@ async fn inspect_image(
     }
 }
 
-async fn inspect_container(
+pub async fn inspect_container(
     context: &NirionContext,
     target: &ServiceSelector,
     format: &str,
@@ -556,30 +559,6 @@ exit {inspect_exit_code}
     }
 
     #[tokio::test]
-    async fn inspect_service_dispatches_image_inspect() {
-        let dir = tempfile::tempdir().unwrap();
-        let args_file = dir.path().join("args");
-        let docker =
-            write_fake_docker(dir.path(), &args_file, r#"{"Id":"abc"}"#, "", 0);
-
-        let output = inspect_service(
-            &context(
-                fake_docker_command(&docker),
-                projects(),
-                LockedImages::default(),
-            ),
-            &target("web"),
-            &InspectTarget::Image,
-            "{{json .}}",
-            false,
-        )
-        .await
-        .unwrap();
-
-        assert_json_eq(&output, serde_json::json!({ "Id": "abc" }));
-    }
-
-    #[tokio::test]
     async fn inspect_container_pretty_prints_container_json() {
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
@@ -611,36 +590,6 @@ exit {inspect_exit_code}
                 .unwrap()
                 .contains("inspect\n--format\n{{json .}}\ncontainer-123\n")
         );
-    }
-
-    #[tokio::test]
-    async fn inspect_service_dispatches_container_inspect_raw() {
-        let dir = tempfile::tempdir().unwrap();
-        let args_file = dir.path().join("args");
-        let docker = write_fake_container_docker(
-            dir.path(),
-            &args_file,
-            &compose_ps_service("web", "container-abc"),
-            r#"{"raw":true}"#,
-            "",
-            0,
-        );
-
-        let output = inspect_service(
-            &context(
-                fake_docker_command(&docker),
-                projects(),
-                LockedImages::default(),
-            ),
-            &target("web"),
-            &InspectTarget::Container,
-            "{{json .}}",
-            true,
-        )
-        .await
-        .unwrap();
-
-        assert_json_eq(&output, serde_json::json!({ "raw": true }));
     }
 
     #[tokio::test]
@@ -704,7 +653,7 @@ exit {inspect_exit_code}
     }
 
     #[tokio::test]
-    async fn inspect_project_collects_outputs_for_services() {
+    async fn inspect_project_images_collects_outputs_for_services() {
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker =
@@ -724,7 +673,7 @@ exit {inspect_exit_code}
         }))
         .unwrap();
 
-        let outputs = inspect_project(
+        let outputs = inspect_project_images(
             &context(
                 fake_docker_command(&docker),
                 projects,
@@ -733,7 +682,6 @@ exit {inspect_exit_code}
             &crate::projects::ProjectSelector {
                 name: "myapp".into(),
             },
-            &InspectTarget::Image,
             "{{json .}}",
             true,
         )
@@ -745,12 +693,12 @@ exit {inspect_exit_code}
     }
 
     #[tokio::test]
-    async fn inspect_project_reports_service_failures() {
+    async fn inspect_project_images_reports_service_failures() {
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, "{}", "", 0);
 
-        let err = inspect_project(
+        let err = inspect_project_images(
             &context(
                 fake_docker_command(&docker),
                 projects(),
@@ -759,7 +707,6 @@ exit {inspect_exit_code}
             &crate::projects::ProjectSelector {
                 name: "myapp".into(),
             },
-            &InspectTarget::Image,
             "{{json .}}",
             true,
         )

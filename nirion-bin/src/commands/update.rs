@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::Args;
 use futures::StreamExt;
 use nirion_lib::{
     context::NirionContext,
@@ -9,7 +9,7 @@ use nirion_lib::{
 use crate::{commands::lock::format_lock_update_event, ClapSelector};
 
 /// Update lock file entries
-#[derive(Parser, Debug, Clone)]
+#[derive(Args, Debug, Clone)]
 pub struct UpdateArgs {
     /// Target selector: *, project, or project.service
     #[arg(

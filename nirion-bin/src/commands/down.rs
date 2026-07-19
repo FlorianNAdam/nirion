@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::Args;
 use nirion_lib::projects::TargetSelector;
 
 use crate::commands::LifecycleArgs;
@@ -9,7 +9,7 @@ use nirion_lib::context::NirionContext;
 use nirion_lib::wait::WaitTarget;
 
 /// Stop and remove service containers, networks
-#[derive(Parser, Debug, Clone)]
+#[derive(Args, Debug, Clone)]
 pub struct DownArgs {
     /// Target selector: *, project, or project.service
     #[arg(

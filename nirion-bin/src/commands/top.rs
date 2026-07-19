@@ -1,10 +1,10 @@
-use clap::Parser;
+use clap::Args;
 
 use crate::{docker::compose_target_cmd, ClapSelector, TargetSelector};
 use nirion_lib::context::NirionContext;
 
 /// Display the running processes of a service container
-#[derive(Parser, Debug, Clone)]
+#[derive(Args, Debug, Clone)]
 pub struct TopArgs {
     /// Target selector: *, project, or project.service
     #[arg(

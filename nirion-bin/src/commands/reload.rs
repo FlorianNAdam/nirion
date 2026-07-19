@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::Args;
 
 use crate::commands::LifecycleArgs;
 use crate::lifecycle::run_lifecycle_command;
@@ -8,7 +8,7 @@ use nirion_lib::context::NirionContext;
 use nirion_lib::wait::WaitTarget;
 
 /// Stop and recreate service containers
-#[derive(Parser, Debug, Clone)]
+#[derive(Args, Debug, Clone)]
 pub struct ReloadArgs {
     /// Target selector: *, project, or project.service
     #[arg(

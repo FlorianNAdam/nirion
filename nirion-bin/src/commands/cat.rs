@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::Args;
 use nirion_lib::{
     compose_file::{compose_to_string, full_compose, service_compose},
     context::NirionContext,
@@ -9,7 +9,7 @@ use nirion_lib::{
 use crate::ClapSelector;
 
 /// Print the docker compose file
-#[derive(Parser, Debug, Clone)]
+#[derive(Args, Debug, Clone)]
 pub struct CatArgs {
     /// Target selector: *, project, or project.service
     #[arg(
@@ -20,7 +20,10 @@ pub struct CatArgs {
     pub target: TargetSelector,
 }
 
-pub async fn handle_cat(args: &CatArgs, context: &NirionContext) -> Result<()> {
+pub async fn handle_cat(
+    args: &CatArgs,
+    context: &NirionContext,
+) -> Result<()> {
     match &args.target {
         TargetSelector::All => {
             for (project_name, project) in context.projects.iter() {
