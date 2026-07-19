@@ -3,7 +3,6 @@ use std::{
     net::TcpListener,
     path::PathBuf,
     process::{Child, Command, Stdio},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use crate::{
@@ -42,13 +41,13 @@ pub const ACCOUNT_B: TestAccount = TestAccount {
 
 pub struct RegistryHandle {
     child: Child,
-    _temp_dir: TempDir,
+    _temp_dir: tempfile::TempDir,
     pub addr: String,
 }
 
 impl RegistryHandle {
     pub async fn start(accounts: &[TestAccount]) -> anyhow::Result<Self> {
-        let temp_dir = TempDir::new()?;
+        let temp_dir = tempfile::tempdir()?;
         let port = unused_local_port()?;
         let addr = format!("127.0.0.1:{port}");
         let config = write_registry_config(temp_dir.path(), &addr, accounts)?;
@@ -240,30 +239,4 @@ http:
 fn unused_local_port() -> anyhow::Result<u16> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     Ok(listener.local_addr()?.port())
-}
-
-struct TempDir {
-    path: PathBuf,
-}
-
-impl TempDir {
-    fn new() -> anyhow::Result<Self> {
-        let id = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_nanos();
-        let path = std::env::temp_dir()
-            .join(format!("nirion-test-registry-{}-{id}", std::process::id()));
-        fs::create_dir(&path)?;
-        Ok(Self { path })
-    }
-
-    fn path(&self) -> &std::path::Path {
-        &self.path
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
-    }
 }

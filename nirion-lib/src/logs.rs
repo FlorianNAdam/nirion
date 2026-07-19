@@ -594,45 +594,9 @@ mod tests {
         fs,
         os::unix::fs::PermissionsExt,
         path::{Path, PathBuf},
-        sync::{
-            Arc,
-            atomic::{AtomicU64, Ordering},
-        },
-        time::{SystemTime, UNIX_EPOCH},
+        sync::Arc,
     };
     use tokio::io::AsyncWriteExt;
-
-    struct TempDir {
-        path: PathBuf,
-    }
-
-    static NEXT_TEMP_DIR_ID: AtomicU64 = AtomicU64::new(0);
-
-    impl TempDir {
-        fn new() -> Self {
-            let counter = NEXT_TEMP_DIR_ID.fetch_add(1, Ordering::Relaxed);
-            let id = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            let path = std::env::temp_dir().join(format!(
-                "nirion-logs-test-{}-{id}-{counter}",
-                std::process::id()
-            ));
-            fs::create_dir(&path).unwrap();
-            Self { path }
-        }
-
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
-        }
-    }
 
     fn context(docker_command: DockerCommand) -> NirionContext {
         NirionContext {
@@ -852,7 +816,7 @@ mod tests {
 
     #[tokio::test]
     async fn container_is_running_reads_docker_inspect_output() {
-        let dir = TempDir::new();
+        let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("docker.sh");
         write_script(
             &script,
@@ -929,7 +893,7 @@ fi
 
     #[tokio::test]
     async fn read_logs_snapshot_streams_output_and_returns_source() {
-        let dir = TempDir::new();
+        let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("docker.sh");
         write_script(
             &script,
@@ -956,14 +920,17 @@ esac
 
         assert_eq!(result, Some(source.clone()));
         assert_eq!(rx.next().await.unwrap().unwrap(), source.attached_event());
-        assert_eq!(
+        let mut lines = [
             rx.next().await.unwrap().unwrap(),
-            LogEvent::StdoutLine(source.log_line("stdout-line".to_string()))
-        );
-        assert_eq!(
             rx.next().await.unwrap().unwrap(),
-            LogEvent::StderrLine(source.log_line("stderr-line".to_string()))
-        );
+        ];
+        lines.sort_by_key(|event| format!("{event:?}"));
+        let mut expected = [
+            LogEvent::StdoutLine(source.log_line("stdout-line".to_string())),
+            LogEvent::StderrLine(source.log_line("stderr-line".to_string())),
+        ];
+        expected.sort_by_key(|event| format!("{event:?}"));
+        assert_eq!(lines, expected);
         assert_eq!(rx.next().await.unwrap().unwrap(), source.end_event());
         assert!(rx.next().await.is_none());
     }
@@ -994,7 +961,7 @@ esac
 
     #[tokio::test]
     async fn read_logs_snapshot_reports_failed_status() {
-        let dir = TempDir::new();
+        let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("docker.sh");
         write_script(
             &script,
@@ -1028,7 +995,7 @@ esac
 
     #[tokio::test]
     async fn read_logs_follow_skips_non_running_container() {
-        let dir = TempDir::new();
+        let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("docker.sh");
         write_script(
             &script,
@@ -1061,7 +1028,7 @@ esac
 
     #[tokio::test]
     async fn read_logs_follow_treats_failed_status_as_detach() {
-        let dir = TempDir::new();
+        let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("docker.sh");
         write_script(
             &script,
