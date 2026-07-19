@@ -112,8 +112,8 @@
             package = nirion;
             rust-tests = nirion.tests.rust;
           }
-          // import ./tests/contract { inherit pkgs self; }
           // import ./tests/module { inherit pkgs self; }
+          // import ./tests/runtime { inherit pkgs self; }
           // import ./tests/vm { inherit pkgs self; };
 
           devShells.default = pkgs.callPackage ./nix/dev-shell.nix { inherit pre-commit; };

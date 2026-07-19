@@ -37,7 +37,7 @@ let
                 port = 8082;
                 path = "/contains";
                 expectedStatus = null;
-                expect.bodyContains = "cost is $5";
+                expect.bodyContains = "sentinel is $READY";
               };
             };
 
@@ -125,7 +125,7 @@ in
     assertion =
       !(lib.hasInfix "Expected HTTP status" (script "body-contains"))
       && lib.hasInfix "Response body did not contain expected text" (script "body-contains")
-      && lib.hasInfix "cost is $$5" (script "body-contains");
+      && lib.hasInfix "sentinel is $$READY" (script "body-contains");
     message = "mkHttpHealthcheck bodyContains did not honor expectedStatus = null or docker escaping";
   }
   {

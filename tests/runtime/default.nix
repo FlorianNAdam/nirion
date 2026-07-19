@@ -3,11 +3,13 @@
   self,
 }:
 let
+  lib = pkgs.lib;
   lockFile = attrs: builtins.toFile "nirion-lock.json" (builtins.toJSON attrs);
 
   common = {
     inherit
       pkgs
+      lib
       self
       lockFile
       ;
@@ -32,13 +34,15 @@ let
   };
 
   tests = {
+    healthchecks = ./healthchecks.nix;
     lock-file = ./lock-file.nix;
+    micro-json = ./micro-json.nix;
     projects-file = ./projects-file.nix;
   };
 in
 builtins.listToAttrs (
   map (name: {
-    name = "contract-${name}";
+    name = "runtime-${name}";
     value = import tests.${name} common;
   }) (builtins.attrNames tests)
 )
