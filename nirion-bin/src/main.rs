@@ -19,6 +19,7 @@ use std::{ffi::OsString, path::PathBuf};
 
 mod commands;
 mod docker;
+mod health_render;
 mod lifecycle;
 mod log_render;
 mod progress;

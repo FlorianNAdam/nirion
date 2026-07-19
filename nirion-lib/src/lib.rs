@@ -5,6 +5,7 @@ pub mod context;
 pub mod docker;
 pub mod events;
 pub mod exec;
+pub mod health;
 pub mod inspect;
 pub mod lock;
 pub mod lock_update;

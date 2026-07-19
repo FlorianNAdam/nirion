@@ -117,5 +117,6 @@ define_commands!([
     restart,
     compose_exec,
     monitor,
-    inspect
+    inspect,
+    health
 ]);

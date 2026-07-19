@@ -35,6 +35,26 @@ fn write_projects_with_compose(
     fs::write(path, contents).unwrap();
 }
 
+fn write_healthcheck_projects(path: &Path) {
+    fs::write(
+        path,
+        r#"{
+  "myapp": {
+    "name": "myapp",
+    "dockerCompose": "compose.yml",
+    "services": {
+      "web": {
+        "image": "nginx:latest",
+        "healthcheck": true,
+        "restart": null
+      }
+    }
+  }
+}"#,
+    )
+    .unwrap();
+}
+
 fn write_empty_projects(path: &Path) {
     fs::write(
         path,
@@ -263,6 +283,36 @@ fn stop_child(child: &mut std::process::Child) {
 
 fn ps_status_json() -> &'static str {
     r#"[{"ID":"abc","Name":"myapp-web-1","Service":"web","Image":"nginx:latest","State":"running","Health":"healthy","ExitCode":0,"RunningFor":"2 minutes","Status":"Up 2 minutes (healthy)","Ports":"127.0.0.1:8080-8081->80-81/tcp","Networks":"default"}]"#
+}
+
+fn write_fake_health_docker(
+    path: &Path,
+    args_file: &Path,
+    health_json: &str,
+) {
+    fs::write(
+        path,
+        format!(
+            r#"printf '%s\n' '---' >> '{}'
+printf '%s\n' "$@" >> '{}'
+if [ "$1" = "compose" ]; then
+  printf '%s\n' '{}'
+  exit 0
+fi
+printf '%s\n' '{}'
+"#,
+            args_file.display(),
+            args_file.display(),
+            ps_status_json(),
+            health_json,
+        ),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(path)
+        .unwrap()
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
 }
 
 #[test]
@@ -649,6 +699,43 @@ fn inspect_all_target_prints_project_outputs() {
     assert_eq!(
         fs::read_to_string(args_file).unwrap(),
         "image\ninspect\n--format\njson\nnginx:latest\n"
+    );
+}
+
+#[test]
+fn health_logs_prints_healthcheck_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_healthcheck_projects(&project_file);
+    write_fake_health_docker(
+        &docker_script,
+        &args_file,
+        r#"{"Status":"unhealthy","Log":[{"Start":"2026-07-19T10:00:00Z","End":"2026-07-19T10:00:01Z","ExitCode":1,"Output":"curl failed\nconnection refused\n"}]}"#,
+    );
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("health")
+        .arg("logs")
+        .arg("myapp.web")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = strip_ansi_codes(&stdout);
+    assert!(
+        stdout
+            .contains("[myapp.web] 2026-07-19 10:00:00 1s exit=1 curl failed"),
+        "stdout:\n{stdout}"
+    );
+    assert!(stdout.contains("  connection refused"));
+    assert!(
+        fs::read_to_string(args_file)
+            .unwrap()
+            .contains("inspect\n--format\n{{json .State.Health}}\nabc\n")
     );
 }
 
