@@ -202,8 +202,33 @@ fn assert_failure(output: &std::process::Output) {
 }
 
 fn stop_child(child: &mut std::process::Child) {
-    let _ = child.kill();
-    child.wait().unwrap();
+    unsafe extern "C" {
+        fn kill(
+            pid: i32,
+            sig: i32,
+        ) -> i32;
+    }
+
+    const SIGINT: i32 = 2;
+    unsafe {
+        let _ = kill(child.id() as i32, SIGINT);
+    }
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success(), "nirion logs exited with {status}");
+            return;
+        }
+
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            child.wait().unwrap();
+            panic!("nirion logs did not exit after SIGINT");
+        }
+
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn ps_status_json() -> &'static str {

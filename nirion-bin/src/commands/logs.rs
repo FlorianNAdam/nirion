@@ -82,9 +82,19 @@ pub async fn handle_logs(
     };
     let mut renderer = LogRenderer::new(args.label, args.events, args.follow);
     let mut stream = logs_stream(context.clone(), args.target.clone(), options);
+    let shutdown = tokio::signal::ctrl_c();
+    tokio::pin!(shutdown);
 
-    while let Some(event) = stream.next().await {
-        renderer.render(event?)?;
+    loop {
+        tokio::select! {
+            _ = &mut shutdown => break,
+            event = stream.next() => {
+                let Some(event) = event else {
+                    break;
+                };
+                renderer.render(event?)?;
+            }
+        }
     }
 
     Ok(())
