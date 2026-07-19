@@ -71,6 +71,44 @@ let
       path = "/status-failure";
       expect.status = 204;
     };
+
+    curlStatus = mkHttpHealthcheck {
+      backend = "curl";
+      binary = lib.getExe pkgs.curl;
+      host = "127.0.0.1";
+      inherit port;
+      path = "/status";
+      expect.status = 204;
+    };
+
+    curlBodyContains = mkHttpHealthcheck {
+      backend = "curl";
+      binary = lib.getExe pkgs.curl;
+      host = "127.0.0.1";
+      inherit port;
+      path = "/body-contains";
+      expectedStatus = null;
+      expect.bodyContains = "sentinel is $READY";
+    };
+
+    wgetStatus = mkHttpHealthcheck {
+      backend = "wget";
+      binary = lib.getExe pkgs.wget;
+      host = "127.0.0.1";
+      inherit port;
+      path = "/status";
+      expect.status = 204;
+    };
+
+    wgetBodyContains = mkHttpHealthcheck {
+      backend = "wget";
+      binary = lib.getExe pkgs.wget;
+      host = "127.0.0.1";
+      inherit port;
+      path = "/body-contains";
+      expectedStatus = null;
+      expect.bodyContains = "sentinel is $READY";
+    };
   };
 in
 pkgs.runCommand "nirion-runtime-healthchecks" { nativeBuildInputs = [ pkgs.perl ]; } ''
@@ -87,6 +125,10 @@ pkgs.runCommand "nirion-runtime-healthchecks" { nativeBuildInputs = [ pkgs.perl 
   ${runnableCommand checks.bodyContains}
   ${runnableCommand checks.jsonEquals}
   ${runnableCommand checks.jsonContains}
+  ${runnableCommand checks.curlStatus}
+  ${runnableCommand checks.curlBodyContains}
+  ${runnableCommand checks.wgetStatus}
+  ${runnableCommand checks.wgetBodyContains}
 
   if ${runnableCommand checks.statusFailure}; then
     echo "expected failing healthcheck to exit non-zero"

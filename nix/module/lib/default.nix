@@ -2,6 +2,6 @@
 
 {
   imports = [
-    ./lib/healthchecks.nix
+    ./healthchecks
   ];
 }
