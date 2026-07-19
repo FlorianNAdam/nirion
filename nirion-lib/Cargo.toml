@@ -1,15 +1,15 @@
 [package]
 name = "nirion-lib"
-version = "0.4.2"
+version = "0.5.0"
 edition = "2024"
 
 [dependencies]
 nirion-oci-lib = { path = "../nirion-oci-lib" }
-anyhow = "1.0.101"
-futures = "0.3.32"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
-tokio = { version = "1.52.3", features = ["io-util", "macros", "process", "rt", "sync", "time"] }
+anyhow = "1.0.104"
+futures = "0.3.33"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.150"
+tokio = { version = "1.53.0", features = ["io-util", "macros", "process", "rt", "sync", "time"] }
 serde_yaml_ng = "0.10.0"
 chrono = "0.4.45"
 
