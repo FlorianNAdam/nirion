@@ -149,6 +149,36 @@ exit {exit_code}
     .unwrap();
 }
 
+fn write_fake_inspect_container_docker(
+    path: &Path,
+    args_file: &Path,
+    inspect_stdout: &str,
+) {
+    fs::write(
+        path,
+        format!(
+            r#"printf '%s\n' '---' >> '{}'
+printf '%s\n' "$@" >> '{}'
+if [ "$1" = "compose" ]; then
+  printf '%s\n' '{}'
+  exit 0
+fi
+printf '%s\n' '{}'
+"#,
+            args_file.display(),
+            args_file.display(),
+            ps_status_json(),
+            inspect_stdout,
+        ),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(path)
+        .unwrap()
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
 fn nirion_command(
     project_file: &Path,
     lock_file: &Path,
@@ -452,6 +482,73 @@ fn inspect_image_raw_prints_docker_output() {
 }
 
 #[test]
+fn inspect_container_raw_prints_docker_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects(&project_file);
+    write_fake_inspect_container_docker(
+        &docker_script,
+        &args_file,
+        r#"{"Id":"container-id"}"#,
+    );
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("inspect")
+        .arg("container")
+        .arg("myapp.web")
+        .arg("--raw")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains(r#"{"Id":"container-id"}"#)
+    );
+    let args = fs::read_to_string(args_file).unwrap();
+    assert!(args.contains(
+        "compose\n-f\ncompose.yml\n--project-name\nmyapp\nps\n-a\n--format\njson\n"
+    ));
+    assert!(args.contains("inspect\n--format\njson\nabc\n"));
+}
+
+#[test]
+fn inspect_container_pretty_prints_docker_output_by_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects(&project_file);
+    write_fake_inspect_container_docker(
+        &docker_script,
+        &args_file,
+        r#"{"Id":"container-id"}"#,
+    );
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("inspect")
+        .arg("container")
+        .arg("myapp.web")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains("\"Id\": \"container-id\"")
+    );
+    assert!(
+        fs::read_to_string(args_file)
+            .unwrap()
+            .contains("inspect\n--format\njson\nabc\n")
+    );
+}
+
+#[test]
 fn inspect_project_target_prints_service_outputs() {
     let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
@@ -487,6 +584,40 @@ fn inspect_project_target_prints_service_outputs() {
 }
 
 #[test]
+fn inspect_container_project_target_prints_service_outputs() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects(&project_file);
+    write_fake_inspect_container_docker(
+        &docker_script,
+        &args_file,
+        r#"{"Id":"container-id"}"#,
+    );
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("inspect")
+        .arg("container")
+        .arg("myapp")
+        .arg("--raw")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains(r#"{"Id":"container-id"}"#)
+    );
+    let args = fs::read_to_string(args_file).unwrap();
+    assert!(args.contains(
+        "compose\n-f\ncompose.yml\n--project-name\nmyapp\nps\n-a\n--format\njson\n"
+    ));
+    assert!(args.contains("inspect\n--format\njson\nabc\n"));
+}
+
+#[test]
 fn inspect_all_target_prints_project_outputs() {
     let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
@@ -519,6 +650,40 @@ fn inspect_all_target_prints_project_outputs() {
         fs::read_to_string(args_file).unwrap(),
         "image\ninspect\n--format\njson\nnginx:latest\n"
     );
+}
+
+#[test]
+fn inspect_container_all_target_prints_project_outputs() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects(&project_file);
+    write_fake_inspect_container_docker(
+        &docker_script,
+        &args_file,
+        r#"{"Id":"container-id"}"#,
+    );
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("inspect")
+        .arg("container")
+        .arg("*")
+        .arg("--raw")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains(r#"{"Id":"container-id"}"#)
+    );
+    let args = fs::read_to_string(args_file).unwrap();
+    assert!(args.contains(
+        "compose\n-f\ncompose.yml\n--project-name\nmyapp\nps\n-a\n--format\njson\n"
+    ));
+    assert!(args.contains("inspect\n--format\njson\nabc\n"));
 }
 
 #[test]
