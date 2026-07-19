@@ -1,4 +1,5 @@
 use console::Term;
+use std::io::Write;
 
 pub struct HiddenCursorGuard;
 
@@ -40,4 +41,35 @@ pub fn move_stdout_cursor_down(lines: usize) -> anyhow::Result<()> {
     term.move_cursor_down(lines)?;
     term.flush()?;
     Ok(())
+}
+
+pub fn write_move_cursor_up(
+    out: &mut impl Write,
+    lines: usize,
+) -> std::io::Result<()> {
+    if lines > 0 {
+        write!(out, "\x1b[{lines}A")?;
+    }
+    Ok(())
+}
+
+pub fn write_move_cursor_down(
+    out: &mut impl Write,
+    lines: usize,
+) -> std::io::Result<()> {
+    if lines > 0 {
+        write!(out, "\x1b[{lines}B")?;
+    }
+    Ok(())
+}
+
+pub fn write_move_cursor_to_column(
+    out: &mut impl Write,
+    column: usize,
+) -> std::io::Result<()> {
+    write!(out, "\x1b[{}G", column + 1)
+}
+
+pub fn write_clear_current_line(out: &mut impl Write) -> std::io::Result<()> {
+    write!(out, "\x1b[2K")
 }
