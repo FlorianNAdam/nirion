@@ -9,7 +9,7 @@ use nirion_tui_lib::{
     line_renderer::LineRenderer,
     spinner::Spinner,
     status::{Status, StatusEntry},
-    terminal::HiddenCursorGuard,
+    terminal::{HiddenCursorGuard, terminal_width},
 };
 use std::collections::BTreeMap;
 
@@ -71,18 +71,7 @@ fn create_status(
         });
     }
 
-    Status { entries }
-}
-
-fn render_progress(
-    spinner: Option<&Spinner>,
-    selected: &[String],
-    running: &BTreeMap<String, bool>,
-    statuses: &BTreeMap<String, ProjectStatus>,
-    projects: &Projects,
-) -> String {
-    let status = create_status(spinner, selected, running, statuses, projects);
-    status.render()
+    Status::new(entries)
 }
 
 pub(crate) trait ProgressRenderer {
@@ -215,13 +204,14 @@ impl ProgressRenderer for StatusProgressRenderer {
         statuses: &BTreeMap<String, ProjectStatus>,
     ) -> anyhow::Result<()> {
         self.cursor = Some(HiddenCursorGuard::hide()?);
-        let progress = render_progress(
+        let progress = create_status(
             self.spinner(),
             selected,
             running,
             statuses,
             &context.projects,
-        );
+        )
+        .render(terminal_width());
         self.lines.start(&progress)
     }
 
@@ -232,13 +222,14 @@ impl ProgressRenderer for StatusProgressRenderer {
         running: &BTreeMap<String, bool>,
         statuses: &BTreeMap<String, ProjectStatus>,
     ) -> anyhow::Result<()> {
-        let progress = render_progress(
+        let progress = create_status(
             self.spinner(),
             selected,
             running,
             statuses,
             &context.projects,
-        );
+        )
+        .render(terminal_width());
         self.lines.render(&progress)
     }
 
@@ -249,13 +240,14 @@ impl ProgressRenderer for StatusProgressRenderer {
         running: &BTreeMap<String, bool>,
         statuses: &BTreeMap<String, ProjectStatus>,
     ) -> anyhow::Result<()> {
-        let progress = render_progress(
+        let progress = create_status(
             self.spinner(),
             selected,
             running,
             statuses,
             &context.projects,
-        );
+        )
+        .render(terminal_width());
         self.lines.finish(&progress)
     }
 }
@@ -415,14 +407,15 @@ mod tests {
     }
 
     #[test]
-    fn render_progress_formats_status_without_spinner() {
+    fn create_status_formats_status_without_spinner() {
         let projects = projects();
         let selected = vec!["app".to_string()];
         let running = BTreeMap::new();
         let statuses = BTreeMap::new();
 
         let output =
-            render_progress(None, &selected, &running, &statuses, &projects);
+            create_status(None, &selected, &running, &statuses, &projects)
+                .render(80);
 
         assert!(output.contains("app"));
         assert!(output.contains("(0/2)"));

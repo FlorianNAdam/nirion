@@ -1,8 +1,18 @@
 use crate::ansi::{ansi_len, lpad_ansi};
 use crate::color::{Color, Colorize};
 
+const DEFAULT_MAX_BAR_WIDTH: usize = 40;
+const DEFAULT_MIN_BAR_WIDTH: usize = 10;
+const DEFAULT_SAFETY_MARGIN: usize = 2;
+
+// Visible width of ` │ {bar} │ ` in a status content line.
+const STATUS_LINE_FIXED_WIDTH: usize = 6;
+
 pub struct Status {
     pub entries: Vec<StatusEntry>,
+    pub max_bar_width: usize,
+    pub min_bar_width: usize,
+    pub safety_margin: usize,
 }
 
 pub struct StatusEntry {
@@ -12,43 +22,48 @@ pub struct StatusEntry {
 }
 
 impl Status {
-    pub fn print(&self) -> anyhow::Result<()> {
-        println!("{}", self.render());
-        Ok(())
+    pub fn new(entries: Vec<StatusEntry>) -> Self {
+        Self {
+            entries,
+            max_bar_width: DEFAULT_MAX_BAR_WIDTH,
+            min_bar_width: DEFAULT_MIN_BAR_WIDTH,
+            safety_margin: DEFAULT_SAFETY_MARGIN,
+        }
     }
 
-    pub fn render(&self) -> String {
-        self.render_lines().join("\n")
+    pub fn render(
+        &self,
+        width: usize,
+    ) -> String {
+        self.render_lines(width).join("\n")
     }
 
-    pub fn render_lines(&self) -> Vec<String> {
-        let bar_width = 40;
-
-        let max_prefix_length = self
-            .entries
-            .iter()
-            .map(|e| ansi_len(&e.prefix))
-            .max()
-            .unwrap_or_default();
-
+    pub fn render_lines(
+        &self,
+        width: usize,
+    ) -> Vec<String> {
+        let max_prefix_width = max_entry_width(&self.entries, |e| &e.prefix);
+        let max_suffix_width = max_entry_width(&self.entries, |e| &e.suffix);
+        let bar_width =
+            self.bar_width(width, max_prefix_width, max_suffix_width);
         let mut lines = Vec::new();
 
         lines.push(format!(
             "{} ┌{}┐",
-            " ".repeat(max_prefix_length),
+            " ".repeat(max_prefix_width),
             "─".repeat(bar_width + 2)
         ));
 
         let num_entries = self.entries.len();
         for (i, entry) in self.entries.iter().enumerate() {
-            let line = render_status_line(entry, max_prefix_length, bar_width);
+            let line = render_status_line(entry, max_prefix_width, bar_width);
 
             lines.push(line);
 
             if i != num_entries.saturating_sub(1) {
                 lines.push(format!(
                     "{} ├{}┤",
-                    " ".repeat(max_prefix_length),
+                    " ".repeat(max_prefix_width),
                     "─".repeat(bar_width + 2)
                 ));
             }
@@ -56,11 +71,42 @@ impl Status {
 
         lines.push(format!(
             "{} └{}┘",
-            " ".repeat(max_prefix_length),
+            " ".repeat(max_prefix_width),
             "─".repeat(bar_width + 2)
         ));
         lines
     }
+
+    fn bar_width(
+        &self,
+        terminal_width: usize,
+        prefix_width: usize,
+        suffix_width: usize,
+    ) -> usize {
+        let min_bar_width = self
+            .min_bar_width
+            .min(self.max_bar_width);
+
+        terminal_width
+            .saturating_sub(prefix_width)
+            .saturating_sub(suffix_width)
+            .saturating_sub(STATUS_LINE_FIXED_WIDTH)
+            .saturating_sub(self.safety_margin)
+            .min(self.max_bar_width)
+            .max(min_bar_width)
+    }
+}
+
+fn max_entry_width(
+    entries: &[StatusEntry],
+    value: impl Fn(&StatusEntry) -> &str,
+) -> usize {
+    entries
+        .iter()
+        .map(value)
+        .map(ansi_len)
+        .max()
+        .unwrap_or_default()
 }
 
 fn render_status_line(
@@ -86,6 +132,9 @@ fn render_status_bar(
     let mut out = String::new();
     for (i, color) in segments.iter().enumerate() {
         let width = optimal_sublist_length(width, segments.len(), i);
+        if width == 0 {
+            continue;
+        }
 
         out.push_str(
             "█"
@@ -133,6 +182,17 @@ mod tests {
     }
 
     #[test]
+    fn render_status_bar_skips_segments_without_visible_width() {
+        let bar = render_status_bar(
+            &[Color::Green, Color::Red, Color::Blue, Color::Yellow],
+            2,
+        );
+
+        assert_eq!(strip_ansi_codes(&bar).chars().count(), 2);
+        assert_eq!(strip_ansi_codes(&bar), "▊▊");
+    }
+
+    #[test]
     fn optimal_sublist_length_distributes_remainder_to_first_segments() {
         assert_eq!(optimal_sublist_length(8, 3, 0), 3);
         assert_eq!(optimal_sublist_length(8, 3, 1), 3);
@@ -145,6 +205,45 @@ mod tests {
     }
 
     #[test]
+    fn status_bar_width_uses_available_terminal_width() {
+        let status = Status::new(vec![]);
+
+        assert_eq!(status.bar_width(80, 10, 8), DEFAULT_MAX_BAR_WIDTH);
+    }
+
+    #[test]
+    fn status_bar_width_shrinks_to_available_terminal_width() {
+        let status = Status::new(vec![]);
+        let prefix_width = 10;
+        let suffix_width = 8;
+        let min_width_terminal = prefix_width
+            + suffix_width
+            + STATUS_LINE_FIXED_WIDTH
+            + DEFAULT_SAFETY_MARGIN
+            + DEFAULT_MIN_BAR_WIDTH;
+
+        assert_eq!(
+            status.bar_width(min_width_terminal, prefix_width, suffix_width),
+            DEFAULT_MIN_BAR_WIDTH,
+        );
+        assert_eq!(
+            status.bar_width(
+                min_width_terminal + 1,
+                prefix_width,
+                suffix_width,
+            ),
+            DEFAULT_MIN_BAR_WIDTH + 1,
+        );
+    }
+
+    #[test]
+    fn status_bar_width_keeps_minimum_width() {
+        let status = Status::new(vec![]);
+
+        assert_eq!(status.bar_width(10, 10, 8), DEFAULT_MIN_BAR_WIDTH);
+    }
+
+    #[test]
     fn render_status_line_pads_prefix_to_visible_width() {
         let entry = StatusEntry {
             prefix: "db".to_string(),
@@ -152,43 +251,68 @@ mod tests {
             suffix: "ready".to_string(),
         };
 
-        assert_eq!(render_status_line(&entry, 4, 3), "db   │     │ ready");
+        let line = render_status_line(&entry, 4, 3);
+        let line = strip_ansi_codes(&line);
+        let parts = line.split('│').collect::<Vec<_>>();
+
+        assert_eq!(parts[0].chars().count(), 5);
+        assert!(parts[0].starts_with("db"));
+        assert_eq!(parts[2].trim(), "ready");
     }
 
     #[test]
     fn render_lines_returns_complete_status_frame() {
-        let status = Status {
-            entries: vec![StatusEntry {
-                prefix: "db".to_string(),
-                segments: vec![],
-                suffix: "ready".to_string(),
-            }],
-        };
+        let status = Status::new(vec![StatusEntry {
+            prefix: "db".to_string(),
+            segments: vec![],
+            suffix: "ready".to_string(),
+        }]);
 
-        let lines = status.render_lines();
+        let lines = status.render_lines(usize::MAX);
 
         assert_eq!(lines.len(), 3);
         assert_status_box(&lines, "db ", " ready");
     }
 
     #[test]
-    fn render_lines_separates_multiple_status_entries() {
-        let status = Status {
-            entries: vec![
-                StatusEntry {
-                    prefix: "web".to_string(),
-                    segments: vec![],
-                    suffix: "starting".to_string(),
-                },
-                StatusEntry {
-                    prefix: "db".to_string(),
-                    segments: vec![],
-                    suffix: "ready".to_string(),
-                },
-            ],
-        };
+    fn render_lines_with_width_shrinks_status_bar() {
+        let status = Status::new(vec![StatusEntry {
+            prefix: "db".to_string(),
+            segments: vec![],
+            suffix: "ready".to_string(),
+        }]);
 
-        let lines = status.render_lines();
+        let width = 20;
+        let lines = status.render_lines(width);
+        let line = strip_ansi_codes(&lines[1]);
+        let bar_area = line.split('│').nth(1).unwrap();
+        let expected_bar_width = width
+            .saturating_sub(ansi_len("db"))
+            .saturating_sub(ansi_len("ready"))
+            .saturating_sub(STATUS_LINE_FIXED_WIDTH)
+            .saturating_sub(DEFAULT_SAFETY_MARGIN)
+            .min(DEFAULT_MAX_BAR_WIDTH)
+            .max(DEFAULT_MIN_BAR_WIDTH);
+
+        assert_eq!(bar_area.chars().count() - 2, expected_bar_width);
+    }
+
+    #[test]
+    fn render_lines_separates_multiple_status_entries() {
+        let status = Status::new(vec![
+            StatusEntry {
+                prefix: "web".to_string(),
+                segments: vec![],
+                suffix: "starting".to_string(),
+            },
+            StatusEntry {
+                prefix: "db".to_string(),
+                segments: vec![],
+                suffix: "ready".to_string(),
+            },
+        ]);
+
+        let lines = status.render_lines(usize::MAX);
 
         assert_eq!(lines.len(), 5);
         let left = lines[0]
@@ -212,13 +336,6 @@ mod tests {
         assert!(lines[1].ends_with(" starting"));
         assert!(lines[3].starts_with("db  "));
         assert!(lines[3].ends_with(" ready"));
-    }
-
-    #[test]
-    fn print_writes_rendered_status() {
-        let status = Status { entries: vec![] };
-
-        status.print().unwrap();
     }
 
     fn assert_status_box(
