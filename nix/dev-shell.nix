@@ -22,6 +22,7 @@ pkgs.mkShell {
     with pkgs;
     [
       rust-analyzer
+      cargo-edit
     ]
     ++ pkgs.lib.optionals (pre-commit != null) pre-commit.enabledPackages;
 }
