@@ -38,8 +38,8 @@
         expectationCheck =
           if expectKey == "status" then
             ''
-              fail("Expected HTTP status ${builtins.toString expectValue}, got " . (defined $status ? $status : "none"))
-                unless defined $status && $status == ${builtins.toString expectValue};
+              fail("Expected HTTP status ${toString expectValue}, got " . (defined $status ? $status : "none"))
+                unless defined $status && $status == ${toString expectValue};
             ''
           else if expectKey == "bodyEquals" then
             ''
@@ -85,20 +85,19 @@
         script = ''
           my $s = IO::Socket::INET->new(
             PeerHost => "${host}",
-            PeerPort => ${builtins.toString port},
-            Timeout => ${builtins.toString timeout},
+            PeerPort => ${toString port},
+            Timeout => ${toString timeout},
           ) or do {
             print "Failed to connect";
             exit 1;
           };
 
           print $s "GET ${path} HTTP/1.0\r\n";
-          print $s "Host: ${host}:${builtins.toString port}\r\n";
+          print $s "Host: ${host}:${toString port}\r\n";
           print $s "Connection: close\r\n";
           print $s "\r\n";
 
-          local $/ = undef;
-          my $resp = <$s>;
+          my $resp = do { local $/ = undef; <$s> };
           my ($headers, $body) = split /\r?\n\r?\n/, $resp, 2;
           $body = "" unless defined $body;
 
@@ -109,8 +108,8 @@
           }
 
           ${lib.optionalString (expectKey != "status" && expectedStatus != null) ''
-            fail("Expected HTTP status ${builtins.toString expectedStatus}, got " . (defined $status ? $status : "none"))
-              unless defined $status && $status == ${builtins.toString expectedStatus};
+            fail("Expected HTTP status ${toString expectedStatus}, got " . (defined $status ? $status : "none"))
+              unless defined $status && $status == ${toString expectedStatus};
           ''}
 
           ${expectationCheck}

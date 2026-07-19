@@ -34,7 +34,7 @@ let
 
   projectsFile = system.config.virtualisation.nirion.out.projectsFileStatic;
 in
-pkgs.runCommand "nirion-contract-lock-file" { } ''
+pkgs.runCommand "nirion-runtime-lock-file" { } ''
   export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
 
   for lock_file in ${digestOnlyLockFile} ${fullLockFile}; do
