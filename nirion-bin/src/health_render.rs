@@ -130,3 +130,101 @@ fn health_label(
         HealthLabelColor::Unknown => label.yellow().to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nirion_tui_lib::ansi::strip_ansi_codes;
+    use std::time::UNIX_EPOCH;
+
+    fn source() -> HealthLogSource {
+        HealthLogSource {
+            project: "project".to_string(),
+            service: "service".to_string(),
+            container_id: "abc".to_string(),
+            container_name: "container".to_string(),
+        }
+    }
+
+    fn entry(
+        exit_code: i64,
+        output: &str,
+    ) -> HealthLogEntry {
+        HealthLogEntry {
+            start: UNIX_EPOCH + Duration::from_secs(1_789_533_615),
+            end: UNIX_EPOCH + Duration::from_secs(1_789_533_616),
+            exit_code,
+            output: output.to_string(),
+        }
+    }
+
+    #[test]
+    fn format_duration_supports_milliseconds_seconds_and_fractional_seconds() {
+        assert_eq!(format_duration(Duration::from_millis(250)), "250ms");
+        assert_eq!(format_duration(Duration::from_secs(2)), "2s");
+        assert_eq!(format_duration(Duration::from_millis(1250)), "1.250s");
+    }
+
+    #[test]
+    fn format_healthcheck_time_formats_timestamp_and_duration() {
+        assert_eq!(
+            format_healthcheck_time(&entry(0, "OK\n")),
+            "2026-09-16 04:40:15 1s"
+        );
+    }
+
+    #[test]
+    fn healthcheck_duration_handles_reversed_times() {
+        let entry = HealthLogEntry {
+            start: UNIX_EPOCH + Duration::from_secs(2),
+            end: UNIX_EPOCH + Duration::from_secs(1),
+            exit_code: 1,
+            output: String::new(),
+        };
+
+        assert_eq!(healthcheck_duration(&entry), None);
+        assert_eq!(format_healthcheck_time(&entry), "1970-01-01 00:00:02 ?");
+    }
+
+    #[test]
+    fn health_label_formats_source_for_all_colors() {
+        for color in [
+            HealthLabelColor::Success,
+            HealthLabelColor::Failed,
+            HealthLabelColor::Unknown,
+        ] {
+            assert_eq!(
+                strip_ansi_codes(&health_label(&source(), color)),
+                "project.service"
+            );
+        }
+    }
+
+    #[test]
+    fn renderer_handles_log_records_and_empty_snapshots() {
+        let mut renderer = HealthRenderer::new();
+        let source = source();
+
+        renderer
+            .render(HealthLogEvent::LogEntry(HealthLogRecord {
+                source: source.clone(),
+                status: Some("healthy".to_string()),
+                entry: entry(0, "OK\n"),
+            }))
+            .unwrap();
+        renderer
+            .render(HealthLogEvent::LogEntry(HealthLogRecord {
+                source: source.clone(),
+                status: Some("unhealthy".to_string()),
+                entry: entry(1, "failed\nmore detail\n"),
+            }))
+            .unwrap();
+        renderer
+            .render(HealthLogEvent::NoEntries(HealthLogSnapshot {
+                source,
+                status: None,
+                entries: Vec::new(),
+            }))
+            .unwrap();
+    }
+}
