@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::Args;
 use nirion_lib::{
     context::NirionContext,
     docker::{query_project_status, Port, ServiceStatus},
@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use crate::{ClapSelector, TargetSelector};
 
 /// List running service containers
-#[derive(Parser, Debug, Clone)]
+#[derive(Args, Debug, Clone)]
 pub struct PsArgs {
     /// Target selector: *, project, or project.service
     #[arg(

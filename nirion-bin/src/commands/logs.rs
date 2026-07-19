@@ -1,4 +1,4 @@
-use clap::{Parser, ValueEnum};
+use clap::{Args, ValueEnum};
 use futures::StreamExt;
 use nirion_lib::{
     context::NirionContext,
@@ -25,7 +25,7 @@ pub enum LogEventsMode {
 }
 
 /// View output from service containers
-#[derive(Parser, Debug, Clone)]
+#[derive(Args, Debug, Clone)]
 pub struct LogsArgs {
     /// Target selector: *, project, or project.service
     #[arg(

@@ -1,10 +1,10 @@
-use clap::Parser;
+use clap::Args;
 use nirion_lib::context::NirionContext;
 
 use crate::{ClapSelector, TargetSelector};
 
 /// List projects or services
-#[derive(Parser, Debug, Clone)]
+#[derive(Args, Debug, Clone)]
 pub struct ListArgs {
     /// Target selector: *, project, or project.service
     #[arg(

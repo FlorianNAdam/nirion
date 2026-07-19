@@ -1,4 +1,4 @@
-use clap::{Parser, ValueHint};
+use clap::{Args, ValueHint};
 use nirion_lib::{
     context::NirionContext,
     exec::{exec, ExecRequest},
@@ -7,7 +7,7 @@ use nirion_lib::{
 use crate::{ClapSelector, ServiceSelector};
 
 /// Execute a command in a running service container
-#[derive(Parser, Debug, Clone)]
+#[derive(Args, Debug, Clone)]
 pub struct ExecArgs {
     /// Service selector: project.service
     #[arg(

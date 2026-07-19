@@ -409,9 +409,8 @@ fn inspect_image_raw_prints_docker_output() {
 
     let output = nirion_command(&project_file, &lock_file, &docker_script)
         .arg("inspect")
-        .arg("myapp.web")
-        .arg("--inspect-target")
         .arg("image")
+        .arg("myapp.web")
         .arg("--raw")
         .output()
         .unwrap();
@@ -445,9 +444,8 @@ fn inspect_project_target_prints_service_outputs() {
 
     let output = nirion_command(&project_file, &lock_file, &docker_script)
         .arg("inspect")
-        .arg("myapp")
-        .arg("--inspect-target")
         .arg("image")
+        .arg("myapp")
         .arg("--raw")
         .output()
         .unwrap();
@@ -481,9 +479,8 @@ fn inspect_all_target_prints_project_outputs() {
 
     let output = nirion_command(&project_file, &lock_file, &docker_script)
         .arg("inspect")
-        .arg("*")
-        .arg("--inspect-target")
         .arg("image")
+        .arg("*")
         .arg("--raw")
         .output()
         .unwrap();

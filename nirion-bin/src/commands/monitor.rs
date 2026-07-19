@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::Args;
 use futures::stream;
 use nirion_lib::{
     context::NirionContext, docker::status_stream, wait::WaitTarget,
@@ -9,7 +9,7 @@ use crate::progress::run_progress;
 use crate::progress_render::StatusProgressRenderer;
 use crate::{ClapSelector, TargetSelector};
 
-#[derive(Parser, Debug, Clone)]
+#[derive(Args, Debug, Clone)]
 pub struct MonitorArgs {
     /// Target selector: *, project, or project.service
     #[arg(

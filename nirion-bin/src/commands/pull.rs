@@ -1,12 +1,12 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::Args;
 
 use crate::docker::compose_target_cmd;
 use crate::{ClapSelector, TargetSelector};
 use nirion_lib::context::NirionContext;
 
 /// Pull service images
-#[derive(Parser, Debug, Clone)]
+#[derive(Args, Debug, Clone)]
 pub struct PullArgs {
     /// Target selector: *, project, or project.service
     #[arg(

@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::Args;
 use futures::StreamExt;
 use nirion_lib::{
     context::NirionContext,
@@ -12,7 +12,7 @@ use nirion_tui_lib::color::Colorize;
 use crate::ClapSelector;
 
 /// Create missing lock file entries
-#[derive(Parser, Debug, Clone)]
+#[derive(Args, Debug, Clone)]
 pub struct LockArgs {
     /// Target selector: *, project, or project.service
     #[arg(
