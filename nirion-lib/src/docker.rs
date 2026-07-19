@@ -688,8 +688,28 @@ exit {exit_code}
         }
     }
 
+    fn container_info(
+        state: &str,
+        health: Option<&str>,
+        exit_code: Option<i64>,
+    ) -> ContainerInfo {
+        ContainerInfo {
+            id: "1".into(),
+            name: "a".into(),
+            service: "s".into(),
+            image: "img".into(),
+            state: state.into(),
+            health: health.map(str::to_string),
+            exit_code,
+            running_for: None,
+            status: None,
+            ports: None,
+            networks: None,
+        }
+    }
+
     #[test]
-    fn parse_port_simple() {
+    fn parse_port_mapping_parses_unmapped_port() {
         let ports = parse_port_mapping("80/tcp").unwrap();
         assert_eq!(ports.len(), 1);
         assert_eq!(ports[0].port, 80);
@@ -698,7 +718,7 @@ exit {exit_code}
     }
 
     #[test]
-    fn parse_port_with_external() {
+    fn parse_port_mapping_parses_external_port() {
         let ports = parse_port_mapping("0.0.0.0:8080->80/tcp").unwrap();
         assert_eq!(ports.len(), 1);
         assert_eq!(ports[0].port, 80);
@@ -707,7 +727,7 @@ exit {exit_code}
     }
 
     #[test]
-    fn parse_port_range() {
+    fn parse_port_mapping_expands_matching_port_ranges() {
         let ports = parse_port_mapping("0.0.0.0:8080-8082->80-82/tcp").unwrap();
         assert_eq!(ports.len(), 3);
         assert_eq!(ports[0].port, 80);
@@ -719,17 +739,17 @@ exit {exit_code}
     }
 
     #[test]
-    fn parse_port_no_proto_fails() {
+    fn parse_port_mapping_rejects_missing_protocol() {
         assert!(parse_port_mapping("80").is_err());
     }
 
     #[test]
-    fn parse_port_descending_range_fails() {
+    fn parse_port_mapping_rejects_descending_range() {
         assert!(parse_port_mapping("82-80->82-80/tcp").is_err());
     }
 
     #[test]
-    fn parse_port_external_missing_arrow_fails() {
+    fn parse_port_mapping_rejects_external_port_without_arrow() {
         let err = parse_port_mapping("0.0.0.0:8080/tcp").unwrap_err();
         assert!(
             err.to_string()
@@ -738,7 +758,7 @@ exit {exit_code}
     }
 
     #[test]
-    fn parse_port_mismatched_ranges_fail() {
+    fn parse_port_mapping_rejects_mismatched_ranges() {
         let err = parse_port_mapping("0.0.0.0:8080-8081->80/tcp").unwrap_err();
         assert!(
             err.to_string()
@@ -747,36 +767,36 @@ exit {exit_code}
     }
 
     #[test]
-    fn parse_port_range_single() {
-        let r = super::parse_port_range("80").unwrap();
-        assert_eq!(r, vec![80]);
+    fn parse_port_range_parses_single_port() {
+        let ports = super::parse_port_range("80").unwrap();
+        assert_eq!(ports, vec![80]);
     }
 
     #[test]
-    fn parse_port_range_expanded() {
-        let r = super::parse_port_range("3-5").unwrap();
-        assert_eq!(r, vec![3, 4, 5]);
+    fn parse_port_range_expands_range() {
+        let ports = super::parse_port_range("3-5").unwrap();
+        assert_eq!(ports, vec![3, 4, 5]);
     }
 
     #[test]
-    fn parse_port_range_invalid() {
+    fn parse_port_range_rejects_invalid_port() {
         assert!(super::parse_port_range("abc").is_err());
     }
 
     #[test]
-    fn from_json_empty() {
+    fn project_status_from_json_treats_empty_output_as_empty_status() {
         let status = ProjectStatus::from_json("").unwrap();
         assert!(status.services.is_empty());
     }
 
     #[test]
-    fn from_json_empty_array() {
+    fn project_status_from_json_treats_empty_array_as_empty_status() {
         let status = ProjectStatus::from_json("[]").unwrap();
         assert!(status.services.is_empty());
     }
 
     #[test]
-    fn from_json_ndjson() {
+    fn project_status_from_json_parses_ndjson_output() {
         let json = r#"{"ID":"abc","Name":"web-1","Service":"web","Image":"nginx","State":"running","Health":"healthy","ExitCode":null,"RunningFor":"2 minutes","Status":null,"Ports":"0.0.0.0:8080->80/tcp","Networks":"bridge"}"#;
         let status = ProjectStatus::from_json(json).unwrap();
         assert_eq!(status.services.len(), 1);
@@ -787,7 +807,7 @@ exit {exit_code}
     }
 
     #[test]
-    fn from_json_array() {
+    fn project_status_from_json_parses_json_array_output() {
         let json = r#"[{"ID":"abc","Name":"web-1","Service":"web","Image":"nginx","State":"running","Health":null,"ExitCode":null,"RunningFor":"2 minutes","Status":null,"Ports":"","Networks":""}]"#;
         let status = ProjectStatus::from_json(json).unwrap();
         assert_eq!(status.services.len(), 1);
@@ -795,7 +815,7 @@ exit {exit_code}
     }
 
     #[test]
-    fn from_json_array_reports_parse_errors() {
+    fn project_status_from_json_reports_json_array_parse_errors() {
         let err = ProjectStatus::from_json("[").unwrap_err();
         assert!(
             err.to_string()
@@ -804,7 +824,7 @@ exit {exit_code}
     }
 
     #[test]
-    fn from_json_reports_port_parse_errors() {
+    fn project_status_from_json_reports_port_parse_errors() {
         let json = r#"{"ID":"abc","Name":"web-1","Service":"web","Image":"nginx","State":"running","Health":null,"ExitCode":null,"RunningFor":null,"Status":null,"Ports":"bad-port","Networks":""}"#;
         let err = ProjectStatus::from_json(json).unwrap_err();
         assert!(
@@ -814,7 +834,7 @@ exit {exit_code}
     }
 
     #[test]
-    fn from_json_multiple_ndjson() {
+    fn project_status_from_json_parses_multiple_ndjson_lines() {
         let json = "{\"ID\":\"1\",\"Name\":\"a\",\"Service\":\"web\",\"Image\":\"nginx\",\"State\":\"running\",\"Health\":\"healthy\",\"ExitCode\":null,\"RunningFor\":null,\"Status\":null,\"Ports\":\"\",\"Networks\":\"\"}\n{\"ID\":\"2\",\"Name\":\"b\",\"Service\":\"db\",\"Image\":\"postgres\",\"State\":\"exited\",\"Health\":null,\"ExitCode\":0,\"RunningFor\":null,\"Status\":null,\"Ports\":\"\",\"Networks\":\"\"}";
         let status = ProjectStatus::from_json(json).unwrap();
         assert_eq!(status.services.len(), 2);
@@ -823,168 +843,90 @@ exit {exit_code}
     }
 
     #[test]
-    fn from_state_running_healthy() {
-        let c = ContainerInfo {
-            id: "1".into(),
-            name: "a".into(),
-            service: "s".into(),
-            image: "img".into(),
-            state: "running".into(),
-            health: Some("healthy".into()),
-            exit_code: None,
-            running_for: None,
-            status: None,
-            ports: None,
-            networks: None,
-        };
-        assert_eq!(ServiceState::from_container(&c), ServiceState::Healthy);
+    fn service_state_from_container_treats_running_healthy_as_healthy() {
+        let container = container_info("running", Some("healthy"), None);
+        assert_eq!(
+            ServiceState::from_container(&container),
+            ServiceState::Healthy
+        );
     }
 
     #[test]
-    fn from_state_running_unhealthy() {
-        let c = ContainerInfo {
-            id: "1".into(),
-            name: "a".into(),
-            service: "s".into(),
-            image: "img".into(),
-            state: "running".into(),
-            health: Some("unhealthy".into()),
-            exit_code: None,
-            running_for: None,
-            status: None,
-            ports: None,
-            networks: None,
-        };
-        assert_eq!(ServiceState::from_container(&c), ServiceState::Unhealthy);
+    fn service_state_from_container_treats_running_unhealthy_as_unhealthy() {
+        let container = container_info("running", Some("unhealthy"), None);
+        assert_eq!(
+            ServiceState::from_container(&container),
+            ServiceState::Unhealthy
+        );
     }
 
     #[test]
-    fn from_state_running_no_health() {
-        let c = ContainerInfo {
-            id: "1".into(),
-            name: "a".into(),
-            service: "s".into(),
-            image: "img".into(),
-            state: "running".into(),
-            health: None,
-            exit_code: None,
-            running_for: None,
-            status: None,
-            ports: None,
-            networks: None,
-        };
-        assert_eq!(ServiceState::from_container(&c), ServiceState::Running);
+    fn service_state_from_container_treats_running_without_health_as_running() {
+        let container = container_info("running", None, None);
+        assert_eq!(
+            ServiceState::from_container(&container),
+            ServiceState::Running
+        );
     }
 
     #[test]
-    fn from_state_exited_success() {
-        let c = ContainerInfo {
-            id: "1".into(),
-            name: "a".into(),
-            service: "s".into(),
-            image: "img".into(),
-            state: "exited".into(),
-            health: None,
-            exit_code: Some(0),
-            running_for: None,
-            status: None,
-            ports: None,
-            networks: None,
-        };
-        assert_eq!(ServiceState::from_container(&c), ServiceState::Succeeded);
+    fn service_state_from_container_treats_zero_exit_as_succeeded() {
+        let container = container_info("exited", None, Some(0));
+        assert_eq!(
+            ServiceState::from_container(&container),
+            ServiceState::Succeeded
+        );
     }
 
     #[test]
-    fn from_state_exited_failure() {
-        let c = ContainerInfo {
-            id: "1".into(),
-            name: "a".into(),
-            service: "s".into(),
-            image: "img".into(),
-            state: "exited".into(),
-            health: None,
-            exit_code: Some(1),
-            running_for: None,
-            status: None,
-            ports: None,
-            networks: None,
-        };
-        assert_eq!(ServiceState::from_container(&c), ServiceState::Failed);
+    fn service_state_from_container_treats_nonzero_exit_as_failed() {
+        let container = container_info("exited", None, Some(1));
+        assert_eq!(
+            ServiceState::from_container(&container),
+            ServiceState::Failed
+        );
     }
 
     #[test]
-    fn from_state_exited_without_code_is_failure() {
-        let c = ContainerInfo {
-            id: "1".into(),
-            name: "a".into(),
-            service: "s".into(),
-            image: "img".into(),
-            state: "exited".into(),
-            health: None,
-            exit_code: None,
-            running_for: None,
-            status: None,
-            ports: None,
-            networks: None,
-        };
-        assert_eq!(ServiceState::from_container(&c), ServiceState::Failed);
+    fn service_state_from_container_treats_missing_exit_code_as_failed() {
+        let container = container_info("exited", None, None);
+        assert_eq!(
+            ServiceState::from_container(&container),
+            ServiceState::Failed
+        );
     }
 
     #[test]
-    fn from_state_paused_and_restarting() {
-        let mut c = ContainerInfo {
-            id: "1".into(),
-            name: "a".into(),
-            service: "s".into(),
-            image: "img".into(),
-            state: "paused".into(),
-            health: None,
-            exit_code: None,
-            running_for: None,
-            status: None,
-            ports: None,
-            networks: None,
-        };
-        assert_eq!(ServiceState::from_container(&c), ServiceState::Paused);
+    fn service_state_from_container_preserves_paused_and_restarting_states() {
+        let mut container = container_info("paused", None, None);
+        assert_eq!(
+            ServiceState::from_container(&container),
+            ServiceState::Paused
+        );
 
-        c.state = "restarting".into();
-        assert_eq!(ServiceState::from_container(&c), ServiceState::Restarting);
+        container.state = "restarting".into();
+        assert_eq!(
+            ServiceState::from_container(&container),
+            ServiceState::Restarting
+        );
     }
 
     #[test]
-    fn from_state_created() {
-        let c = ContainerInfo {
-            id: "1".into(),
-            name: "a".into(),
-            service: "s".into(),
-            image: "img".into(),
-            state: "created".into(),
-            health: None,
-            exit_code: None,
-            running_for: None,
-            status: None,
-            ports: None,
-            networks: None,
-        };
-        assert_eq!(ServiceState::from_container(&c), ServiceState::Created);
+    fn service_state_from_container_preserves_created_state() {
+        let container = container_info("created", None, None);
+        assert_eq!(
+            ServiceState::from_container(&container),
+            ServiceState::Created
+        );
     }
 
     #[test]
-    fn from_state_unknown() {
-        let c = ContainerInfo {
-            id: "1".into(),
-            name: "a".into(),
-            service: "s".into(),
-            image: "img".into(),
-            state: "garbage".into(),
-            health: None,
-            exit_code: None,
-            running_for: None,
-            status: None,
-            ports: None,
-            networks: None,
-        };
-        assert_eq!(ServiceState::from_container(&c), ServiceState::Unknown);
+    fn service_state_from_container_maps_unknown_state_to_unknown() {
+        let container = container_info("garbage", None, None);
+        assert_eq!(
+            ServiceState::from_container(&container),
+            ServiceState::Unknown
+        );
     }
 
     #[test]

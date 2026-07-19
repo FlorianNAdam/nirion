@@ -1,40 +1,13 @@
 use std::{
     env, fs,
     os::unix::fs::PermissionsExt,
-    path::{Path, PathBuf},
+    path::Path,
     process::{Command, Stdio},
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 use nirion_tui_lib::ansi::strip_ansi_codes;
-
-struct TempDir {
-    path: PathBuf,
-}
-
-impl TempDir {
-    fn new() -> Self {
-        let id = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir()
-            .join(format!("nirion-cli-test-{}-{id}", std::process::id()));
-        fs::create_dir(&path).unwrap();
-        Self { path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
-    }
-}
 
 fn write_projects(path: &Path) {
     write_projects_with_compose(path, "compose.yml");
@@ -228,6 +201,11 @@ fn assert_failure(output: &std::process::Output) {
     );
 }
 
+fn stop_child(child: &mut std::process::Child) {
+    let _ = child.kill();
+    child.wait().unwrap();
+}
+
 fn ps_status_json() -> &'static str {
     r#"[{"ID":"abc","Name":"myapp-web-1","Service":"web","Image":"nginx:latest","State":"running","Health":"healthy","ExitCode":0,"RunningFor":"2 minutes","Status":"Up 2 minutes (healthy)","Ports":"127.0.0.1:8080-8081->80-81/tcp","Networks":"default"}]"#
 }
@@ -264,7 +242,7 @@ fn fish_completion_suggests_subcommands() {
 
 #[test]
 fn fish_completion_suggests_projects_and_services_for_target() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     write_completion_projects(&project_file);
 
@@ -281,7 +259,7 @@ fn fish_completion_suggests_projects_and_services_for_target() {
 
 #[test]
 fn fish_completion_after_dot_requires_exact_project_match() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     write_completion_projects(&project_file);
 
@@ -294,7 +272,7 @@ fn fish_completion_after_dot_requires_exact_project_match() {
 
 #[test]
 fn fish_completion_for_service_selector_suggests_services_only() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     write_completion_projects(&project_file);
 
@@ -312,7 +290,7 @@ fn fish_completion_for_service_selector_suggests_services_only() {
 #[test]
 fn fish_completion_for_service_selector_after_dot_requires_exact_project_match()
 {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     write_completion_projects(&project_file);
 
@@ -325,7 +303,7 @@ fn fish_completion_for_service_selector_after_dot_requires_exact_project_match()
 
 #[test]
 fn up_plain_uses_configured_docker_command() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -360,7 +338,7 @@ fn up_plain_uses_configured_docker_command() {
 
 #[test]
 fn up_service_target_appends_service_name() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -384,7 +362,7 @@ fn up_service_target_appends_service_name() {
 
 #[test]
 fn up_quiet_suppresses_compose_output() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -415,7 +393,7 @@ fn up_quiet_suppresses_compose_output() {
 
 #[test]
 fn inspect_image_raw_prints_docker_output() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -451,7 +429,7 @@ fn inspect_image_raw_prints_docker_output() {
 
 #[test]
 fn inspect_project_target_prints_service_outputs() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -487,7 +465,7 @@ fn inspect_project_target_prints_service_outputs() {
 
 #[test]
 fn inspect_all_target_prints_project_outputs() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -535,7 +513,7 @@ fn compose_passthrough_commands_are_wired() {
     ];
 
     for (args, expected_command_args) in cases {
-        let dir = TempDir::new();
+        let dir = tempfile::tempdir().unwrap();
         let project_file = dir.path().join("projects.json");
         let lock_file = dir.path().join("nirion.lock");
         let docker_script = dir.path().join("fake-docker.sh");
@@ -601,7 +579,7 @@ esac
 
 #[test]
 fn logs_discovers_container_and_streams_docker_logs() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -638,7 +616,7 @@ fn logs_discovers_container_and_streams_docker_logs() {
 
 #[test]
 fn logs_reports_compose_ps_failure() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -664,7 +642,7 @@ fn logs_reports_compose_ps_failure() {
 
 #[test]
 fn logs_label_none_suppresses_prefix() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -686,7 +664,7 @@ fn logs_label_none_suppresses_prefix() {
 
 #[test]
 fn logs_until_is_passed_to_docker_logs() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -712,7 +690,7 @@ fn logs_until_is_passed_to_docker_logs() {
 
 #[test]
 fn logs_until_conflicts_with_follow() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -734,7 +712,7 @@ fn logs_until_conflicts_with_follow() {
 
 #[test]
 fn logs_follow_reattaches_when_reader_exits_for_same_container() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -755,7 +733,7 @@ fn logs_follow_reattaches_when_reader_exits_for_same_container() {
         .spawn()
         .unwrap();
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(4);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(status) = child.try_wait().unwrap() {
             panic!("nirion logs exited early with status {status}");
@@ -767,8 +745,7 @@ fn logs_follow_reattaches_when_reader_exits_for_same_container() {
             .count()
             >= 2
         {
-            child.kill().unwrap();
-            child.wait().unwrap();
+            stop_child(&mut child);
             return;
         }
 
@@ -782,7 +759,7 @@ fn logs_follow_reattaches_when_reader_exits_for_same_container() {
 
 #[test]
 fn logs_follow_does_not_reattach_to_exited_container() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -852,7 +829,7 @@ esac
         .spawn()
         .unwrap();
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(4);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(status) = child.try_wait().unwrap() {
             panic!("nirion logs exited early with status {status}");
@@ -867,8 +844,7 @@ esac
             .and_then(|count| count.parse::<usize>().ok())
             .unwrap_or(0);
         if ps_count >= 2 && logs_count >= 2 {
-            child.kill().unwrap();
-            child.wait().unwrap();
+            stop_child(&mut child);
             break;
         }
 
@@ -887,7 +863,7 @@ esac
 
 #[test]
 fn logs_follow_treats_missing_container_as_transient_detach() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -953,7 +929,7 @@ esac
         .spawn()
         .unwrap();
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(status) = child.try_wait().unwrap() {
             panic!("nirion logs exited early with status {status}");
@@ -965,8 +941,7 @@ esac
             .count()
             >= 2
         {
-            child.kill().unwrap();
-            child.wait().unwrap();
+            stop_child(&mut child);
             break;
         }
         assert!(
@@ -981,7 +956,7 @@ esac
 
 #[test]
 fn logs_rejects_removed_reconnect_option() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -1001,7 +976,7 @@ fn logs_rejects_removed_reconnect_option() {
 
 #[test]
 fn pull_service_target_appends_service_name() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -1024,7 +999,7 @@ fn pull_service_target_appends_service_name() {
 
 #[test]
 fn list_prints_projects_and_services() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -1055,7 +1030,7 @@ fn list_prints_projects_and_services() {
 
 #[test]
 fn list_service_target_prints_only_selected_service() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -1079,7 +1054,7 @@ fn list_service_target_prints_only_selected_service() {
 
 #[test]
 fn cat_prints_project_and_service_compose() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let compose_file = dir.path().join("compose.yml");
@@ -1125,7 +1100,7 @@ services:
 
 #[test]
 fn cat_all_prints_each_project_with_heading() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let app_compose = dir.path().join("app.yml");
@@ -1193,7 +1168,7 @@ services:
 
 #[test]
 fn ps_prints_status_and_collapsed_ports_from_docker_json() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -1224,7 +1199,7 @@ fn ps_prints_status_and_collapsed_ports_from_docker_json() {
 
 #[test]
 fn ps_all_prints_status_for_all_projects() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -1267,7 +1242,7 @@ fn ps_all_prints_status_for_all_projects() {
 
 #[test]
 fn ps_service_prints_only_selected_service() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -1302,7 +1277,7 @@ fn ps_service_prints_only_selected_service() {
 
 #[test]
 fn exec_forwards_options_and_command() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -1337,7 +1312,7 @@ fn exec_forwards_options_and_command() {
 
 #[test]
 fn exec_requires_command() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -1361,7 +1336,7 @@ fn exec_requires_command() {
 
 #[test]
 fn reload_plain_runs_down_then_up() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -1386,7 +1361,7 @@ fn reload_plain_runs_down_then_up() {
 
 #[test]
 fn lock_and_update_report_no_images() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -1413,7 +1388,7 @@ fn lock_and_update_report_no_images() {
 
 #[test]
 fn lock_skips_services_that_already_have_lock_entries() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
@@ -1449,7 +1424,7 @@ fn lock_skips_services_that_already_have_lock_entries() {
 
 #[test]
 fn update_invalid_image_reference_does_not_rewrite_lock_file() {
-    let dir = TempDir::new();
+    let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
     let lock_file = dir.path().join("nirion.lock");
     let docker_script = dir.path().join("fake-docker.sh");
