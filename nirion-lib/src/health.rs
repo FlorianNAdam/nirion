@@ -919,6 +919,43 @@ fi
         .unwrap()
     }
 
+    fn health_entry(output: &str) -> HealthLogEntry {
+        HealthLogEntry {
+            start: parse_docker_timestamp("2026-07-19T10:00:00Z").unwrap(),
+            end: parse_docker_timestamp("2026-07-19T10:00:01Z").unwrap(),
+            exit_code: 0,
+            output: output.to_string(),
+        }
+    }
+
+    fn health_snapshot_result(
+        snapshots: Vec<HealthLogSnapshot>,
+        failures: Vec<String>,
+    ) -> HealthLogSnapshotResult {
+        HealthLogSnapshotResult {
+            current_sources: snapshots
+                .iter()
+                .map(|snapshot| snapshot.source.key())
+                .collect(),
+            snapshots,
+            failures,
+        }
+    }
+
+    fn health_source(container_id: &str) -> HealthLogSource {
+        HealthLogSource::new("myapp", "web", container_id, "myapp-web-1")
+    }
+
+    async fn assert_no_health_event(
+        rx: &mut mpsc::UnboundedReceiver<anyhow::Result<HealthLogEvent>>
+    ) {
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), rx.next())
+                .await
+                .is_err()
+        );
+    }
+
     #[tokio::test]
     async fn health_logs_reads_docker_health_log_for_service_target() {
         let dir = tempfile::tempdir().unwrap();
@@ -1057,6 +1094,108 @@ fi
             second,
             HealthLogEvent::LogEntry(HealthLogRecord { entry, .. })
                 if entry.output == "second\n"
+        ));
+    }
+
+    #[tokio::test]
+    async fn follow_coordinator_dedupes_failures_per_project() {
+        let (tx, mut rx) = mpsc::unbounded();
+        let mut coordinator = FollowHealthLogCoordinator::new(
+            context(DockerCommand::new("docker")),
+            TargetSelector::All,
+            HealthLogStreamOptions {
+                follow: true,
+                refresh_interval: Duration::from_millis(10),
+            },
+            tx,
+        );
+
+        assert!(coordinator.emit_snapshot_result(
+            "myapp",
+            health_snapshot_result(
+                Vec::new(),
+                vec!["myapp.web: inspect failed".to_string()],
+            ),
+        ));
+        let first = rx.next().await.unwrap().unwrap_err();
+        assert!(first.to_string().contains("myapp.web"));
+
+        assert!(coordinator.emit_snapshot_result(
+            "other",
+            health_snapshot_result(Vec::new(), Vec::new()),
+        ));
+        assert!(coordinator.emit_snapshot_result(
+            "myapp",
+            health_snapshot_result(
+                Vec::new(),
+                vec!["myapp.web: inspect failed".to_string()],
+            ),
+        ));
+
+        assert_no_health_event(&mut rx).await;
+    }
+
+    #[tokio::test]
+    async fn follow_coordinator_resets_progress_when_container_changes() {
+        let (tx, mut rx) = mpsc::unbounded();
+        let mut coordinator = FollowHealthLogCoordinator::new(
+            context(DockerCommand::new("docker")),
+            TargetSelector::All,
+            HealthLogStreamOptions {
+                follow: true,
+                refresh_interval: Duration::from_millis(10),
+            },
+            tx,
+        );
+        let entry = health_entry("OK\n");
+
+        assert!(coordinator.emit_snapshot_result(
+            "myapp",
+            health_snapshot_result(
+                vec![HealthLogSnapshot {
+                    source: health_source("abc"),
+                    status: Some("healthy".to_string()),
+                    entries: vec![entry.clone()],
+                }],
+                Vec::new(),
+            ),
+        ));
+        let first = rx.next().await.unwrap().unwrap();
+        assert!(matches!(
+            first,
+            HealthLogEvent::LogEntry(HealthLogRecord { entry, .. })
+                if entry.output == "OK\n"
+        ));
+
+        assert!(coordinator.emit_snapshot_result(
+            "myapp",
+            health_snapshot_result(
+                vec![HealthLogSnapshot {
+                    source: health_source("abc"),
+                    status: Some("healthy".to_string()),
+                    entries: vec![entry.clone()],
+                }],
+                Vec::new(),
+            ),
+        ));
+        assert_no_health_event(&mut rx).await;
+
+        assert!(coordinator.emit_snapshot_result(
+            "myapp",
+            health_snapshot_result(
+                vec![HealthLogSnapshot {
+                    source: health_source("def"),
+                    status: Some("healthy".to_string()),
+                    entries: vec![entry],
+                }],
+                Vec::new(),
+            ),
+        ));
+        let after_replacement = rx.next().await.unwrap().unwrap();
+        assert!(matches!(
+            after_replacement,
+            HealthLogEvent::LogEntry(HealthLogRecord { entry, .. })
+                if entry.output == "OK\n"
         ));
     }
 
