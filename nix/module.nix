@@ -222,6 +222,7 @@ in
             dockerCompose = composeFile;
             services = lib.mapAttrs (serviceName: renderedService: {
               image = project.services.${serviceName}.image or null;
+              resolvedImage = renderedService.image or null;
               healthcheck = renderedService ? healthcheck;
               restart = renderedService.restart or null;
             }) compose.services;

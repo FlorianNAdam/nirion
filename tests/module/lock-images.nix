@@ -68,7 +68,19 @@ in
     message = "project metadata should not report an image for lockedImage-only services";
   }
   {
+    assertion =
+      cfg.out.projects.app.services.db.resolvedImage
+      == "postgres:16-alpine@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    message = "project metadata should report resolved images for lockedImage-only services";
+  }
+  {
     assertion = cfg.out.projects.app.services.web.image == "nginx:1.27";
     message = "project metadata should keep the configured mutable image reference";
+  }
+  {
+    assertion =
+      cfg.out.projects.app.services.web.resolvedImage
+      == "nginx:1.27@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    message = "project metadata should include the evaluated resolved image reference";
   }
 ]

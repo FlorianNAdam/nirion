@@ -122,6 +122,8 @@ pub struct Project {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Service {
     pub image: Option<String>,
+    #[serde(rename = "resolvedImage")]
+    pub resolved_image: Option<String>,
     #[serde(default)]
     pub healthcheck: bool,
     pub restart: Option<String>,
@@ -253,6 +255,7 @@ mod tests {
                         "web".into(),
                         Service {
                             image: Some("nginx:latest".into()),
+                            resolved_image: None,
                             healthcheck: true,
                             restart: None,
                         },
@@ -261,6 +264,7 @@ mod tests {
                         "db".into(),
                         Service {
                             image: Some("postgres:16".into()),
+                            resolved_image: None,
                             healthcheck: false,
                             restart: None,
                         },
@@ -278,6 +282,7 @@ mod tests {
                     "server".into(),
                     Service {
                         image: Some("node:20".into()),
+                        resolved_image: None,
                         healthcheck: true,
                         restart: Some("always".into()),
                     },
@@ -409,6 +414,7 @@ mod tests {
                 "worker".into(),
                 Service {
                     image: None,
+                    resolved_image: None,
                     healthcheck: false,
                     restart: None,
                 },

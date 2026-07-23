@@ -94,18 +94,12 @@ pub async fn inspect_image(
             anyhow::anyhow!("Service {} missing from project", &target.service)
         })?;
 
-    let base_image = service.image.as_ref().ok_or_else(|| {
-        anyhow::anyhow!("Image missing from service {}", &target.service)
-    })?;
-
-    let identifier = format!("{}.{}", target.project, target.service);
-
-    let image_name =
-        if let Some(digest) = context.locked_images.get(&identifier) {
-            format!("{}@{}", base_image, digest.digest)
-        } else {
-            base_image.to_string()
-        };
+    let image_name = service
+        .resolved_image
+        .clone()
+        .ok_or_else(|| {
+            anyhow::anyhow!("Image missing from service {}", &target.service)
+        })?;
 
     let output = context
         .docker_command
@@ -221,11 +215,13 @@ mod tests {
                 "services": {
                     "web": {
                         "image": "nginx:latest",
+                        "resolvedImage": "nginx:latest@sha256:evaluated-generation",
                         "healthcheck": false,
                         "restart": null
                     },
                     "worker": {
                         "image": null,
+                        "resolvedImage": null,
                         "healthcheck": false,
                         "restart": null
                     }
@@ -410,7 +406,7 @@ exit {inspect_exit_code}
     }
 
     #[tokio::test]
-    async fn inspect_image_uses_base_image_without_lock_entry() {
+    async fn inspect_image_uses_resolved_image() {
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(
@@ -437,12 +433,46 @@ exit {inspect_exit_code}
         assert_json_eq(&output, serde_json::json!({ "Id": "image-id" }));
         assert_eq!(
             fs::read_to_string(args_file).unwrap(),
-            "image\ninspect\n--format\n{{json .}}\nnginx:latest\n"
+            "image\ninspect\n--format\n{{json .}}\nnginx:latest@sha256:evaluated-generation\n"
         );
     }
 
     #[tokio::test]
-    async fn inspect_image_uses_locked_digest_and_pretty_prints_json() {
+    async fn inspect_image_pretty_prints_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker(
+            dir.path(),
+            &args_file,
+            r#"{"RepoTags":["nginx:latest"]}"#,
+            "",
+            0,
+        );
+        let output = inspect_image(
+            &context(
+                fake_docker_command(&docker),
+                projects(),
+                LockedImages::default(),
+            ),
+            &target("web"),
+            "{{json .}}",
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_json_eq(
+            &output,
+            serde_json::json!({ "RepoTags": ["nginx:latest"] }),
+        );
+        assert_eq!(
+            fs::read_to_string(args_file).unwrap(),
+            "image\ninspect\n--format\n{{json .}}\nnginx:latest@sha256:evaluated-generation\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn inspect_image_prefers_resolved_image_over_lock_file() {
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(
@@ -457,13 +487,28 @@ exit {inspect_exit_code}
             "myapp.web".into(),
             VersionedImage {
                 image: "nginx:latest".into(),
-                version: Some("1.27.0".into()),
-                digest: "sha256:abc".into(),
+                version: Some("1.28.0".into()),
+                digest: "sha256:current-lock".into(),
             },
         );
+        let projects: Projects = serde_json::from_value(serde_json::json!({
+            "myapp": {
+                "name": "myapp",
+                "dockerCompose": "compose.yml",
+                "services": {
+                    "web": {
+                        "image": "nginx:latest",
+                        "resolvedImage": "nginx:latest@sha256:evaluated-generation",
+                        "healthcheck": false,
+                        "restart": null
+                    }
+                }
+            }
+        }))
+        .unwrap();
 
         let output = inspect_image(
-            &context(fake_docker_command(&docker), projects(), locked_images),
+            &context(fake_docker_command(&docker), projects, locked_images),
             &target("web"),
             "{{json .}}",
             false,
@@ -477,7 +522,7 @@ exit {inspect_exit_code}
         );
         assert_eq!(
             fs::read_to_string(args_file).unwrap(),
-            "image\ninspect\n--format\n{{json .}}\nnginx:latest@sha256:abc\n"
+            "image\ninspect\n--format\n{{json .}}\nnginx:latest@sha256:evaluated-generation\n"
         );
     }
 
@@ -665,6 +710,7 @@ exit {inspect_exit_code}
                 "services": {
                     "web": {
                         "image": "nginx:latest",
+                        "resolvedImage": "nginx:latest@sha256:evaluated-generation",
                         "healthcheck": false,
                         "restart": null
                     }
