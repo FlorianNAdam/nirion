@@ -31,7 +31,7 @@ impl ComposeConcurrency {
     }
 }
 
-pub fn compose_target(
+pub fn compose_stream(
     context: NirionContext,
     target: TargetSelector,
     args: Vec<String>,
@@ -40,12 +40,12 @@ pub fn compose_target(
     let jobs = concurrency.jobs();
 
     match target {
-        TargetSelector::All => compose_target_all(context, args, jobs),
-        target => compose_target_single(context, target, args),
+        TargetSelector::All => compose_stream_all(context, args, jobs),
+        target => compose_stream_single(context, target, args),
     }
 }
 
-fn compose_target_single(
+fn compose_stream_single(
     context: NirionContext,
     target: TargetSelector,
     args: Vec<String>,
@@ -55,7 +55,7 @@ fn compose_target_single(
     tokio::spawn(async move {
         match target {
             TargetSelector::All => {
-                unreachable!("all targets use compose_target_all")
+                unreachable!("all targets use compose_stream_all")
             }
             TargetSelector::Project(proj) => {
                 let project = context.projects[&proj.name].clone();
@@ -124,7 +124,7 @@ fn compose_target_single(
     rx.boxed()
 }
 
-fn compose_target_all(
+fn compose_stream_all(
     context: NirionContext,
     args: Vec<String>,
     jobs: usize,
@@ -200,23 +200,12 @@ fn compose_target_all(
     rx.boxed()
 }
 
-pub fn compose_cmd(
+fn compose_cmd(
     context: NirionContext,
     compose_file: String,
     project_name: ProjectName,
     args: Vec<String>,
 ) -> BoxStream<'static, anyhow::Result<ProcessEvent>> {
-    run_docker_compose(
-        context,
-        build_compose_args(compose_file, project_name, args),
-    )
-}
-
-fn build_compose_args(
-    compose_file: String,
-    project_name: ProjectName,
-    args: Vec<String>,
-) -> Vec<String> {
     let mut cmd_args = vec![
         "--file".to_string(),
         compose_file,
@@ -225,10 +214,10 @@ fn build_compose_args(
     ];
     cmd_args.extend(args);
 
-    cmd_args
+    run_docker_compose(context, cmd_args)
 }
 
-pub fn run_docker_compose(
+fn run_docker_compose(
     context: NirionContext,
     cmd_args: Vec<String>,
 ) -> BoxStream<'static, anyhow::Result<ProcessEvent>> {
@@ -464,41 +453,6 @@ exit 0
         stream.collect::<Vec<_>>().await
     }
 
-    #[test]
-    fn build_compose_args_adds_file_and_project_name() {
-        let args = build_compose_args(
-            "compose.yml".into(),
-            ProjectName("myapp".into()),
-            vec!["up".into(), "-d".into()],
-        );
-
-        assert_eq!(
-            args,
-            vec![
-                "--file",
-                "compose.yml",
-                "--project-name",
-                "myapp",
-                "up",
-                "-d"
-            ]
-        );
-    }
-
-    #[test]
-    fn build_compose_args_keeps_empty_passthrough_args_empty() {
-        let args = build_compose_args(
-            "compose.json".into(),
-            ProjectName("api".into()),
-            Vec::new(),
-        );
-
-        assert_eq!(
-            args,
-            vec!["--file", "compose.json", "--project-name", "api"]
-        );
-    }
-
     #[tokio::test]
     async fn run_docker_compose_streams_output_and_exit_status() {
         let dir = tempfile::tempdir().unwrap();
@@ -596,12 +550,12 @@ exit 0
     }
 
     #[tokio::test]
-    async fn compose_target_project_wraps_process_events() {
+    async fn compose_stream_project_wraps_process_events() {
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
 
-        let events = collect_compose_events(compose_target(
+        let events = collect_compose_events(compose_stream(
             context(fake_docker_command(&docker)),
             TargetSelector::Project(crate::projects::ProjectSelector {
                 name: "api".into(),
@@ -626,12 +580,12 @@ exit 0
     }
 
     #[tokio::test]
-    async fn compose_target_service_appends_service_name() {
+    async fn compose_stream_service_appends_service_name() {
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
 
-        let events = collect_compose_events(compose_target(
+        let events = collect_compose_events(compose_stream(
             context(fake_docker_command(&docker)),
             TargetSelector::Service(crate::projects::ServiceSelector {
                 project: "api".into(),
@@ -650,12 +604,12 @@ exit 0
     }
 
     #[tokio::test]
-    async fn compose_target_service_reports_failure() {
+    async fn compose_stream_service_reports_failure() {
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 9);
 
-        let events = collect_compose_events(compose_target(
+        let events = collect_compose_events(compose_stream(
             context(fake_docker_command(&docker)),
             TargetSelector::Service(crate::projects::ServiceSelector {
                 project: "api".into(),
@@ -677,12 +631,12 @@ exit 0
     }
 
     #[tokio::test]
-    async fn compose_target_all_emits_project_boundaries() {
+    async fn compose_stream_all_emits_project_boundaries() {
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
 
-        let events = collect_compose_events(compose_target(
+        let events = collect_compose_events(compose_stream(
             context(fake_docker_command(&docker)),
             TargetSelector::All,
             vec!["pull".into()],
@@ -702,12 +656,12 @@ exit 0
     }
 
     #[tokio::test]
-    async fn compose_target_parallel_all_emits_project_boundaries() {
+    async fn compose_stream_parallel_all_emits_project_boundaries() {
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
 
-        let events = collect_compose_events(compose_target(
+        let events = collect_compose_events(compose_stream(
             context(fake_docker_command(&docker)),
             TargetSelector::All,
             vec!["pull".into()],
@@ -727,12 +681,12 @@ exit 0
     }
 
     #[tokio::test]
-    async fn compose_target_all_sequential_finishes_each_project_before_next() {
+    async fn compose_stream_all_sequential_finishes_each_project_before_next() {
         let dir = tempfile::tempdir().unwrap();
         let log_file = dir.path().join("timing-log");
         let docker = write_timed_fake_docker(dir.path(), &log_file);
 
-        let events = collect_compose_events(compose_target(
+        let events = collect_compose_events(compose_stream(
             context(fake_docker_command(&docker)),
             TargetSelector::All,
             vec!["up".into()],
@@ -748,12 +702,12 @@ exit 0
     }
 
     #[tokio::test]
-    async fn compose_target_all_parallel_starts_projects_before_finishing() {
+    async fn compose_stream_all_parallel_starts_projects_before_finishing() {
         let dir = tempfile::tempdir().unwrap();
         let log_file = dir.path().join("timing-log");
         let docker = write_timed_fake_docker(dir.path(), &log_file);
 
-        let events = collect_compose_events(compose_target(
+        let events = collect_compose_events(compose_stream(
             context(fake_docker_command(&docker)),
             TargetSelector::All,
             vec!["up".into()],
@@ -773,12 +727,12 @@ exit 0
     }
 
     #[tokio::test]
-    async fn compose_target_project_reports_failure() {
+    async fn compose_stream_project_reports_failure() {
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 2);
 
-        let events = collect_compose_events(compose_target(
+        let events = collect_compose_events(compose_stream(
             context(fake_docker_command(&docker)),
             TargetSelector::Project(crate::projects::ProjectSelector {
                 name: "api".into(),
@@ -799,12 +753,12 @@ exit 0
     }
 
     #[tokio::test]
-    async fn compose_target_all_collects_failures_and_continues() {
+    async fn compose_stream_all_collects_failures_and_continues() {
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 5);
 
-        let events = collect_compose_events(compose_target(
+        let events = collect_compose_events(compose_stream(
             context(fake_docker_command(&docker)),
             TargetSelector::All,
             vec!["up".into()],
@@ -830,12 +784,12 @@ exit 0
     }
 
     #[tokio::test]
-    async fn compose_target_parallel_all_collects_failures() {
+    async fn compose_stream_parallel_all_collects_failures() {
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 5);
 
-        let events = collect_compose_events(compose_target(
+        let events = collect_compose_events(compose_stream(
             context(fake_docker_command(&docker)),
             TargetSelector::All,
             vec!["up".into()],

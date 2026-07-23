@@ -1,6 +1,6 @@
 use futures::StreamExt;
 use nirion_lib::{
-    compose::{ComposeConcurrency, compose_target},
+    compose::{ComposeConcurrency, compose_stream},
     context::NirionContext,
     events::{ComposeEvent, ProcessEvent},
     projects::TargetSelector,
@@ -12,7 +12,7 @@ pub async fn compose_target_cmd(
     target: &TargetSelector,
     args: &[&str],
 ) -> anyhow::Result<()> {
-    let mut stream = compose_target(
+    let mut stream = compose_stream(
         context.clone(),
         target.clone(),
         args.iter()

@@ -6,7 +6,7 @@ use nirion_lib::{
     context::NirionContext,
     events::LockUpdateEvent,
     lock::{DiffEntry, LockedImages},
-    lock_update::update_images,
+    lock_update::image_update_stream,
     projects::{get_images, TargetSelector},
 };
 use nirion_tui_lib::color::Colorize;
@@ -36,7 +36,7 @@ pub async fn handle_lock(
     let mut images = get_images(&args.target, &context.projects);
     retain_images_missing_lock_entries(&mut images, &context.locked_images);
 
-    let mut events = update_images(context, images, args.jobs);
+    let mut events = image_update_stream(context, images, args.jobs);
 
     while let Some(event) = events.next().await {
         println!("{}", format_lock_update_event(event?));

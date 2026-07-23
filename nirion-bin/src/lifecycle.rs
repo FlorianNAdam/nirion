@@ -1,6 +1,6 @@
 use futures::{StreamExt, stream};
 use nirion_lib::{
-    compose::{ComposeConcurrency, compose_target},
+    compose::{ComposeConcurrency, compose_stream},
     context::NirionContext,
     docker::status_stream,
     wait::{WaitTarget, wait_finished},
@@ -30,7 +30,7 @@ pub async fn run_lifecycle_command(
         .iter()
         .map(|arg| arg.to_string())
         .collect::<Vec<_>>();
-    let compose_stream = compose_target(
+    let compose_events = compose_stream(
         context.clone(),
         target.clone(),
         args,
@@ -56,7 +56,7 @@ pub async fn run_lifecycle_command(
     match run_progress(
         context,
         target,
-        compose_stream,
+        compose_events,
         status_events,
         renderer,
         options.wait,

@@ -67,4 +67,5 @@ pub async fn handle_exec(
             cmd: args.cmd.clone(),
         },
     )
+    .await
 }
