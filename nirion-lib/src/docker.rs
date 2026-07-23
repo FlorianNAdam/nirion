@@ -47,12 +47,6 @@ impl DockerCommand {
         command.args(&self.args);
         command
     }
-
-    pub fn std_command(&self) -> std::process::Command {
-        let mut command = std::process::Command::new(&self.program);
-        command.args(&self.args);
-        command
-    }
 }
 
 impl Default for DockerCommand {

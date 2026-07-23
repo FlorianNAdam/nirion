@@ -2,7 +2,7 @@ use clap::Args;
 use futures::StreamExt;
 use nirion_lib::{
     context::NirionContext,
-    lock_update::update_images,
+    lock_update::image_update_stream,
     projects::{get_images, TargetSelector},
 };
 
@@ -29,7 +29,7 @@ pub async fn handle_update(
     context: &NirionContext,
 ) -> anyhow::Result<()> {
     let images = get_images(&args.target, &context.projects);
-    let mut events = update_images(context, images, args.jobs);
+    let mut events = image_update_stream(context, images, args.jobs);
 
     while let Some(event) = events.next().await {
         println!("{}", format_lock_update_event(event?));

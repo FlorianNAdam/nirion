@@ -14,7 +14,7 @@ use crate::{
     lock::{LockedImages, VersionedImage},
 };
 
-pub fn update_images(
+pub fn image_update_stream(
     context: &NirionContext,
     images: BTreeMap<String, String>,
     jobs: usize,
@@ -25,7 +25,7 @@ pub fn update_images(
     let (event_tx, event_rx) = mpsc::unbounded();
 
     tokio::spawn(async move {
-        if let Err(error) = update_images_inner(
+        if let Err(error) = image_update_stream_inner(
             client,
             locked_images,
             lock_file,
@@ -42,7 +42,7 @@ pub fn update_images(
     event_rx.boxed()
 }
 
-async fn update_images_inner(
+async fn image_update_stream_inner(
     client: Arc<NirionOciClient>,
     locked_images: LockedImages,
     lock_file: std::path::PathBuf,
@@ -233,7 +233,7 @@ mod tests {
     {
         let dir = tempfile::tempdir()?;
         let lock_file = dir.path().join("nirion.lock");
-        let mut events = update_images(
+        let mut events = image_update_stream(
             &context(
                 NirionOciClient::builder().build(),
                 LockedImages::default(),
@@ -265,7 +265,7 @@ mod tests {
             .await?;
         let dir = tempfile::tempdir()?;
         let lock_file = dir.path().join("nirion.lock");
-        let events = collect_events(update_images(
+        let events = collect_events(image_update_stream(
             &context(
                 http_nirion_client().build(),
                 LockedImages::default(),
@@ -309,7 +309,7 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let lock_file = dir.path().join("nirion.lock");
 
-        collect_events(update_images(
+        collect_events(image_update_stream(
             &context(
                 http_nirion_client().build(),
                 LockedImages::default(),
@@ -348,7 +348,7 @@ mod tests {
             ),
         );
 
-        let events = collect_events(update_images(
+        let events = collect_events(image_update_stream(
             &context(
                 http_nirion_client().build(),
                 locked_images,
@@ -395,7 +395,7 @@ mod tests {
             ),
         );
 
-        let events = collect_events(update_images(
+        let events = collect_events(image_update_stream(
             &context(
                 http_nirion_client().build(),
                 locked_images,
@@ -447,7 +447,7 @@ mod tests {
             ),
         );
 
-        let events = collect_events(update_images(
+        let events = collect_events(image_update_stream(
             &context(
                 http_nirion_client().build(),
                 locked_images,
@@ -475,7 +475,7 @@ mod tests {
     async fn invalid_image_reference_returns_error() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
         let lock_file = dir.path().join("nirion.lock");
-        let result = collect_events(update_images(
+        let result = collect_events(image_update_stream(
             &context(
                 http_nirion_client().build(),
                 LockedImages::default(),

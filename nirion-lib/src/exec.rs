@@ -20,7 +20,7 @@ pub struct ExecRequest {
     pub cmd: Vec<String>,
 }
 
-pub fn exec(
+pub async fn exec(
     context: &NirionContext,
     request: &ExecRequest,
 ) -> anyhow::Result<()> {
@@ -30,10 +30,11 @@ pub fn exec(
 
     let status = context
         .docker_command
-        .std_command()
+        .command()
         .arg("compose")
         .args(&cmd_args)
         .status()
+        .await
         .context("failed to execute docker compose exec")?;
 
     if !status.success() {
@@ -266,8 +267,8 @@ exit {exit_code}
         );
     }
 
-    #[test]
-    fn exec_runs_docker_compose_exec() {
+    #[tokio::test]
+    async fn exec_runs_docker_compose_exec() {
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 0);
@@ -276,6 +277,7 @@ exit {exit_code}
             &context(fake_docker_command(&docker)),
             &request(vec!["true"]),
         )
+        .await
         .unwrap();
 
         assert_eq!(
@@ -284,8 +286,8 @@ exit {exit_code}
         );
     }
 
-    #[test]
-    fn exec_reports_failed_status() {
+    #[tokio::test]
+    async fn exec_reports_failed_status() {
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
         let docker = write_fake_docker(dir.path(), &args_file, 7);
@@ -294,6 +296,7 @@ exit {exit_code}
             &context(fake_docker_command(&docker)),
             &request(vec!["false"]),
         )
+        .await
         .unwrap_err();
 
         assert!(
@@ -302,8 +305,8 @@ exit {exit_code}
         );
     }
 
-    #[test]
-    fn exec_reports_spawn_failure() {
+    #[tokio::test]
+    async fn exec_reports_spawn_failure() {
         let dir = tempfile::tempdir().unwrap();
         let missing_docker = dir.path().join("missing-docker");
 
@@ -311,6 +314,7 @@ exit {exit_code}
             &context(DockerCommand::new(missing_docker)),
             &request(vec!["true"]),
         )
+        .await
         .unwrap_err();
 
         assert!(
