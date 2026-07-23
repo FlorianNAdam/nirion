@@ -29,13 +29,11 @@ pub async fn handle_update(
     context: &NirionContext,
 ) -> anyhow::Result<()> {
     let images = get_images(&args.target, &context.projects);
-    let mut operation = update_images(context, images, args.jobs);
+    let mut events = update_images(context, images, args.jobs);
 
-    while let Some(event) = operation.events.next().await {
+    while let Some(event) = events.next().await {
         println!("{}", format_lock_update_event(event?));
     }
-
-    operation.finish().await?;
 
     Ok(())
 }

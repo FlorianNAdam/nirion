@@ -36,13 +36,11 @@ pub async fn handle_lock(
     let mut images = get_images(&args.target, &context.projects);
     retain_images_missing_lock_entries(&mut images, &context.locked_images);
 
-    let mut operation = update_images(context, images, args.jobs);
+    let mut events = update_images(context, images, args.jobs);
 
-    while let Some(event) = operation.events.next().await {
+    while let Some(event) = events.next().await {
         println!("{}", format_lock_update_event(event?));
     }
-
-    operation.finish().await?;
 
     Ok(())
 }
