@@ -13,33 +13,10 @@ impl<'de> Deserialize<'de> for LockedImages {
     where
         D: serde::Deserializer<'de>,
     {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Repr {
-            Full(BTreeMap<String, VersionedImage>),
-            DigestOnly(BTreeMap<String, String>),
-        }
+        let locked_images =
+            BTreeMap::<String, VersionedImage>::deserialize(deserializer)?;
 
-        match Repr::deserialize(deserializer)? {
-            Repr::Full(map) => Ok(Self { locked_images: map }),
-            Repr::DigestOnly(map) => {
-                let locked_images = map
-                    .into_iter()
-                    .map(|(k, digest)| {
-                        (
-                            k,
-                            VersionedImage {
-                                image: "<unknown>".to_string(),
-                                version: None,
-                                digest,
-                            },
-                        )
-                    })
-                    .collect();
-
-                Ok(Self { locked_images })
-            }
-        }
+        Ok(Self { locked_images })
     }
 }
 
@@ -260,13 +237,8 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_digest_only_format() {
+    fn deserialize_rejects_digest_only_format() {
         let json = r#"{"myapp.web":"sha256:aaa"}"#;
-        let locked: LockedImages = serde_json::from_str(json).unwrap();
-        assert!(locked.contains_key("myapp.web"));
-        let img = locked.get("myapp.web").unwrap();
-        assert_eq!(img.image, "<unknown>");
-        assert_eq!(img.version, None);
-        assert_eq!(img.digest, "sha256:aaa");
+        assert!(serde_json::from_str::<LockedImages>(json).is_err());
     }
 }

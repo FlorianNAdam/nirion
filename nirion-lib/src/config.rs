@@ -188,6 +188,7 @@ exit {exit_code}
                     "services": {
                         "web": {
                             "image": "nginx",
+                            "resolvedImage": "nginx@sha256:abc",
                             "healthcheck": true,
                             "restart": null
                         }

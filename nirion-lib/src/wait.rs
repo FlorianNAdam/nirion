@@ -113,15 +113,15 @@ mod tests {
     "name": "myapp",
     "dockerCompose": "compose.yml",
     "services": {
-      "web": {"image": "nginx", "healthcheck": true, "restart": null},
-      "worker": {"image": "busybox", "healthcheck": false, "restart": null}
+      "web": {"image": "nginx", "resolvedImage": "nginx@sha256:abc", "healthcheck": true, "restart": null},
+      "worker": {"image": "busybox", "resolvedImage": "busybox@sha256:def", "healthcheck": false, "restart": null}
     }
   },
   "api": {
     "name": "api",
     "dockerCompose": "compose.yml",
     "services": {
-      "server": {"image": "node", "healthcheck": true, "restart": null}
+      "server": {"image": "node", "resolvedImage": "node@sha256:ghi", "healthcheck": true, "restart": null}
     }
   }
 }

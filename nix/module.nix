@@ -200,9 +200,14 @@ in
             else
               let
                 entry = lockFile.${name} or null;
-                digest = if builtins.isAttrs entry then entry.digest else entry;
+                digest = if builtins.isAttrs entry then entry.digest else null;
+                lockedImage = if builtins.isAttrs entry then entry.image or null else null;
               in
-              if digest != null then
+              if entry != null && !builtins.isAttrs entry then
+                throw "nirion: Lock entry for image '${name}' must be an object with image, version, and digest fields"
+              else if lockedImage != null && lockedImage != imageRef then
+                lib.warn "nirion: Lock entry for image '${name}' was created for '${lockedImage}', not '${imageRef}' - using mutable tag" imageRef
+              else if digest != null then
                 "${imageRef}@${digest}"
               else
                 lib.warn "nirion: Image '${name}' (${imageRef}) not locked - using mutable tag" imageRef
@@ -222,6 +227,7 @@ in
             dockerCompose = composeFile;
             services = lib.mapAttrs (serviceName: renderedService: {
               image = project.services.${serviceName}.image or null;
+              resolvedImage = renderedService.image or null;
               healthcheck = renderedService ? healthcheck;
               restart = renderedService.restart or null;
             }) compose.services;

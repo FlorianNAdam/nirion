@@ -16,8 +16,16 @@ let
     {
       virtualisation.nirion = baseNirionConfig // {
         lockFile = lockFile {
-          "web.nginx" = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-          "shared.postgres" = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+          "web.nginx" = {
+            image = "nginx:latest";
+            version = "latest";
+            digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+          };
+          "shared.postgres" = {
+            image = "postgres:16-alpine";
+            version = "16";
+            digest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+          };
         };
 
         images."shared.postgres" = "postgres:16-alpine";

@@ -513,6 +513,7 @@ mod tests {
                 "services": {
                     "web": {
                         "image": "nginx:latest",
+                        "resolvedImage": "nginx:latest@sha256:abc",
                         "healthcheck": false,
                         "restart": null
                     }

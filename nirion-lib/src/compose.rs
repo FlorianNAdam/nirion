@@ -436,6 +436,7 @@ exit 0
                 "services": {
                     "web": {
                         "image": "nginx",
+                        "resolvedImage": "nginx@sha256:abc",
                         "healthcheck": false,
                         "restart": null
                     }
@@ -447,6 +448,7 @@ exit 0
                 "services": {
                     "jobs": {
                         "image": "busybox",
+                        "resolvedImage": "busybox@sha256:def",
                         "healthcheck": false,
                         "restart": null
                     }

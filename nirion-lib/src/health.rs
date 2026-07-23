@@ -683,6 +683,7 @@ mod tests {
                 "services": {
                     "web": {
                         "image": "nginx:latest",
+                        "resolvedImage": "nginx:latest@sha256:abc",
                         "healthcheck": true,
                         "restart": null
                     }
@@ -1028,6 +1029,7 @@ fi
                 "services": {
                     "web": {
                         "image": "nginx:latest",
+                        "resolvedImage": "nginx:latest@sha256:abc",
                         "healthcheck": false,
                         "restart": null
                     }
@@ -1211,11 +1213,13 @@ fi
                 "services": {
                     "web": {
                         "image": "nginx:latest",
+                        "resolvedImage": "nginx:latest@sha256:abc",
                         "healthcheck": true,
                         "restart": null
                     },
                     "db": {
                         "image": "postgres:16",
+                        "resolvedImage": "postgres:16@sha256:def",
                         "healthcheck": true,
                         "restart": null
                     }
