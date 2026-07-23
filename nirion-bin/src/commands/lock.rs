@@ -1,9 +1,11 @@
+use std::collections::BTreeMap;
+
 use clap::Args;
 use futures::StreamExt;
 use nirion_lib::{
     context::NirionContext,
     events::LockUpdateEvent,
-    lock::DiffEntry,
+    lock::{DiffEntry, LockedImages},
     lock_update::update_images,
     projects::{get_images, TargetSelector},
 };
@@ -32,7 +34,7 @@ pub async fn handle_lock(
     context: &NirionContext,
 ) -> anyhow::Result<()> {
     let mut images = get_images(&args.target, &context.projects);
-    images.retain(|name, _| !context.locked_images.contains_key(name));
+    retain_images_missing_lock_entries(&mut images, &context.locked_images);
 
     let mut operation = update_images(context, images, args.jobs);
 
@@ -43,6 +45,18 @@ pub async fn handle_lock(
     operation.finish().await?;
 
     Ok(())
+}
+
+fn retain_images_missing_lock_entries(
+    images: &mut BTreeMap<String, String>,
+    locked_images: &LockedImages,
+) {
+    images.retain(|name, image| {
+        locked_images
+            .get(name)
+            .map(|locked| locked.image != *image)
+            .unwrap_or(true)
+    });
 }
 
 pub fn format_lock_update_event(event: LockUpdateEvent) -> String {
@@ -224,5 +238,32 @@ mod tests {
         assert!(written.contains("lock"));
         assert!(written.contains("file"));
         assert!(written.contains("success"));
+    }
+
+    #[test]
+    fn lock_filter_keeps_entries_with_changed_image_references() {
+        let mut images = BTreeMap::from([
+            ("app.changed".to_string(), "nginx:1.27".to_string()),
+            ("app.same".to_string(), "postgres:16".to_string()),
+        ]);
+        let mut locked_images = LockedImages::default();
+        locked_images.insert(
+            "app.changed".to_string(),
+            image("nginx:1.26", Some("1.26"), "sha256:old"),
+        );
+        locked_images.insert(
+            "app.same".to_string(),
+            image("postgres:16", Some("16"), "sha256:same"),
+        );
+
+        retain_images_missing_lock_entries(&mut images, &locked_images);
+
+        assert_eq!(
+            images,
+            BTreeMap::from([(
+                "app.changed".to_string(),
+                "nginx:1.27".to_string()
+            )])
+        );
     }
 }

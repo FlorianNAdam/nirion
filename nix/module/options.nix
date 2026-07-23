@@ -6,7 +6,7 @@ in
 {
   lockFile = mkOption {
     type = types.path;
-    description = "Path to image digest lock file.";
+    description = "Path to image lock file.";
   };
 
   lockFileOutput = mkOption {
@@ -58,7 +58,7 @@ in
   images = mkOption {
     type = types.attrsOf types.str;
     default = { };
-    description = "Image references to resolve with lock file digests.";
+    description = "Image references to resolve with lock file entries.";
   };
 
   out = {

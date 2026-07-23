@@ -10,7 +10,11 @@ let
     {
       virtualisation.nirion = {
         lockFile = lockFile {
-          "web.nginx" = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+          "web.nginx" = {
+            image = "nginx:latest";
+            version = "latest";
+            digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+          };
         };
         lockFileOutput = "/var/lib/nirion/lock.json";
 
@@ -56,6 +60,7 @@ in
         dockerCompose = cfg.out.compose.web.file;
         services.nginx = {
           image = "nginx:latest";
+          resolvedImage = "nginx:latest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
           healthcheck = false;
           restart = "unless-stopped";
         };

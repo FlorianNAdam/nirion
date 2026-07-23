@@ -24,6 +24,7 @@ fn write_projects_with_compose(
     "services": {
       "web": {
         "image": "nginx:latest",
+        "resolvedImage": "nginx:latest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "healthcheck": false,
         "restart": null
       }
@@ -45,6 +46,7 @@ fn write_healthcheck_projects(path: &Path) {
     "services": {
       "web": {
         "image": "nginx:latest",
+        "resolvedImage": "nginx:latest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "healthcheck": true,
         "restart": null
       }
@@ -79,11 +81,13 @@ fn write_completion_projects(path: &Path) {
     "services": {
       "web": {
         "image": "nginx:latest",
+        "resolvedImage": "nginx:latest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "healthcheck": false,
         "restart": null
       },
       "worker": {
         "image": "alpine:latest",
+        "resolvedImage": "alpine:latest@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "healthcheck": false,
         "restart": null
       }
@@ -95,6 +99,7 @@ fn write_completion_projects(path: &Path) {
     "services": {
       "web": {
         "image": "nginx:latest",
+        "resolvedImage": "nginx:latest@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         "healthcheck": false,
         "restart": null
       }
@@ -106,6 +111,7 @@ fn write_completion_projects(path: &Path) {
     "services": {
       "server": {
         "image": "authelia/authelia:latest",
+        "resolvedImage": "authelia/authelia:latest@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
         "healthcheck": false,
         "restart": null
       }
@@ -527,7 +533,7 @@ fn inspect_image_raw_prints_docker_output() {
     );
     assert_eq!(
         fs::read_to_string(args_file).unwrap(),
-        "image\ninspect\n--format\njson\nnginx:latest\n"
+        "image\ninspect\n--format\njson\nnginx:latest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
     );
 }
 
@@ -629,7 +635,7 @@ fn inspect_project_target_prints_service_outputs() {
     );
     assert_eq!(
         fs::read_to_string(args_file).unwrap(),
-        "image\ninspect\n--format\njson\nnginx:latest\n"
+        "image\ninspect\n--format\njson\nnginx:latest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
     );
 }
 
@@ -698,7 +704,7 @@ fn inspect_all_target_prints_project_outputs() {
     );
     assert_eq!(
         fs::read_to_string(args_file).unwrap(),
-        "image\ninspect\n--format\njson\nnginx:latest\n"
+        "image\ninspect\n--format\njson\nnginx:latest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
     );
 }
 
