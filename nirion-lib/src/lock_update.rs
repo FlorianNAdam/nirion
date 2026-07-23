@@ -77,8 +77,7 @@ pub fn update_images(
                     let versioned_image = if let Some(mut current) =
                         current_versioned_image
                     {
-                        let reference = Reference::try_from(image)?;
-                        current.image = reference.to_string();
+                        current.image = image.clone();
                         get_cached_updated_image(
                             &client,
                             &current,
@@ -155,9 +154,10 @@ async fn get_cached_image(
     }
 
     let reference = Reference::try_from(image)?;
-    let versioned_image = client
+    let mut versioned_image = client
         .get_versioned_image(&reference)
         .await?;
+    versioned_image.image = image.to_string();
 
     {
         let mut locked_cache = cache.write().await;
@@ -204,6 +204,10 @@ mod tests {
             oci_client: Arc::new(client),
             docker_command: DockerCommand::default(),
         }
+    }
+
+    fn localhost_image(image: &str) -> String {
+        image.replacen("127.0.0.1", "localhost", 1)
     }
 
     #[tokio::test]
@@ -277,10 +281,63 @@ mod tests {
                 .digest,
             test_image.digest
         );
+        assert_eq!(
+            report
+                .locked_images
+                .get("app.web")
+                .unwrap()
+                .image,
+            test_image.reference.to_string()
+        );
 
         let written: LockedImages =
             serde_json::from_str(&std::fs::read_to_string(lock_file)?)?;
         assert_eq!(written.get("app.web").unwrap().digest, test_image.digest);
+        assert_eq!(
+            written.get("app.web").unwrap().image,
+            test_image.reference.to_string()
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn new_image_preserves_configured_image_string() -> anyhow::Result<()>
+    {
+        let handle = RegistryHandle::start_anonymous().await?;
+        let test_image = handle
+            .push_anonymous("nirion-lock-update-preserve", "1.2.3")
+            .await?;
+        let configured_image =
+            localhost_image(&test_image.reference.to_string());
+        let dir = tempfile::tempdir()?;
+        let lock_file = dir.path().join("nirion.lock");
+
+        let report = update_images(
+            &context(
+                http_nirion_client().build(),
+                LockedImages::default(),
+                lock_file.clone(),
+            ),
+            BTreeMap::from([("app.web".to_string(), configured_image.clone())]),
+            1,
+        )
+        .finish()
+        .await?;
+
+        assert!(report.written);
+        assert_eq!(
+            report
+                .locked_images
+                .get("app.web")
+                .unwrap()
+                .image,
+            configured_image
+        );
+
+        let written: LockedImages =
+            serde_json::from_str(&std::fs::read_to_string(lock_file)?)?;
+        assert_eq!(written.get("app.web").unwrap().image, configured_image);
 
         Ok(())
     }
@@ -374,6 +431,59 @@ mod tests {
                 .unwrap()
                 .digest,
             test_image.digest
+        );
+        assert_eq!(
+            report
+                .locked_images
+                .get("app.web")
+                .unwrap()
+                .image,
+            test_image.reference.to_string()
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unchanged_digest_with_changed_image_string_writes_lock_file()
+    -> anyhow::Result<()> {
+        let handle = RegistryHandle::start_anonymous().await?;
+        let test_image = handle
+            .push_anonymous("nirion-lock-update-image-change", "1.2.3")
+            .await?;
+        let configured_image =
+            localhost_image(&test_image.reference.to_string());
+        let dir = tempfile::tempdir()?;
+        let lock_file = dir.path().join("nirion.lock");
+        let mut locked_images = LockedImages::default();
+        locked_images.insert(
+            "app.web".to_string(),
+            image(
+                &test_image.reference.to_string(),
+                "1.2.3",
+                &test_image.digest,
+            ),
+        );
+
+        let report = update_images(
+            &context(http_nirion_client().build(), locked_images, lock_file),
+            BTreeMap::from([("app.web".to_string(), configured_image.clone())]),
+            1,
+        )
+        .finish()
+        .await?;
+
+        assert!(report.written);
+        assert!(
+            matches!(report.diffs.as_slice(), [DiffEntry::Updated { service, new, .. }] if service == "app.web" && new.digest == test_image.digest)
+        );
+        assert_eq!(
+            report
+                .locked_images
+                .get("app.web")
+                .unwrap()
+                .image,
+            configured_image
         );
 
         Ok(())
