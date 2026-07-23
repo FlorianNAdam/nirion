@@ -65,6 +65,28 @@ let
               };
             };
 
+            curl = {
+              extraOptions.image = "example.invalid/curl:latest";
+              healthcheck.test = config.lib.nirion.mkHttpHealthcheck {
+                backend = "curl";
+                binary = "/usr/bin/curl";
+                port = 8085;
+                path = "/curl";
+                expect.bodyContains = "ok";
+              };
+            };
+
+            wget = {
+              extraOptions.image = "example.invalid/wget:latest";
+              healthcheck.test = config.lib.nirion.mkHttpHealthcheck {
+                backend = "wget";
+                binary = "/bin/wget";
+                port = 8086;
+                path = "/wget";
+                expect.status = 204;
+              };
+            };
+
             disabled = {
               extraOptions.image = "example.invalid/disabled:latest";
               healthcheck.disable = true;
@@ -102,6 +124,30 @@ let
       port = 8080;
       path = "/";
       expect.foobar = true;
+    }
+  );
+  curlJsonExpect = invalidEval (
+    system.config.lib.nirion.mkHttpHealthcheck {
+      backend = "curl";
+      port = 8080;
+      path = "/";
+      expect.jsonEquals.ok = true;
+    }
+  );
+  wgetJsonExpect = invalidEval (
+    system.config.lib.nirion.mkHttpHealthcheck {
+      backend = "wget";
+      port = 8080;
+      path = "/";
+      expect.jsonContains.ok = true;
+    }
+  );
+  unknownBackend = invalidEval (
+    system.config.lib.nirion.mkHttpHealthcheck {
+      backend = "netcat";
+      port = 8080;
+      path = "/";
+      expect.status = 200;
     }
   );
 in
@@ -147,6 +193,28 @@ in
     message = "mkHttpHealthcheck jsonContains or custom connection options were not rendered";
   }
   {
+    assertion =
+      services.curl.healthcheck.test != [ ]
+      && builtins.elemAt services.curl.healthcheck.test 1 == "sh"
+      && builtins.elemAt services.curl.healthcheck.test 2 == "-ec"
+      && lib.hasInfix "/usr/bin/curl" (builtins.elemAt services.curl.healthcheck.test 3)
+      && lib.hasInfix "http://localhost:8085/curl" (builtins.elemAt services.curl.healthcheck.test 3)
+      && lib.hasInfix "Response body did not contain expected text" (
+        builtins.elemAt services.curl.healthcheck.test 3
+      );
+    message = "mkHttpHealthcheck curl backend did not render the expected shell command";
+  }
+  {
+    assertion =
+      services.wget.healthcheck.test != [ ]
+      && builtins.elemAt services.wget.healthcheck.test 1 == "sh"
+      && builtins.elemAt services.wget.healthcheck.test 2 == "-ec"
+      && lib.hasInfix "/bin/wget" (builtins.elemAt services.wget.healthcheck.test 3)
+      && lib.hasInfix "--server-response" (builtins.elemAt services.wget.healthcheck.test 3)
+      && lib.hasInfix "Expected HTTP status 204" (builtins.elemAt services.wget.healthcheck.test 3);
+    message = "mkHttpHealthcheck wget backend did not render the expected shell command";
+  }
+  {
     assertion = services.disabled.healthcheck.disable == true;
     message = "healthcheck.disable was not rendered";
   }
@@ -161,5 +229,13 @@ in
   {
     assertion = unknownExpect.success == false;
     message = "mkHttpHealthcheck should reject unknown expect variants";
+  }
+  {
+    assertion = curlJsonExpect.success == false && wgetJsonExpect.success == false;
+    message = "mkHttpHealthcheck should reject JSON expectations for curl and wget backends";
+  }
+  {
+    assertion = unknownBackend.success == false;
+    message = "mkHttpHealthcheck should reject unknown backends";
   }
 ]

@@ -138,7 +138,7 @@ let
 in
 {
   imports = [
-    ./module/lib.nix
+    ./module/lib
   ];
 
   options.virtualisation.nirion = import ./module/options.nix { inherit lib; };
