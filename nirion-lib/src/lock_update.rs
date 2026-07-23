@@ -6,138 +6,138 @@ use std::{
     fs,
     sync::Arc,
 };
-use tokio::{sync::RwLock, task::JoinHandle};
+use tokio::sync::RwLock;
 
 use crate::{
     context::NirionContext,
     events::LockUpdateEvent,
-    lock::{DiffEntry, LockedImages, VersionedImage},
+    lock::{LockedImages, VersionedImage},
 };
-
-#[derive(Clone)]
-pub struct LockUpdateReport {
-    pub locked_images: LockedImages,
-    pub diffs: Vec<DiffEntry>,
-    pub written: bool,
-}
-
-pub struct LockUpdateOperation {
-    pub events: BoxStream<'static, anyhow::Result<LockUpdateEvent>>,
-    report: JoinHandle<anyhow::Result<LockUpdateReport>>,
-}
-
-impl LockUpdateOperation {
-    pub async fn finish(self) -> anyhow::Result<LockUpdateReport> {
-        self.report.await?
-    }
-}
 
 pub fn update_images(
     context: &NirionContext,
     images: BTreeMap<String, String>,
     jobs: usize,
-) -> LockUpdateOperation {
+) -> BoxStream<'static, anyhow::Result<LockUpdateEvent>> {
     let client = context.oci_client.clone();
     let locked_images = context.locked_images.clone();
     let lock_file = context.lock_file.clone();
     let (event_tx, event_rx) = mpsc::unbounded();
 
-    let report = tokio::spawn(async move {
-        if images.is_empty() {
-            let _ = event_tx.unbounded_send(Ok(LockUpdateEvent::NoImages));
-            return Ok(LockUpdateReport {
-                locked_images,
-                diffs: Vec::new(),
-                written: false,
-            });
+    tokio::spawn(async move {
+        if let Err(error) = update_images_inner(
+            client,
+            locked_images,
+            lock_file,
+            images,
+            jobs,
+            Some(event_tx.clone()),
+        )
+        .await
+        {
+            let _ = event_tx.unbounded_send(Err(error));
         }
-
-        let digest_cache: Arc<RwLock<HashMap<String, VersionedImage>>> =
-            Arc::new(RwLock::new(HashMap::new()));
-        let semaphore = Arc::new(tokio::sync::Semaphore::new(jobs));
-        let mut futures = FuturesUnordered::new();
-
-        for (service, image) in images {
-            let _ =
-                event_tx.unbounded_send(Ok(LockUpdateEvent::ImageStarted {
-                    service: service.clone(),
-                    image: image.clone(),
-                }));
-
-            let client = Arc::clone(&client);
-            let semaphore = Arc::clone(&semaphore);
-            let digest_cache = Arc::clone(&digest_cache);
-            let current_versioned_image = locked_images.get(&service).cloned();
-            let event_tx = event_tx.clone();
-
-            futures.push(
-                async move {
-                    let _permit = semaphore.acquire().await.unwrap();
-
-                    let versioned_image = if let Some(mut current) =
-                        current_versioned_image
-                    {
-                        current.image = image.clone();
-                        get_cached_updated_image(
-                            &client,
-                            &current,
-                            &digest_cache,
-                        )
-                        .await?
-                    } else {
-                        get_cached_image(&client, &image, &digest_cache).await?
-                    };
-
-                    let _ = event_tx.unbounded_send(Ok(
-                        LockUpdateEvent::ImageResolved {
-                            service: service.clone(),
-                        },
-                    ));
-
-                    Ok::<_, anyhow::Error>((service, versioned_image))
-                }
-                .boxed(),
-            );
-        }
-
-        let mut new_locked_images = locked_images.clone();
-
-        while let Some(result) = futures.next().await {
-            let (service, versioned_image) = result?;
-            new_locked_images.insert(service, versioned_image);
-        }
-
-        let diffs = locked_images.diff(&new_locked_images);
-
-        if diffs.is_empty() {
-            let _ = event_tx.unbounded_send(Ok(LockUpdateEvent::UpToDate));
-            return Ok(LockUpdateReport {
-                locked_images: new_locked_images,
-                diffs,
-                written: false,
-            });
-        }
-
-        let _ = event_tx.unbounded_send(Ok(LockUpdateEvent::ChangesDetected {
-            diffs: diffs.clone(),
-        }));
-        let _ = event_tx.unbounded_send(Ok(LockUpdateEvent::WritingLockFile));
-
-        let new_lock_file = serde_json::to_string_pretty(&new_locked_images)?;
-        fs::write(lock_file, new_lock_file)?;
-
-        let _ = event_tx.unbounded_send(Ok(LockUpdateEvent::LockFileWritten));
-
-        Ok(LockUpdateReport {
-            locked_images: new_locked_images,
-            diffs,
-            written: true,
-        })
     });
 
-    LockUpdateOperation {
-        events: event_rx.boxed(),
-        report,
+    event_rx.boxed()
+}
+
+async fn update_images_inner(
+    client: Arc<NirionOciClient>,
+    locked_images: LockedImages,
+    lock_file: std::path::PathBuf,
+    images: BTreeMap<String, String>,
+    jobs: usize,
+    event_tx: Option<mpsc::UnboundedSender<anyhow::Result<LockUpdateEvent>>>,
+) -> anyhow::Result<()> {
+    if images.is_empty() {
+        emit_event(&event_tx, LockUpdateEvent::NoImages);
+        return Ok(());
+    }
+
+    let digest_cache: Arc<RwLock<HashMap<String, VersionedImage>>> =
+        Arc::new(RwLock::new(HashMap::new()));
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(jobs.max(1)));
+    let mut futures = FuturesUnordered::new();
+
+    for (service, image) in images {
+        emit_event(
+            &event_tx,
+            LockUpdateEvent::ImageStarted {
+                service: service.clone(),
+                image: image.clone(),
+            },
+        );
+
+        let client = Arc::clone(&client);
+        let semaphore = Arc::clone(&semaphore);
+        let digest_cache = Arc::clone(&digest_cache);
+        let current_versioned_image = locked_images.get(&service).cloned();
+        let event_tx = event_tx.clone();
+
+        futures.push(
+            async move {
+                let _permit = semaphore.acquire().await.unwrap();
+
+                let versioned_image = if let Some(mut current) =
+                    current_versioned_image
+                {
+                    current.image = image.clone();
+                    get_cached_updated_image(&client, &current, &digest_cache)
+                        .await?
+                } else {
+                    get_cached_image(&client, &image, &digest_cache).await?
+                };
+
+                emit_event(
+                    &event_tx,
+                    LockUpdateEvent::ImageResolved {
+                        service: service.clone(),
+                    },
+                );
+
+                Ok::<_, anyhow::Error>((service, versioned_image))
+            }
+            .boxed(),
+        );
+    }
+
+    let mut new_locked_images = locked_images.clone();
+
+    while let Some(result) = futures.next().await {
+        let (service, versioned_image) = result?;
+        new_locked_images.insert(service, versioned_image);
+    }
+
+    let diffs = locked_images.diff(&new_locked_images);
+
+    if diffs.is_empty() {
+        emit_event(&event_tx, LockUpdateEvent::UpToDate);
+        return Ok(());
+    }
+
+    emit_event(
+        &event_tx,
+        LockUpdateEvent::ChangesDetected {
+            diffs: diffs.clone(),
+        },
+    );
+    emit_event(&event_tx, LockUpdateEvent::WritingLockFile);
+
+    let new_lock_file = serde_json::to_string_pretty(&new_locked_images)?;
+    fs::write(lock_file, new_lock_file)?;
+
+    emit_event(&event_tx, LockUpdateEvent::LockFileWritten);
+
+    Ok(())
+}
+
+fn emit_event(
+    tx: &Option<mpsc::UnboundedSender<anyhow::Result<LockUpdateEvent>>>,
+    event: LockUpdateEvent,
+) {
+    if let Some(tx) = tx {
+        let _ = tx.unbounded_send(Ok(event));
     }
 }
 
@@ -171,7 +171,8 @@ async fn get_cached_image(
 mod tests {
     use super::*;
     use crate::{
-        docker::DockerCommand, events::LockUpdateEvent, projects::Projects,
+        docker::DockerCommand, events::LockUpdateEvent, lock::DiffEntry,
+        projects::Projects,
     };
     use futures::StreamExt;
     use nirion_oci_lib::{
@@ -210,12 +211,29 @@ mod tests {
         image.replacen("127.0.0.1", "localhost", 1)
     }
 
+    async fn collect_events(
+        mut events: BoxStream<'static, anyhow::Result<LockUpdateEvent>>
+    ) -> anyhow::Result<Vec<LockUpdateEvent>> {
+        let mut collected = Vec::new();
+        while let Some(event) = events.next().await {
+            collected.push(event?);
+        }
+        Ok(collected)
+    }
+
+    fn written_lock_file(
+        lock_file: impl AsRef<std::path::Path>
+    ) -> anyhow::Result<LockedImages> {
+        serde_json::from_str(&std::fs::read_to_string(lock_file)?)
+            .map_err(Into::into)
+    }
+
     #[tokio::test]
     async fn no_images_reports_no_images_without_writing() -> anyhow::Result<()>
     {
         let dir = tempfile::tempdir()?;
         let lock_file = dir.path().join("nirion.lock");
-        let mut operation = update_images(
+        let mut events = update_images(
             &context(
                 NirionOciClient::builder().build(),
                 LockedImages::default(),
@@ -226,17 +244,10 @@ mod tests {
         );
 
         assert!(matches!(
-            operation
-                .events
-                .next()
-                .await
-                .transpose()?,
+            events.next().await.transpose()?,
             Some(LockUpdateEvent::NoImages)
         ));
 
-        let report = operation.finish().await?;
-        assert!(!report.written);
-        assert!(report.diffs.is_empty());
         assert!(!lock_file.exists());
 
         Ok(())
@@ -254,7 +265,7 @@ mod tests {
             .await?;
         let dir = tempfile::tempdir()?;
         let lock_file = dir.path().join("nirion.lock");
-        let report = update_images(
+        let events = collect_events(update_images(
             &context(
                 http_nirion_client().build(),
                 LockedImages::default(),
@@ -265,33 +276,18 @@ mod tests {
                 test_image.reference.to_string(),
             )]),
             1,
-        )
-        .finish()
+        ))
         .await?;
 
-        assert!(report.written);
         assert!(
-            matches!(report.diffs.as_slice(), [DiffEntry::Added { service, new }] if service == "app.web" && new.digest == test_image.digest)
-        );
-        assert_eq!(
-            report
-                .locked_images
-                .get("app.web")
-                .unwrap()
-                .digest,
-            test_image.digest
-        );
-        assert_eq!(
-            report
-                .locked_images
-                .get("app.web")
-                .unwrap()
-                .image,
-            test_image.reference.to_string()
+            events.iter().any(|event| matches!(
+                event,
+                LockUpdateEvent::ChangesDetected { diffs }
+                    if matches!(diffs.as_slice(), [DiffEntry::Added { service, new }] if service == "app.web" && new.digest == test_image.digest)
+            ))
         );
 
-        let written: LockedImages =
-            serde_json::from_str(&std::fs::read_to_string(lock_file)?)?;
+        let written = written_lock_file(lock_file)?;
         assert_eq!(written.get("app.web").unwrap().digest, test_image.digest);
         assert_eq!(
             written.get("app.web").unwrap().image,
@@ -313,7 +309,7 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let lock_file = dir.path().join("nirion.lock");
 
-        let report = update_images(
+        collect_events(update_images(
             &context(
                 http_nirion_client().build(),
                 LockedImages::default(),
@@ -321,22 +317,10 @@ mod tests {
             ),
             BTreeMap::from([("app.web".to_string(), configured_image.clone())]),
             1,
-        )
-        .finish()
+        ))
         .await?;
 
-        assert!(report.written);
-        assert_eq!(
-            report
-                .locked_images
-                .get("app.web")
-                .unwrap()
-                .image,
-            configured_image
-        );
-
-        let written: LockedImages =
-            serde_json::from_str(&std::fs::read_to_string(lock_file)?)?;
+        let written = written_lock_file(lock_file)?;
         assert_eq!(written.get("app.web").unwrap().image, configured_image);
 
         Ok(())
@@ -364,7 +348,7 @@ mod tests {
             ),
         );
 
-        let report = update_images(
+        let events = collect_events(update_images(
             &context(
                 http_nirion_client().build(),
                 locked_images,
@@ -375,12 +359,14 @@ mod tests {
                 test_image.reference.to_string(),
             )]),
             1,
-        )
-        .finish()
+        ))
         .await?;
 
-        assert!(!report.written);
-        assert!(report.diffs.is_empty());
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, LockUpdateEvent::UpToDate))
+        );
         assert!(!lock_file.exists());
 
         Ok(())
@@ -409,35 +395,31 @@ mod tests {
             ),
         );
 
-        let report = update_images(
-            &context(http_nirion_client().build(), locked_images, lock_file),
+        let events = collect_events(update_images(
+            &context(
+                http_nirion_client().build(),
+                locked_images,
+                lock_file.clone(),
+            ),
             BTreeMap::from([(
                 "app.web".to_string(),
                 test_image.reference.to_string(),
             )]),
             1,
-        )
-        .finish()
+        ))
         .await?;
 
-        assert!(report.written);
         assert!(
-            matches!(report.diffs.as_slice(), [DiffEntry::Updated { service, new, .. }] if service == "app.web" && new.digest == test_image.digest)
+            events.iter().any(|event| matches!(
+                event,
+                LockUpdateEvent::ChangesDetected { diffs }
+                    if matches!(diffs.as_slice(), [DiffEntry::Updated { service, new, .. }] if service == "app.web" && new.digest == test_image.digest)
+            ))
         );
+        let written = written_lock_file(lock_file)?;
+        assert_eq!(written.get("app.web").unwrap().digest, test_image.digest);
         assert_eq!(
-            report
-                .locked_images
-                .get("app.web")
-                .unwrap()
-                .digest,
-            test_image.digest
-        );
-        assert_eq!(
-            report
-                .locked_images
-                .get("app.web")
-                .unwrap()
-                .image,
+            written.get("app.web").unwrap().image,
             test_image.reference.to_string()
         );
 
@@ -465,26 +447,26 @@ mod tests {
             ),
         );
 
-        let report = update_images(
-            &context(http_nirion_client().build(), locked_images, lock_file),
+        let events = collect_events(update_images(
+            &context(
+                http_nirion_client().build(),
+                locked_images,
+                lock_file.clone(),
+            ),
             BTreeMap::from([("app.web".to_string(), configured_image.clone())]),
             1,
-        )
-        .finish()
+        ))
         .await?;
 
-        assert!(report.written);
         assert!(
-            matches!(report.diffs.as_slice(), [DiffEntry::Updated { service, new, .. }] if service == "app.web" && new.digest == test_image.digest)
+            events.iter().any(|event| matches!(
+                event,
+                LockUpdateEvent::ChangesDetected { diffs }
+                    if matches!(diffs.as_slice(), [DiffEntry::Updated { service, new, .. }] if service == "app.web" && new.digest == test_image.digest)
+            ))
         );
-        assert_eq!(
-            report
-                .locked_images
-                .get("app.web")
-                .unwrap()
-                .image,
-            configured_image
-        );
+        let written = written_lock_file(lock_file)?;
+        assert_eq!(written.get("app.web").unwrap().image, configured_image);
 
         Ok(())
     }
@@ -493,7 +475,7 @@ mod tests {
     async fn invalid_image_reference_returns_error() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
         let lock_file = dir.path().join("nirion.lock");
-        let result = update_images(
+        let result = collect_events(update_images(
             &context(
                 http_nirion_client().build(),
                 LockedImages::default(),
@@ -504,8 +486,7 @@ mod tests {
                 "not a valid image".to_string(),
             )]),
             1,
-        )
-        .finish()
+        ))
         .await;
 
         let err = match result {
