@@ -229,6 +229,7 @@ fn run_docker_compose(
             .command()
             .arg("compose")
             .args(cmd_args)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()

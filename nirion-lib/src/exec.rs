@@ -1,6 +1,23 @@
-use std::ops::Deref;
+use std::{
+    fs::File,
+    io::{Read, Write},
+    ops::Deref,
+    os::fd::{BorrowedFd, OwnedFd},
+    process::Stdio,
+    thread,
+};
 
 use anyhow::Context;
+use rustix::{
+    io::dup,
+    process::setsid,
+    pty::{grantpt, ioctl_tiocgptpeer, openpt, unlockpt, OpenptFlags},
+    termios::{
+        isatty, tcgetattr, tcgetwinsize, tcsetattr, tcsetwinsize,
+        OptionalActions,
+    },
+};
+use tokio::io::{self, AsyncWriteExt};
 
 use crate::{
     context::NirionContext,
@@ -24,18 +41,76 @@ pub async fn exec(
     context: &NirionContext,
     request: &ExecRequest,
 ) -> anyhow::Result<()> {
+    if request.detach || request.no_tty || !isatty(stdin_fd()) {
+        return exec_with_pipes(context, request, !request.detach).await;
+    }
+    exec_with_pty(context, request).await
+}
+
+async fn exec_with_pipes(
+    context: &NirionContext,
+    request: &ExecRequest,
+    force_no_tty: bool,
+) -> anyhow::Result<()> {
     let project_name = &request.target.project;
     let service_name = &request.target.service;
-    let cmd_args = build_exec_args(&context.projects, request)?;
+    let cmd_args =
+        build_exec_args_with_no_tty(&context.projects, request, force_no_tty)?;
 
-    let status = context
-        .docker_command
-        .command()
-        .arg("compose")
-        .args(&cmd_args)
-        .status()
-        .await
+    let mut command = context.docker_command.command();
+    command.arg("compose").args(&cmd_args);
+    if request.detach {
+        command.stdin(Stdio::null());
+    } else {
+        command.stdin(Stdio::piped());
+    }
+    command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = command
+        .spawn()
         .context("failed to execute docker compose exec")?;
+
+    let stdin_task = if request.detach {
+        None
+    } else {
+        let Some(mut child_stdin) = child.stdin.take() else {
+            anyhow::bail!("failed to capture docker compose exec stdin");
+        };
+        Some(tokio::spawn(async move {
+            let mut stdin = io::stdin();
+            let result = io::copy(&mut stdin, &mut child_stdin).await;
+            let _ = child_stdin.shutdown().await;
+            result
+        }))
+    };
+
+    let Some(mut child_stdout) = child.stdout.take() else {
+        anyhow::bail!("failed to capture docker compose exec stdout");
+    };
+    let stdout_task = tokio::spawn(async move {
+        let mut stdout = io::stdout();
+        io::copy(&mut child_stdout, &mut stdout).await?;
+        stdout.flush().await
+    });
+
+    let Some(mut child_stderr) = child.stderr.take() else {
+        anyhow::bail!("failed to capture docker compose exec stderr");
+    };
+    let stderr_task = tokio::spawn(async move {
+        let mut stderr = io::stderr();
+        io::copy(&mut child_stderr, &mut stderr).await?;
+        stderr.flush().await
+    });
+
+    let status = child.wait().await?;
+
+    if let Some(stdin_task) = stdin_task {
+        stdin_task.abort();
+    }
+    stdout_task.await??;
+    stderr_task.await??;
 
     if !status.success() {
         anyhow::bail!(
@@ -49,9 +124,145 @@ pub async fn exec(
     Ok(())
 }
 
+async fn exec_with_pty(
+    context: &NirionContext,
+    request: &ExecRequest,
+) -> anyhow::Result<()> {
+    let project_name = &request.target.project;
+    let service_name = &request.target.service;
+    let cmd_args = build_exec_args(&context.projects, request)?;
+    let pty = open_pty()?;
+    let raw_mode = RawMode::enable()?;
+
+    if let Ok(winsize) = tcgetwinsize(stdout_fd()) {
+        let _ = tcsetwinsize(&pty.slave, winsize);
+    }
+
+    let stdin = Stdio::from(dup(&pty.slave)?);
+    let stdout = Stdio::from(dup(&pty.slave)?);
+    let stderr = Stdio::from(pty.slave);
+
+    let mut command = context.docker_command.command();
+    command
+        .arg("compose")
+        .args(&cmd_args)
+        .stdin(stdin)
+        .stdout(stdout)
+        .stderr(stderr);
+
+    #[cfg(unix)]
+    unsafe {
+        command.pre_exec(|| {
+            setsid().map_err(std::io::Error::from)?;
+            Ok(())
+        });
+    }
+
+    let mut child = command
+        .spawn()
+        .context("failed to execute docker compose exec")?;
+
+    let master_in = File::from(dup(&pty.master)?);
+    let master_out = File::from(pty.master);
+    let _stdin_thread = thread::spawn(move || copy_stdin_to(master_in));
+    let stdout_thread = thread::spawn(move || copy_to_stdout(master_out));
+
+    let status = child.wait().await?;
+    drop(raw_mode);
+    stdout_thread.join().map_err(|_| {
+        anyhow::anyhow!("docker compose exec output thread panicked")
+    })??;
+
+    if !status.success() {
+        anyhow::bail!(
+            "Command failed in {}.{} with status {}",
+            project_name,
+            service_name,
+            status
+        );
+    }
+
+    Ok(())
+}
+
+struct Pty {
+    master: OwnedFd,
+    slave: OwnedFd,
+}
+
+fn open_pty() -> anyhow::Result<Pty> {
+    let flags = OpenptFlags::RDWR | OpenptFlags::NOCTTY | OpenptFlags::CLOEXEC;
+    let master = openpt(flags)?;
+    grantpt(&master)?;
+    unlockpt(&master)?;
+    let slave = ioctl_tiocgptpeer(&master, flags)?;
+    Ok(Pty { master, slave })
+}
+
+struct RawMode {
+    original: rustix::termios::Termios,
+}
+
+impl RawMode {
+    fn enable() -> anyhow::Result<Self> {
+        let original = tcgetattr(stdin_fd())?;
+        let mut raw = original.clone();
+        raw.make_raw();
+        tcsetattr(stdin_fd(), OptionalActions::Now, &raw)?;
+        Ok(Self { original })
+    }
+}
+
+impl Drop for RawMode {
+    fn drop(&mut self) {
+        let _ = tcsetattr(stdin_fd(), OptionalActions::Now, &self.original);
+    }
+}
+
+fn stdin_fd() -> BorrowedFd<'static> {
+    // SAFETY: stdin is a process-global file descriptor and is not owned here.
+    unsafe { BorrowedFd::borrow_raw(0) }
+}
+
+fn stdout_fd() -> BorrowedFd<'static> {
+    // SAFETY: stdout is a process-global file descriptor and is not owned here.
+    unsafe { BorrowedFd::borrow_raw(1) }
+}
+
+fn copy_stdin_to(mut output: File) -> anyhow::Result<()> {
+    let mut input = std::io::stdin().lock();
+    std::io::copy(&mut input, &mut output)?;
+    Ok(())
+}
+
+fn copy_to_stdout(mut input: File) -> anyhow::Result<()> {
+    let mut output = std::io::stdout().lock();
+    let mut buffer = [0; 8192];
+    loop {
+        match input.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => {
+                output.write_all(&buffer[..n])?;
+                output.flush()?;
+            }
+            Err(error) if error.raw_os_error() == Some(5) => break,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
 fn build_exec_args(
     projects: &Projects,
     request: &ExecRequest,
+) -> anyhow::Result<Vec<String>> {
+    build_exec_args_with_no_tty(projects, request, request.no_tty)
+}
+
+fn build_exec_args_with_no_tty(
+    projects: &Projects,
+    request: &ExecRequest,
+    no_tty: bool,
 ) -> anyhow::Result<Vec<String>> {
     if request.cmd.is_empty() {
         anyhow::bail!("No command specified for exec");
@@ -61,7 +272,7 @@ fn build_exec_args(
     if request.detach {
         common_args.push("-d".to_string());
     }
-    if request.no_tty {
+    if no_tty {
         common_args.push("-T".to_string());
     }
     if let Some(user) = &request.user {
@@ -282,7 +493,7 @@ exit {exit_code}
 
         assert_eq!(
             fs::read_to_string(args_file).unwrap(),
-            "compose\n--file\ncompose.yml\n--project-name\nmyapp\nexec\nweb\ntrue\n"
+            "compose\n--file\ncompose.yml\n--project-name\nmyapp\nexec\n-T\nweb\ntrue\n"
         );
     }
 
@@ -299,10 +510,9 @@ exit {exit_code}
         .await
         .unwrap_err();
 
-        assert!(
-            err.to_string()
-                .contains("Command failed in myapp.web with status")
-        );
+        assert!(err
+            .to_string()
+            .contains("Command failed in myapp.web with status"));
     }
 
     #[tokio::test]
@@ -317,9 +527,8 @@ exit {exit_code}
         .await
         .unwrap_err();
 
-        assert!(
-            err.to_string()
-                .contains("failed to execute docker compose exec")
-        );
+        assert!(err
+            .to_string()
+            .contains("failed to execute docker compose exec"));
     }
 }

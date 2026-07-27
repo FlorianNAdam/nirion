@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, process::Stdio, time::Duration};
 
 use anyhow::Context;
 use futures::{StreamExt, channel::mpsc, stream::BoxStream};
@@ -555,8 +555,9 @@ fn docker_logs_command(
     }
     command
         .arg(&source.container_id)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .kill_on_drop(true);
     command
 }
