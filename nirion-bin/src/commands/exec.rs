@@ -1,7 +1,26 @@
 use clap::{Args, ValueHint};
 use nirion_lib::{
     context::NirionContext,
-    exec::{exec, ExecRequest},
+    exec::{
+        exec, ExecInput, ExecIo, ExecOutput, ExecRequest, ExecTerminalSize,
+    },
+};
+use rustix::fs::{fcntl_getfl, fcntl_setfl, OFlags};
+use rustix::termios::{
+    isatty, tcgetattr, tcgetwinsize, tcsetattr, OptionalActions,
+};
+use std::{
+    io::Read,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    thread,
+    time::Duration,
+};
+use tokio::{
+    io::{self, AsyncReadExt, AsyncWriteExt},
+    sync::mpsc,
 };
 
 use crate::{ClapSelector, ServiceSelector};
@@ -53,19 +72,204 @@ pub async fn handle_exec(
     args: &ExecArgs,
     context: &NirionContext,
 ) -> anyhow::Result<()> {
-    exec(
+    let mut request = args.request();
+
+    let interactive =
+        !request.detach && !request.no_tty && isatty(std::io::stdin());
+    if !request.detach && !interactive {
+        request.no_tty = true;
+    }
+    let raw_mode = if interactive {
+        Some(RawMode::enable()?)
+    } else {
+        None
+    };
+
+    let (input_tx, input) = mpsc::unbounded_channel();
+    let (output, mut output_rx) = mpsc::unbounded_channel();
+    let stdin_done = Arc::new(AtomicBool::new(false));
+    let stdin_thread = if interactive {
+        let stdin_done = stdin_done.clone();
+        let input_tx = input_tx.clone();
+        Some(thread::spawn(move || {
+            read_interactive_stdin(input_tx, stdin_done)
+        }))
+    } else {
+        None
+    };
+    let stdin_task = if request.detach || interactive {
+        None
+    } else {
+        Some(tokio::spawn(async move {
+            let mut stdin = io::stdin();
+            let mut buffer = [0; 8192];
+            loop {
+                let n = stdin.read(&mut buffer).await?;
+                if n == 0 {
+                    break;
+                }
+                if input_tx
+                    .send(ExecInput::Stdin(buffer[..n].to_vec()))
+                    .is_err()
+                {
+                    return anyhow::Ok(());
+                }
+            }
+            anyhow::Ok(())
+        }))
+    };
+    let output_task = tokio::spawn(async move {
+        let mut stdout = io::stdout();
+        let mut stderr = io::stderr();
+        while let Some(event) = output_rx.recv().await {
+            match event {
+                ExecOutput::Stdout(data) => {
+                    stdout.write_all(&data).await?;
+                    stdout.flush().await?;
+                }
+                ExecOutput::Stderr(data) => {
+                    stderr.write_all(&data).await?;
+                    stderr.flush().await?;
+                }
+            }
+        }
+        anyhow::Ok(())
+    });
+
+    let terminal_size = interactive
+        .then(current_terminal_size)
+        .flatten();
+
+    let result = exec(
         context,
-        &ExecRequest {
-            target: args.target.clone(),
-            detach: args.detach,
-            no_tty: args.no_tty,
-            user: args.user.clone(),
-            workdir: args.workdir.clone(),
-            index: args.index,
-            env: args.env.clone(),
-            privileged: args.privileged,
-            cmd: args.cmd.clone(),
+        &request,
+        ExecIo {
+            input,
+            output,
+            terminal_size,
         },
     )
-    .await
+    .await;
+    stdin_done.store(true, Ordering::Relaxed);
+    drop(raw_mode);
+    if let Some(stdin_task) = stdin_task {
+        stdin_task.abort();
+    }
+    if let Some(stdin_thread) = stdin_thread {
+        stdin_thread.join().map_err(|_| {
+            anyhow::anyhow!("nirion exec stdin thread panicked")
+        })??;
+    }
+    output_task.await??;
+    result
+}
+
+impl ExecArgs {
+    fn request(&self) -> ExecRequest {
+        ExecRequest {
+            target: self.target.clone(),
+            detach: self.detach,
+            no_tty: self.no_tty,
+            user: self.user.clone(),
+            workdir: self.workdir.clone(),
+            index: self.index,
+            env: self.env.clone(),
+            privileged: self.privileged,
+            cmd: self.cmd.clone(),
+        }
+    }
+}
+
+fn current_terminal_size() -> Option<ExecTerminalSize> {
+    tcgetwinsize(std::io::stdout())
+        .ok()
+        .map(|size| ExecTerminalSize {
+            rows: size.ws_row,
+            cols: size.ws_col,
+            xpixel: size.ws_xpixel,
+            ypixel: size.ws_ypixel,
+        })
+}
+
+struct RawMode {
+    original: rustix::termios::Termios,
+    original_flags: OFlags,
+}
+
+impl RawMode {
+    fn enable() -> anyhow::Result<Self> {
+        let original = tcgetattr(std::io::stdin())?;
+        let original_flags = fcntl_getfl(std::io::stdin())?;
+        let mut raw = original.clone();
+        raw.make_raw();
+        tcsetattr(std::io::stdin(), OptionalActions::Now, &raw)?;
+        fcntl_setfl(std::io::stdin(), original_flags | OFlags::NONBLOCK)?;
+        Ok(Self {
+            original,
+            original_flags,
+        })
+    }
+}
+
+impl Drop for RawMode {
+    fn drop(&mut self) {
+        let _ =
+            tcsetattr(std::io::stdin(), OptionalActions::Now, &self.original);
+        let _ = fcntl_setfl(std::io::stdin(), self.original_flags);
+    }
+}
+
+fn read_interactive_stdin(
+    input_tx: mpsc::UnboundedSender<ExecInput>,
+    done: Arc<AtomicBool>,
+) -> anyhow::Result<()> {
+    let mut stdin = std::io::stdin().lock();
+    let mut buffer = [0; 8192];
+
+    while !done.load(Ordering::Relaxed) {
+        match stdin.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => {
+                for chunk in split_control_inputs(&buffer[..n]) {
+                    if input_tx.send(chunk).is_err() {
+                        return Ok(());
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+
+    Ok(())
+}
+
+fn split_control_inputs(input: &[u8]) -> Vec<ExecInput> {
+    let mut events = Vec::new();
+    let mut start = 0;
+
+    for (index, byte) in input.iter().enumerate() {
+        let event = match *byte {
+            0x03 => Some(ExecInput::Interrupt),
+            0x04 => Some(ExecInput::Eof),
+            _ => None,
+        };
+        let Some(event) = event else {
+            continue;
+        };
+
+        if start < index {
+            events.push(ExecInput::Stdin(input[start..index].to_vec()));
+        }
+        events.push(event);
+        start = index + 1;
+    }
+
+    if start < input.len() {
+        events.push(ExecInput::Stdin(input[start..].to_vec()));
+    }
+
+    events
 }

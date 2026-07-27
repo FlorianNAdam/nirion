@@ -1198,6 +1198,7 @@ dependencies = [
  "nirion-tui-lib",
  "once_cell",
  "paste",
+ "rustix",
  "serde",
  "serde_json",
  "serde_yaml_ng",

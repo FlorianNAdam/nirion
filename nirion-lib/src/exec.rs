@@ -2,22 +2,29 @@ use std::{
     fs::File,
     io::{Read, Write},
     ops::Deref,
-    os::fd::{BorrowedFd, OwnedFd},
+    os::fd::OwnedFd,
     process::Stdio,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
+    time::Duration,
 };
 
 use anyhow::Context;
 use rustix::{
+    fs::{OFlags, fcntl_getfl, fcntl_setfl},
     io::dup,
-    process::setsid,
+    process::{Pid, Signal, ioctl_tiocsctty, kill_process_group, setsid},
     pty::{grantpt, ioctl_tiocgptpeer, openpt, unlockpt, OpenptFlags},
     termios::{
-        isatty, tcgetattr, tcgetwinsize, tcsetattr, tcsetwinsize,
-        OptionalActions,
-    },
+        tcsetwinsize, OptionalActions, Winsize, },
 };
-use tokio::io::{self, AsyncWriteExt};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
+    sync::mpsc,
+};
 
 use crate::{
     context::NirionContext,
@@ -37,25 +44,52 @@ pub struct ExecRequest {
     pub cmd: Vec<String>,
 }
 
+pub struct ExecIo {
+    pub input: mpsc::UnboundedReceiver<ExecInput>,
+    pub output: mpsc::UnboundedSender<ExecOutput>,
+    pub terminal_size: Option<ExecTerminalSize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecInput {
+    Stdin(Vec<u8>),
+    Interrupt,
+    Eof,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecOutput {
+    Stdout(Vec<u8>),
+    Stderr(Vec<u8>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecTerminalSize {
+    pub rows: u16,
+    pub cols: u16,
+    pub xpixel: u16,
+    pub ypixel: u16,
+}
+
 pub async fn exec(
     context: &NirionContext,
     request: &ExecRequest,
+    io: ExecIo,
 ) -> anyhow::Result<()> {
-    if request.detach || request.no_tty || !isatty(stdin_fd()) {
-        return exec_with_pipes(context, request, !request.detach).await;
+    if request.detach || request.no_tty {
+        return exec_with_pipes(context, request, io).await;
     }
-    exec_with_pty(context, request).await
+    exec_with_pty(context, request, io).await
 }
 
 async fn exec_with_pipes(
     context: &NirionContext,
     request: &ExecRequest,
-    force_no_tty: bool,
+    mut io: ExecIo,
 ) -> anyhow::Result<()> {
     let project_name = &request.target.project;
     let service_name = &request.target.service;
-    let cmd_args =
-        build_exec_args_with_no_tty(&context.projects, request, force_no_tty)?;
+    let cmd_args = build_exec_args(&context.projects, request)?;
 
     let mut command = context.docker_command.command();
     command.arg("compose").args(&cmd_args);
@@ -71,6 +105,7 @@ async fn exec_with_pipes(
     let mut child = command
         .spawn()
         .context("failed to execute docker compose exec")?;
+    let child_pgid = child_process_group(&child)?;
 
     let stdin_task = if request.detach {
         None
@@ -79,30 +114,39 @@ async fn exec_with_pipes(
             anyhow::bail!("failed to capture docker compose exec stdin");
         };
         Some(tokio::spawn(async move {
-            let mut stdin = io::stdin();
-            let result = io::copy(&mut stdin, &mut child_stdin).await;
+            while let Some(input) = io.input.recv().await {
+                match input {
+                    ExecInput::Stdin(data) => {
+                        child_stdin.write_all(&data).await?;
+                    }
+                    ExecInput::Interrupt => {
+                        signal_interrupt(child_pgid);
+                    }
+                    ExecInput::Eof => break,
+                }
+            }
             let _ = child_stdin.shutdown().await;
-            result
+            anyhow::Ok(())
         }))
     };
 
-    let Some(mut child_stdout) = child.stdout.take() else {
+    let Some(child_stdout) = child.stdout.take() else {
         anyhow::bail!("failed to capture docker compose exec stdout");
     };
-    let stdout_task = tokio::spawn(async move {
-        let mut stdout = io::stdout();
-        io::copy(&mut child_stdout, &mut stdout).await?;
-        stdout.flush().await
-    });
+    let stdout_task = tokio::spawn(read_exec_output(
+        child_stdout,
+        ExecOutput::Stdout,
+        io.output.clone(),
+    ));
 
-    let Some(mut child_stderr) = child.stderr.take() else {
+    let Some(child_stderr) = child.stderr.take() else {
         anyhow::bail!("failed to capture docker compose exec stderr");
     };
-    let stderr_task = tokio::spawn(async move {
-        let mut stderr = io::stderr();
-        io::copy(&mut child_stderr, &mut stderr).await?;
-        stderr.flush().await
-    });
+    let stderr_task = tokio::spawn(read_exec_output(
+        child_stderr,
+        ExecOutput::Stderr,
+        io.output.clone(),
+    ));
 
     let status = child.wait().await?;
 
@@ -127,17 +171,19 @@ async fn exec_with_pipes(
 async fn exec_with_pty(
     context: &NirionContext,
     request: &ExecRequest,
+    io: ExecIo,
 ) -> anyhow::Result<()> {
     let project_name = &request.target.project;
     let service_name = &request.target.service;
     let cmd_args = build_exec_args(&context.projects, request)?;
+    let terminal_size = io.terminal_size;
     let pty = open_pty()?;
-    let raw_mode = RawMode::enable()?;
 
-    if let Ok(winsize) = tcgetwinsize(stdout_fd()) {
-        let _ = tcsetwinsize(&pty.slave, winsize);
+    if let Some(size) = terminal_size {
+        let _ = tcsetwinsize(&pty.slave, size.into());
     }
 
+    let controlling_terminal = dup(&pty.slave)?;
     let stdin = Stdio::from(dup(&pty.slave)?);
     let stdout = Stdio::from(dup(&pty.slave)?);
     let stderr = Stdio::from(pty.slave);
@@ -152,8 +198,10 @@ async fn exec_with_pty(
 
     #[cfg(unix)]
     unsafe {
-        command.pre_exec(|| {
+        command.pre_exec(move || {
             setsid().map_err(std::io::Error::from)?;
+            ioctl_tiocsctty(&controlling_terminal)
+                .map_err(std::io::Error::from)?;
             Ok(())
         });
     }
@@ -164,11 +212,21 @@ async fn exec_with_pty(
 
     let master_in = File::from(dup(&pty.master)?);
     let master_out = File::from(pty.master);
-    let _stdin_thread = thread::spawn(move || copy_stdin_to(master_in));
-    let stdout_thread = thread::spawn(move || copy_to_stdout(master_out));
+    let child_done = Arc::new(AtomicBool::new(false));
+    let input_child_done = child_done.clone();
+    let output_child_done = child_done.clone();
+    let stdin_thread = thread::spawn(move || {
+        copy_channel_to(io.input, master_in, input_child_done)
+    });
+    let stdout_thread = thread::spawn(move || {
+        copy_pty_to_channel(master_out, io.output, output_child_done)
+    });
 
     let status = child.wait().await?;
-    drop(raw_mode);
+    child_done.store(true, Ordering::Relaxed);
+    stdin_thread.join().map_err(|_| {
+        anyhow::anyhow!("docker compose exec input thread panicked")
+    })??;
     stdout_thread.join().map_err(|_| {
         anyhow::anyhow!("docker compose exec output thread panicked")
     })??;
@@ -199,56 +257,112 @@ fn open_pty() -> anyhow::Result<Pty> {
     Ok(Pty { master, slave })
 }
 
-struct RawMode {
-    original: rustix::termios::Termios,
+fn child_process_group(child: &tokio::process::Child) -> anyhow::Result<Pid> {
+    let id = child.id().ok_or_else(|| {
+        anyhow::anyhow!("docker compose exec child has no process id")
+    })?;
+    Pid::from_raw(id as i32).ok_or_else(|| {
+        anyhow::anyhow!("docker compose exec child has invalid process id {id}")
+    })
 }
 
-impl RawMode {
-    fn enable() -> anyhow::Result<Self> {
-        let original = tcgetattr(stdin_fd())?;
-        let mut raw = original.clone();
-        raw.make_raw();
-        tcsetattr(stdin_fd(), OptionalActions::Now, &raw)?;
-        Ok(Self { original })
+fn signal_interrupt(pgid: Pid) {
+    let _ = kill_process_group(pgid, Signal::INT);
+}
+
+async fn read_exec_output(
+    mut input: impl AsyncRead + Unpin,
+    event: fn(Vec<u8>) -> ExecOutput,
+    output: mpsc::UnboundedSender<ExecOutput>,
+) -> anyhow::Result<()> {
+    let mut buffer = [0; 8192];
+    loop {
+        let n = input.read(&mut buffer).await?;
+        if n == 0 {
+            break;
+        }
+        let _ = output.send(event(buffer[..n].to_vec()));
     }
-}
-
-impl Drop for RawMode {
-    fn drop(&mut self) {
-        let _ = tcsetattr(stdin_fd(), OptionalActions::Now, &self.original);
-    }
-}
-
-fn stdin_fd() -> BorrowedFd<'static> {
-    // SAFETY: stdin is a process-global file descriptor and is not owned here.
-    unsafe { BorrowedFd::borrow_raw(0) }
-}
-
-fn stdout_fd() -> BorrowedFd<'static> {
-    // SAFETY: stdout is a process-global file descriptor and is not owned here.
-    unsafe { BorrowedFd::borrow_raw(1) }
-}
-
-fn copy_stdin_to(mut output: File) -> anyhow::Result<()> {
-    let mut input = std::io::stdin().lock();
-    std::io::copy(&mut input, &mut output)?;
     Ok(())
 }
 
-fn copy_to_stdout(mut input: File) -> anyhow::Result<()> {
-    let mut output = std::io::stdout().lock();
+impl From<ExecTerminalSize> for Winsize {
+    fn from(size: ExecTerminalSize) -> Self {
+        Self {
+            ws_row: size.rows,
+            ws_col: size.cols,
+            ws_xpixel: size.xpixel,
+            ws_ypixel: size.ypixel,
+        }
+    }
+}
+
+fn copy_channel_to(
+    mut input: mpsc::UnboundedReceiver<ExecInput>,
+    mut output: File,
+    child_done: Arc<AtomicBool>,
+) -> anyhow::Result<()> {
+    loop {
+        let input = match input.try_recv() {
+            Ok(input) => input,
+            Err(mpsc::error::TryRecvError::Empty) => {
+                if child_done.load(Ordering::Relaxed) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+                continue;
+            }
+            Err(mpsc::error::TryRecvError::Disconnected) => break,
+        };
+
+        match input {
+            ExecInput::Stdin(data) => {
+                output.write_all(&data)?;
+                output.flush()?;
+            }
+            ExecInput::Interrupt => {
+                output.write_all(&[0x03])?;
+                output.flush()?;
+            }
+            ExecInput::Eof => {
+                output.write_all(&[0x04])?;
+                output.flush()?;
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn copy_pty_to_channel(
+    mut input: File,
+    output: mpsc::UnboundedSender<ExecOutput>,
+    child_done: Arc<AtomicBool>,
+) -> anyhow::Result<()> {
+    set_nonblocking(&input)?;
     let mut buffer = [0; 8192];
     loop {
         match input.read(&mut buffer) {
             Ok(0) => break,
             Ok(n) => {
-                output.write_all(&buffer[..n])?;
-                output.flush()?;
+                let _ = output.send(ExecOutput::Stdout(buffer[..n].to_vec()));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if child_done.load(Ordering::Relaxed) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
             }
             Err(error) if error.raw_os_error() == Some(5) => break,
             Err(error) => return Err(error.into()),
         }
     }
+    Ok(())
+}
+
+fn set_nonblocking(file: &File) -> anyhow::Result<()> {
+    let flags = fcntl_getfl(file)?;
+    fcntl_setfl(file, flags | OFlags::NONBLOCK)?;
     Ok(())
 }
 
@@ -406,6 +520,22 @@ exit {exit_code}
         }
     }
 
+    fn no_tty_request(cmd: Vec<&str>) -> ExecRequest {
+        let mut request = request(cmd);
+        request.no_tty = true;
+        request
+    }
+
+    fn exec_io() -> ExecIo {
+        let (_, input) = mpsc::unbounded_channel();
+        let (output, _) = mpsc::unbounded_channel();
+        ExecIo {
+            input,
+            output,
+            terminal_size: None,
+        }
+    }
+
     #[test]
     fn build_exec_args_rejects_empty_command() {
         let projects = projects();
@@ -486,7 +616,8 @@ exit {exit_code}
 
         exec(
             &context(fake_docker_command(&docker)),
-            &request(vec!["true"]),
+            &no_tty_request(vec!["true"]),
+            exec_io(),
         )
         .await
         .unwrap();
@@ -505,7 +636,8 @@ exit {exit_code}
 
         let err = exec(
             &context(fake_docker_command(&docker)),
-            &request(vec!["false"]),
+            &no_tty_request(vec!["false"]),
+            exec_io(),
         )
         .await
         .unwrap_err();
@@ -522,7 +654,8 @@ exit {exit_code}
 
         let err = exec(
             &context(DockerCommand::new(missing_docker)),
-            &request(vec!["true"]),
+            &no_tty_request(vec!["true"]),
+            exec_io(),
         )
         .await
         .unwrap_err();
