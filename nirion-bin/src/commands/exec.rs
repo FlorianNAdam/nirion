@@ -1,7 +1,9 @@
 use clap::{Args, ValueHint};
 use nirion_lib::{
     context::NirionContext,
-    exec::{exec, ExecIo, ExecOutput, ExecRequest, ExecTerminalSize},
+    exec::{
+        exec, ExecInput, ExecIo, ExecOutput, ExecRequest, ExecTerminalSize,
+    },
 };
 use rustix::fs::{fcntl_getfl, fcntl_setfl, OFlags};
 use rustix::termios::{
@@ -18,6 +20,7 @@ use std::{
 };
 use tokio::{
     io::{self, AsyncReadExt, AsyncWriteExt},
+    signal::unix::{signal, SignalKind},
     sync::mpsc,
     task::{spawn_blocking, JoinHandle},
 };
@@ -73,8 +76,10 @@ pub async fn handle_exec(
 ) -> anyhow::Result<()> {
     let mut request = args.request();
 
-    let interactive =
-        !request.detach && !request.no_tty && isatty(std::io::stdin());
+    let interactive = !request.detach
+        && !request.no_tty
+        && isatty(std::io::stdin())
+        && isatty(std::io::stdout());
     if !request.detach && !interactive {
         request.no_tty = true;
     }
@@ -93,7 +98,8 @@ pub async fn handle_exec(
         stdin_done.clone(),
     );
     let stdin_task =
-        spawn_stdin_forwarder(request.detach || interactive, input_tx);
+        spawn_stdin_forwarder(request.detach || interactive, input_tx.clone());
+    let resize_task = spawn_resize_forwarder(interactive, input_tx);
     let output_task = spawn_output_forwarder(output_rx);
 
     let terminal_size = interactive
@@ -111,20 +117,23 @@ pub async fn handle_exec(
     )
     .await;
     stdin_done.store(true, Ordering::Relaxed);
-    drop(raw_mode);
     if let Some(stdin_task) = stdin_task {
         stdin_task.abort();
+    }
+    if let Some(resize_task) = resize_task {
+        resize_task.abort();
     }
     if let Some(stdin_thread) = stdin_thread {
         stdin_thread.await??;
     }
+    drop(raw_mode);
     output_task.await??;
     result
 }
 
 fn spawn_interactive_stdin_forwarder(
     interactive: bool,
-    input_tx: mpsc::UnboundedSender<Vec<u8>>,
+    input_tx: mpsc::UnboundedSender<ExecInput>,
     done: Arc<AtomicBool>,
 ) -> Option<JoinHandle<anyhow::Result<()>>> {
     interactive
@@ -133,7 +142,7 @@ fn spawn_interactive_stdin_forwarder(
 
 fn spawn_stdin_forwarder(
     disabled: bool,
-    input_tx: mpsc::UnboundedSender<Vec<u8>>,
+    input_tx: mpsc::UnboundedSender<ExecInput>,
 ) -> Option<JoinHandle<anyhow::Result<()>>> {
     (!disabled).then(|| {
         tokio::spawn(async move {
@@ -145,10 +154,33 @@ fn spawn_stdin_forwarder(
                     break;
                 }
                 if input_tx
-                    .send(buffer[..n].to_vec())
+                    .send(ExecInput::Stdin(buffer[..n].to_vec()))
                     .is_err()
                 {
                     return anyhow::Ok(());
+                }
+            }
+            anyhow::Ok(())
+        })
+    })
+}
+
+fn spawn_resize_forwarder(
+    interactive: bool,
+    input_tx: mpsc::UnboundedSender<ExecInput>,
+) -> Option<JoinHandle<anyhow::Result<()>>> {
+    interactive.then(|| {
+        tokio::spawn(async move {
+            let mut sigwinch = signal(SignalKind::window_change())?;
+            while sigwinch.recv().await.is_some() {
+                let Some(size) = current_terminal_size() else {
+                    continue;
+                };
+                if input_tx
+                    .send(ExecInput::Resize(size))
+                    .is_err()
+                {
+                    break;
                 }
             }
             anyhow::Ok(())
@@ -217,7 +249,13 @@ impl RawMode {
         let mut raw = original.clone();
         raw.make_raw();
         tcsetattr(std::io::stdin(), OptionalActions::Now, &raw)?;
-        fcntl_setfl(std::io::stdin(), original_flags | OFlags::NONBLOCK)?;
+        if let Err(error) =
+            fcntl_setfl(std::io::stdin(), original_flags | OFlags::NONBLOCK)
+        {
+            let _ =
+                tcsetattr(std::io::stdin(), OptionalActions::Now, &original);
+            return Err(error.into());
+        }
         Ok(Self {
             original,
             original_flags,
@@ -234,7 +272,7 @@ impl Drop for RawMode {
 }
 
 fn read_interactive_stdin(
-    input_tx: mpsc::UnboundedSender<Vec<u8>>,
+    input_tx: mpsc::UnboundedSender<ExecInput>,
     done: Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
     let mut stdin = std::io::stdin().lock();
@@ -245,7 +283,7 @@ fn read_interactive_stdin(
             Ok(0) => break,
             Ok(n) => {
                 if input_tx
-                    .send(buffer[..n].to_vec())
+                    .send(ExecInput::Stdin(buffer[..n].to_vec()))
                     .is_err()
                 {
                     return Ok(());

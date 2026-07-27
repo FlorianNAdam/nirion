@@ -44,9 +44,15 @@ pub struct ExecRequest {
 }
 
 pub struct ExecIo {
-    pub input: mpsc::UnboundedReceiver<Vec<u8>>,
+    pub input: mpsc::UnboundedReceiver<ExecInput>,
     pub output: mpsc::UnboundedSender<ExecOutput>,
     pub terminal_size: Option<ExecTerminalSize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecInput {
+    Stdin(Vec<u8>),
+    Resize(ExecTerminalSize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,7 +134,7 @@ async fn exec_with_pipes(
 fn spawn_pipe_input_task(
     child: &mut tokio::process::Child,
     detach: bool,
-    mut input: mpsc::UnboundedReceiver<Vec<u8>>,
+    mut input: mpsc::UnboundedReceiver<ExecInput>,
 ) -> anyhow::Result<Option<tokio::task::JoinHandle<anyhow::Result<()>>>> {
     if detach {
         return Ok(None);
@@ -139,8 +145,10 @@ fn spawn_pipe_input_task(
     };
 
     Ok(Some(tokio::spawn(async move {
-        while let Some(data) = input.recv().await {
-            child_stdin.write_all(&data).await?;
+        while let Some(input) = input.recv().await {
+            if let ExecInput::Stdin(data) = input {
+                child_stdin.write_all(&data).await?;
+            }
         }
         let _ = child_stdin.shutdown().await;
         Ok(())
@@ -276,7 +284,7 @@ impl From<ExecTerminalSize> for Winsize {
 }
 
 fn copy_channel_to_pty(
-    mut input: mpsc::UnboundedReceiver<Vec<u8>>,
+    mut input: mpsc::UnboundedReceiver<ExecInput>,
     mut output: File,
     child_done: Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
@@ -293,8 +301,15 @@ fn copy_channel_to_pty(
             Err(mpsc::error::TryRecvError::Disconnected) => break,
         };
 
-        output.write_all(&input)?;
-        output.flush()?;
+        match input {
+            ExecInput::Stdin(data) => {
+                output.write_all(&data)?;
+                output.flush()?;
+            }
+            ExecInput::Resize(size) => {
+                let _ = tcsetwinsize(&output, size.into());
+            }
+        }
     }
     Ok(())
 }
@@ -318,11 +333,19 @@ fn copy_pty_to_channel(
                 }
                 thread::sleep(Duration::from_millis(10));
             }
-            Err(error) if error.raw_os_error() == Some(5) => break,
+            Err(error) if is_linux_pty_hangup(&error) => break,
             Err(error) => return Err(error.into()),
         }
     }
     Ok(())
+}
+
+fn is_linux_pty_hangup(error: &std::io::Error) -> bool {
+    const LINUX_EIO: i32 = 5;
+
+    // Linux reports EIO when the slave side of a PTY has closed. Treat that as
+    // EOF for the master-side reader.
+    error.raw_os_error() == Some(LINUX_EIO)
 }
 
 fn set_nonblocking(file: &File) -> anyhow::Result<()> {
@@ -389,8 +412,10 @@ mod tests {
     use super::*;
     use crate::{docker::DockerCommand, lock::LockedImages};
     use nirion_oci_lib::client::NirionOciClient;
-    use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+    use rustix::termios::tcgetwinsize;
+    use std::{fs, io::Write, os::unix::fs::PermissionsExt, path::Path};
     use std::{path::PathBuf, sync::Arc};
+    use tokio::time::{Duration as TokioDuration, timeout};
 
     fn write_fake_docker(
         dir: &Path,
@@ -620,5 +645,60 @@ exit {exit_code}
         assert!(err
             .to_string()
             .contains("failed to execute docker compose exec"));
+    }
+
+    #[tokio::test]
+    async fn copy_pty_to_channel_forwards_slave_output() {
+        let pty = open_pty().unwrap();
+        let mut slave = File::from(pty.slave);
+        let master = File::from(pty.master);
+        let child_done = Arc::new(AtomicBool::new(false));
+        let thread_child_done = child_done.clone();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        let thread = thread::spawn(move || {
+            copy_pty_to_channel(master, tx, thread_child_done)
+        });
+        slave
+            .write_all(b"hello from pty")
+            .unwrap();
+
+        let output = timeout(TokioDuration::from_secs(1), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(output, ExecOutput::Stdout(b"hello from pty".to_vec()));
+
+        child_done.store(true, Ordering::Relaxed);
+        drop(slave);
+        thread.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn copy_channel_to_pty_applies_resize_events() {
+        let pty = open_pty().unwrap();
+        let master_for_assertion = File::from(dup(&pty.master).unwrap());
+        let _slave = File::from(pty.slave);
+        let master = File::from(pty.master);
+        let (tx, rx) = mpsc::unbounded_channel();
+        let size = ExecTerminalSize {
+            rows: 37,
+            cols: 103,
+            xpixel: 7,
+            ypixel: 11,
+        };
+
+        tx.send(ExecInput::Resize(size))
+            .unwrap();
+        drop(tx);
+
+        copy_channel_to_pty(rx, master, Arc::new(AtomicBool::new(false)))
+            .unwrap();
+
+        let actual = tcgetwinsize(&master_for_assertion).unwrap();
+        assert_eq!(actual.ws_row, size.rows);
+        assert_eq!(actual.ws_col, size.cols);
+        assert_eq!(actual.ws_xpixel, size.xpixel);
+        assert_eq!(actual.ws_ypixel, size.ypixel);
     }
 }
