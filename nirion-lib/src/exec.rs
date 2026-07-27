@@ -2,13 +2,8 @@ use std::{
     fs::File,
     io::{Read, Write},
     ops::Deref,
+    os::fd::OwnedFd,
     process::Stdio,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    thread,
-    time::Duration,
 };
 
 use anyhow::Context;
@@ -19,10 +14,10 @@ use rustix::{
     termios::{
         tcsetwinsize, OptionalActions, Winsize, },
 };
-use std::os::fd::OwnedFd;
 use tokio::{
+    io::unix::AsyncFd,
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
-    sync::mpsc,
+    sync::{mpsc, watch},
 };
 
 use crate::{
@@ -203,24 +198,24 @@ async fn exec_with_pty(
 
     let master_in = File::from(dup(&pty.master)?);
     let master_out = File::from(pty.master);
-    let child_done = Arc::new(AtomicBool::new(false));
-    let input_child_done = child_done.clone();
-    let output_child_done = child_done.clone();
-    let stdin_thread = thread::spawn(move || {
-        copy_channel_to_pty(io.input, master_in, input_child_done)
-    });
-    let stdout_thread = thread::spawn(move || {
-        copy_pty_to_channel(master_out, io.output, output_child_done)
-    });
+    set_nonblocking(&master_in)?;
+    set_nonblocking(&master_out)?;
+    let (child_done_tx, child_done_rx) = watch::channel(false);
+    let stdin_task = tokio::spawn(copy_channel_to_pty(
+        io.input,
+        AsyncFd::new(master_in)?,
+        child_done_rx.clone(),
+    ));
+    let stdout_task = tokio::spawn(copy_pty_to_channel(
+        AsyncFd::new(master_out)?,
+        io.output,
+        child_done_rx,
+    ));
 
     let status = child.wait().await?;
-    child_done.store(true, Ordering::Relaxed);
-    stdin_thread.join().map_err(|_| {
-        anyhow::anyhow!("docker compose exec input thread panicked")
-    })??;
-    stdout_thread.join().map_err(|_| {
-        anyhow::anyhow!("docker compose exec output thread panicked")
-    })??;
+    let _ = child_done_tx.send(true);
+    stdin_task.await??;
+    stdout_task.await??;
 
     ensure_exec_success(project_name, service_name, status)
 }
@@ -283,55 +278,110 @@ impl From<ExecTerminalSize> for Winsize {
     }
 }
 
-fn copy_channel_to_pty(
+async fn copy_channel_to_pty(
     mut input: mpsc::UnboundedReceiver<ExecInput>,
-    mut output: File,
-    child_done: Arc<AtomicBool>,
+    output: AsyncFd<File>,
+    mut child_done: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
     loop {
-        let input = match input.try_recv() {
-            Ok(input) => input,
-            Err(mpsc::error::TryRecvError::Empty) => {
-                if child_done.load(Ordering::Relaxed) {
+        let input = tokio::select! {
+            input = input.recv() => input,
+            changed = child_done.changed(), if !*child_done.borrow() => {
+                changed?;
+                if *child_done.borrow() {
                     break;
                 }
-                thread::sleep(Duration::from_millis(10));
                 continue;
             }
-            Err(mpsc::error::TryRecvError::Disconnected) => break,
         };
+
+        let Some(input) = input else { break };
 
         match input {
             ExecInput::Stdin(data) => {
-                output.write_all(&data)?;
-                output.flush()?;
+                write_all_pty(&output, &data).await?;
             }
             ExecInput::Resize(size) => {
-                let _ = tcsetwinsize(&output, size.into());
+                let _ = tcsetwinsize(output.get_ref(), size.into());
             }
         }
     }
     Ok(())
 }
 
-fn copy_pty_to_channel(
-    mut input: File,
+async fn copy_pty_to_channel(
+    input: AsyncFd<File>,
     output: mpsc::UnboundedSender<ExecOutput>,
-    child_done: Arc<AtomicBool>,
+    mut child_done: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
-    set_nonblocking(&input)?;
     let mut buffer = [0; 8192];
     loop {
-        match input.read(&mut buffer) {
+        tokio::select! {
+            biased;
+
+            changed = child_done.changed(), if !*child_done.borrow() => {
+                changed?;
+                if *child_done.borrow() {
+                    drain_pty(&input, &output, &mut buffer)?;
+                    break;
+                }
+            }
+
+            ready = input.readable() => {
+                let mut guard = ready?;
+                match guard.try_io(|inner| {
+                    let mut input = inner.get_ref();
+                    input.read(&mut buffer)
+                }) {
+                    Ok(Ok(0)) => break,
+                    Ok(Ok(n)) => {
+                        let _ = output.send(ExecOutput::Stdout(buffer[..n].to_vec()));
+                    }
+                    Ok(Err(error)) if is_linux_pty_hangup(&error) => break,
+                    Ok(Err(error)) => return Err(error.into()),
+                    Err(_would_block) => continue,
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn write_all_pty(
+    output: &AsyncFd<File>,
+    mut data: &[u8],
+) -> anyhow::Result<()> {
+    while !data.is_empty() {
+        let mut guard = output.writable().await?;
+        match guard.try_io(|inner| {
+            let mut output = inner.get_ref();
+            output.write(data)
+        }) {
+            Ok(Ok(0)) => {
+                anyhow::bail!("failed to write to docker compose exec pty")
+            }
+            Ok(Ok(n)) => data = &data[n..],
+            Ok(Err(error)) => return Err(error.into()),
+            Err(_would_block) => continue,
+        }
+    }
+    Ok(())
+}
+
+fn drain_pty(
+    input: &AsyncFd<File>,
+    output: &mpsc::UnboundedSender<ExecOutput>,
+    buffer: &mut [u8],
+) -> anyhow::Result<()> {
+    loop {
+        let mut input = input.get_ref();
+        match input.read(buffer) {
             Ok(0) => break,
             Ok(n) => {
                 let _ = output.send(ExecOutput::Stdout(buffer[..n].to_vec()));
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                if child_done.load(Ordering::Relaxed) {
-                    break;
-                }
-                thread::sleep(Duration::from_millis(10));
+                break;
             }
             Err(error) if is_linux_pty_hangup(&error) => break,
             Err(error) => return Err(error.into()),
@@ -652,13 +702,15 @@ exit {exit_code}
         let pty = open_pty().unwrap();
         let mut slave = File::from(pty.slave);
         let master = File::from(pty.master);
-        let child_done = Arc::new(AtomicBool::new(false));
-        let thread_child_done = child_done.clone();
         let (tx, mut rx) = mpsc::unbounded_channel();
+        let (child_done_tx, child_done_rx) = watch::channel(false);
 
-        let thread = thread::spawn(move || {
-            copy_pty_to_channel(master, tx, thread_child_done)
-        });
+        set_nonblocking(&master).unwrap();
+        let task = tokio::spawn(copy_pty_to_channel(
+            AsyncFd::new(master).unwrap(),
+            tx,
+            child_done_rx,
+        ));
         slave
             .write_all(b"hello from pty")
             .unwrap();
@@ -669,18 +721,19 @@ exit {exit_code}
             .unwrap();
         assert_eq!(output, ExecOutput::Stdout(b"hello from pty".to_vec()));
 
-        child_done.store(true, Ordering::Relaxed);
+        let _ = child_done_tx.send(true);
         drop(slave);
-        thread.join().unwrap().unwrap();
+        task.await.unwrap().unwrap();
     }
 
-    #[test]
-    fn copy_channel_to_pty_applies_resize_events() {
+    #[tokio::test]
+    async fn copy_channel_to_pty_applies_resize_events() {
         let pty = open_pty().unwrap();
         let master_for_assertion = File::from(dup(&pty.master).unwrap());
         let _slave = File::from(pty.slave);
         let master = File::from(pty.master);
         let (tx, rx) = mpsc::unbounded_channel();
+        let (_child_done_tx, child_done_rx) = watch::channel(false);
         let size = ExecTerminalSize {
             rows: 37,
             cols: 103,
@@ -692,7 +745,9 @@ exit {exit_code}
             .unwrap();
         drop(tx);
 
-        copy_channel_to_pty(rx, master, Arc::new(AtomicBool::new(false)))
+        set_nonblocking(&master).unwrap();
+        copy_channel_to_pty(rx, AsyncFd::new(master).unwrap(), child_done_rx)
+            .await
             .unwrap();
 
         let actual = tcgetwinsize(&master_for_assertion).unwrap();

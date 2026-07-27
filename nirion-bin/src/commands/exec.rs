@@ -9,20 +9,12 @@ use rustix::fs::{fcntl_getfl, fcntl_setfl, OFlags};
 use rustix::termios::{
     isatty, tcgetattr, tcgetwinsize, tcsetattr, OptionalActions,
 };
-use std::{
-    io::Read,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    thread,
-    time::Duration,
-};
+use std::io::Read;
 use tokio::{
-    io::{self, AsyncReadExt, AsyncWriteExt},
+    io::{self, unix::AsyncFd, AsyncReadExt, AsyncWriteExt},
     signal::unix::{signal, SignalKind},
-    sync::mpsc,
-    task::{spawn_blocking, JoinHandle},
+    sync::{mpsc, watch},
+    task::JoinHandle,
 };
 
 use crate::{ClapSelector, ServiceSelector};
@@ -91,11 +83,11 @@ pub async fn handle_exec(
 
     let (input_tx, input) = mpsc::unbounded_channel();
     let (output, output_rx) = mpsc::unbounded_channel();
-    let stdin_done = Arc::new(AtomicBool::new(false));
+    let (stdin_done_tx, stdin_done_rx) = watch::channel(false);
     let stdin_thread = spawn_interactive_stdin_forwarder(
         interactive,
         input_tx.clone(),
-        stdin_done.clone(),
+        stdin_done_rx,
     );
     let stdin_task =
         spawn_stdin_forwarder(request.detach || interactive, input_tx.clone());
@@ -116,7 +108,7 @@ pub async fn handle_exec(
         },
     )
     .await;
-    stdin_done.store(true, Ordering::Relaxed);
+    let _ = stdin_done_tx.send(true);
     if let Some(stdin_task) = stdin_task {
         stdin_task.abort();
     }
@@ -134,10 +126,9 @@ pub async fn handle_exec(
 fn spawn_interactive_stdin_forwarder(
     interactive: bool,
     input_tx: mpsc::UnboundedSender<ExecInput>,
-    done: Arc<AtomicBool>,
+    done: watch::Receiver<bool>,
 ) -> Option<JoinHandle<anyhow::Result<()>>> {
-    interactive
-        .then(|| spawn_blocking(move || read_interactive_stdin(input_tx, done)))
+    interactive.then(|| tokio::spawn(read_interactive_stdin(input_tx, done)))
 }
 
 fn spawn_stdin_forwarder(
@@ -271,28 +262,41 @@ impl Drop for RawMode {
     }
 }
 
-fn read_interactive_stdin(
+async fn read_interactive_stdin(
     input_tx: mpsc::UnboundedSender<ExecInput>,
-    done: Arc<AtomicBool>,
+    mut done: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
-    let mut stdin = std::io::stdin().lock();
+    let stdin = AsyncFd::new(std::io::stdin())?;
     let mut buffer = [0; 8192];
 
-    while !done.load(Ordering::Relaxed) {
-        match stdin.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(n) => {
-                if input_tx
-                    .send(ExecInput::Stdin(buffer[..n].to_vec()))
-                    .is_err()
-                {
-                    return Ok(());
+    loop {
+        tokio::select! {
+            changed = done.changed(), if !*done.borrow() => {
+                changed?;
+                if *done.borrow() {
+                    break;
                 }
             }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                thread::sleep(Duration::from_millis(10));
+
+            ready = stdin.readable() => {
+                let mut guard = ready?;
+                match guard.try_io(|inner| {
+                    let mut stdin = inner.get_ref().lock();
+                    stdin.read(&mut buffer)
+                }) {
+                    Ok(Ok(0)) => break,
+                    Ok(Ok(n)) => {
+                        if input_tx
+                            .send(ExecInput::Stdin(buffer[..n].to_vec()))
+                            .is_err()
+                        {
+                            return Ok(());
+                        }
+                    }
+                    Ok(Err(error)) => return Err(error.into()),
+                    Err(_would_block) => continue,
+                }
             }
-            Err(error) => return Err(error.into()),
         }
     }
 
