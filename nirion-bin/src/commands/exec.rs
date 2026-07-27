@@ -1,9 +1,7 @@
 use clap::{Args, ValueHint};
 use nirion_lib::{
     context::NirionContext,
-    exec::{
-        exec, ExecInput, ExecIo, ExecOutput, ExecRequest, ExecTerminalSize,
-    },
+    exec::{exec, ExecIo, ExecOutput, ExecRequest, ExecTerminalSize},
 };
 use rustix::fs::{fcntl_getfl, fcntl_setfl, OFlags};
 use rustix::termios::{
@@ -21,6 +19,7 @@ use std::{
 use tokio::{
     io::{self, AsyncReadExt, AsyncWriteExt},
     sync::mpsc,
+    task::{spawn_blocking, JoinHandle},
 };
 
 use crate::{ClapSelector, ServiceSelector};
@@ -86,55 +85,16 @@ pub async fn handle_exec(
     };
 
     let (input_tx, input) = mpsc::unbounded_channel();
-    let (output, mut output_rx) = mpsc::unbounded_channel();
+    let (output, output_rx) = mpsc::unbounded_channel();
     let stdin_done = Arc::new(AtomicBool::new(false));
-    let stdin_thread = if interactive {
-        let stdin_done = stdin_done.clone();
-        let input_tx = input_tx.clone();
-        Some(thread::spawn(move || {
-            read_interactive_stdin(input_tx, stdin_done)
-        }))
-    } else {
-        None
-    };
-    let stdin_task = if request.detach || interactive {
-        None
-    } else {
-        Some(tokio::spawn(async move {
-            let mut stdin = io::stdin();
-            let mut buffer = [0; 8192];
-            loop {
-                let n = stdin.read(&mut buffer).await?;
-                if n == 0 {
-                    break;
-                }
-                if input_tx
-                    .send(ExecInput::Stdin(buffer[..n].to_vec()))
-                    .is_err()
-                {
-                    return anyhow::Ok(());
-                }
-            }
-            anyhow::Ok(())
-        }))
-    };
-    let output_task = tokio::spawn(async move {
-        let mut stdout = io::stdout();
-        let mut stderr = io::stderr();
-        while let Some(event) = output_rx.recv().await {
-            match event {
-                ExecOutput::Stdout(data) => {
-                    stdout.write_all(&data).await?;
-                    stdout.flush().await?;
-                }
-                ExecOutput::Stderr(data) => {
-                    stderr.write_all(&data).await?;
-                    stderr.flush().await?;
-                }
-            }
-        }
-        anyhow::Ok(())
-    });
+    let stdin_thread = spawn_interactive_stdin_forwarder(
+        interactive,
+        input_tx.clone(),
+        stdin_done.clone(),
+    );
+    let stdin_task =
+        spawn_stdin_forwarder(request.detach || interactive, input_tx);
+    let output_task = spawn_output_forwarder(output_rx);
 
     let terminal_size = interactive
         .then(current_terminal_size)
@@ -156,12 +116,66 @@ pub async fn handle_exec(
         stdin_task.abort();
     }
     if let Some(stdin_thread) = stdin_thread {
-        stdin_thread.join().map_err(|_| {
-            anyhow::anyhow!("nirion exec stdin thread panicked")
-        })??;
+        stdin_thread.await??;
     }
     output_task.await??;
     result
+}
+
+fn spawn_interactive_stdin_forwarder(
+    interactive: bool,
+    input_tx: mpsc::UnboundedSender<Vec<u8>>,
+    done: Arc<AtomicBool>,
+) -> Option<JoinHandle<anyhow::Result<()>>> {
+    interactive
+        .then(|| spawn_blocking(move || read_interactive_stdin(input_tx, done)))
+}
+
+fn spawn_stdin_forwarder(
+    disabled: bool,
+    input_tx: mpsc::UnboundedSender<Vec<u8>>,
+) -> Option<JoinHandle<anyhow::Result<()>>> {
+    (!disabled).then(|| {
+        tokio::spawn(async move {
+            let mut stdin = io::stdin();
+            let mut buffer = [0; 8192];
+            loop {
+                let n = stdin.read(&mut buffer).await?;
+                if n == 0 {
+                    break;
+                }
+                if input_tx
+                    .send(buffer[..n].to_vec())
+                    .is_err()
+                {
+                    return anyhow::Ok(());
+                }
+            }
+            anyhow::Ok(())
+        })
+    })
+}
+
+fn spawn_output_forwarder(
+    mut output_rx: mpsc::UnboundedReceiver<ExecOutput>
+) -> JoinHandle<anyhow::Result<()>> {
+    tokio::spawn(async move {
+        let mut stdout = io::stdout();
+        let mut stderr = io::stderr();
+        while let Some(event) = output_rx.recv().await {
+            match event {
+                ExecOutput::Stdout(data) => {
+                    stdout.write_all(&data).await?;
+                    stdout.flush().await?;
+                }
+                ExecOutput::Stderr(data) => {
+                    stderr.write_all(&data).await?;
+                    stderr.flush().await?;
+                }
+            }
+        }
+        anyhow::Ok(())
+    })
 }
 
 impl ExecArgs {
@@ -220,7 +234,7 @@ impl Drop for RawMode {
 }
 
 fn read_interactive_stdin(
-    input_tx: mpsc::UnboundedSender<ExecInput>,
+    input_tx: mpsc::UnboundedSender<Vec<u8>>,
     done: Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
     let mut stdin = std::io::stdin().lock();
@@ -230,10 +244,11 @@ fn read_interactive_stdin(
         match stdin.read(&mut buffer) {
             Ok(0) => break,
             Ok(n) => {
-                for chunk in split_control_inputs(&buffer[..n]) {
-                    if input_tx.send(chunk).is_err() {
-                        return Ok(());
-                    }
+                if input_tx
+                    .send(buffer[..n].to_vec())
+                    .is_err()
+                {
+                    return Ok(());
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -244,32 +259,4 @@ fn read_interactive_stdin(
     }
 
     Ok(())
-}
-
-fn split_control_inputs(input: &[u8]) -> Vec<ExecInput> {
-    let mut events = Vec::new();
-    let mut start = 0;
-
-    for (index, byte) in input.iter().enumerate() {
-        let event = match *byte {
-            0x03 => Some(ExecInput::Interrupt),
-            0x04 => Some(ExecInput::Eof),
-            _ => None,
-        };
-        let Some(event) = event else {
-            continue;
-        };
-
-        if start < index {
-            events.push(ExecInput::Stdin(input[start..index].to_vec()));
-        }
-        events.push(event);
-        start = index + 1;
-    }
-
-    if start < input.len() {
-        events.push(ExecInput::Stdin(input[start..].to_vec()));
-    }
-
-    events
 }
