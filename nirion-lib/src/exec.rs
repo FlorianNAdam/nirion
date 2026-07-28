@@ -500,6 +500,28 @@ exit {exit_code}
         docker.to_string_lossy().to_string()
     }
 
+    fn write_fake_docker_script(
+        dir: &Path,
+        script: &str,
+    ) -> String {
+        let docker = dir.join("docker");
+        let tmp = dir.join("docker.tmp");
+        let mut file = fs::File::create(&tmp).unwrap();
+        file.write_all(script.as_bytes())
+            .unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+
+        let mut permissions = fs::metadata(&tmp)
+            .unwrap()
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&tmp, permissions).unwrap();
+        fs::rename(&tmp, &docker).unwrap();
+
+        docker.to_string_lossy().to_string()
+    }
+
     fn fake_docker_command(script: &str) -> DockerCommand {
         DockerCommand::with_args("/bin/sh", [script])
     }
@@ -566,6 +588,34 @@ exit {exit_code}
             output,
             terminal_size: None,
         }
+    }
+
+    fn exec_io_with_channels() -> (
+        mpsc::UnboundedSender<ExecInput>,
+        mpsc::UnboundedReceiver<ExecOutput>,
+        ExecIo,
+    ) {
+        let (input_tx, input) = mpsc::unbounded_channel();
+        let (output, output_rx) = mpsc::unbounded_channel();
+        (
+            input_tx,
+            output_rx,
+            ExecIo {
+                input,
+                output,
+                terminal_size: None,
+            },
+        )
+    }
+
+    fn drain_outputs(
+        output_rx: &mut mpsc::UnboundedReceiver<ExecOutput>
+    ) -> Vec<ExecOutput> {
+        let mut outputs = Vec::new();
+        while let Ok(output) = output_rx.try_recv() {
+            outputs.push(output);
+        }
+        outputs
     }
 
     #[test]
@@ -695,6 +745,136 @@ exit {exit_code}
         assert!(err
             .to_string()
             .contains("failed to execute docker compose exec"));
+    }
+
+    #[tokio::test]
+    async fn exec_with_pipes_forwards_stdin_and_closes_on_eof() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let stdin_file = dir.path().join("stdin");
+        let docker = write_fake_docker_script(
+            dir.path(),
+            &format!(
+                r#"#!/bin/sh
+printf '%s\n' "$@" > '{}'
+cat > '{}'
+"#,
+                args_file.display(),
+                stdin_file.display(),
+            ),
+        );
+        let (input_tx, _output_rx, io) = exec_io_with_channels();
+
+        input_tx
+            .send(ExecInput::Stdin(b"hello\nfrom stdin".to_vec()))
+            .unwrap();
+        drop(input_tx);
+
+        timeout(
+            TokioDuration::from_secs(1),
+            exec(
+                &context(fake_docker_command(&docker)),
+                &no_tty_request(vec!["cat"]),
+                io,
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(stdin_file).unwrap(),
+            "hello\nfrom stdin"
+        );
+        assert_eq!(
+            fs::read_to_string(args_file).unwrap(),
+            "compose\n--file\ncompose.yml\n--project-name\nmyapp\nexec\n-T\nweb\ncat\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn exec_with_pipes_forwards_stdout_and_stderr() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker_script(
+            dir.path(),
+            &format!(
+                r#"#!/bin/sh
+printf '%s\n' "$@" > '{}'
+printf stdout-message
+printf stderr-message >&2
+"#,
+                args_file.display(),
+            ),
+        );
+        let (input_tx, mut output_rx, io) = exec_io_with_channels();
+        drop(input_tx);
+
+        exec(
+            &context(fake_docker_command(&docker)),
+            &no_tty_request(vec!["print"]),
+            io,
+        )
+        .await
+        .unwrap();
+
+        let outputs = drain_outputs(&mut output_rx);
+        assert!(
+            outputs.contains(&ExecOutput::Stdout(b"stdout-message".to_vec()))
+        );
+        assert!(
+            outputs.contains(&ExecOutput::Stderr(b"stderr-message".to_vec()))
+        );
+    }
+
+    #[tokio::test]
+    async fn exec_with_pty_forwards_stdin_and_stdout() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker_script(
+            dir.path(),
+            &format!(
+                r#"#!/bin/sh
+printf '%s\n' "$@" > '{}'
+IFS= read -r line
+printf 'reply:%s\n' "$line"
+"#,
+                args_file.display(),
+            ),
+        );
+        let (input_tx, mut output_rx, io) = exec_io_with_channels();
+
+        input_tx
+            .send(ExecInput::Stdin(b"hello pty\n".to_vec()))
+            .unwrap();
+        drop(input_tx);
+
+        timeout(
+            TokioDuration::from_secs(1),
+            exec(
+                &context(fake_docker_command(&docker)),
+                &request(vec!["sh"]),
+                io,
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        let output = drain_outputs(&mut output_rx)
+            .into_iter()
+            .filter_map(|output| match output {
+                ExecOutput::Stdout(data) => Some(data),
+                ExecOutput::Stderr(_) => None,
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        let output = String::from_utf8_lossy(&output);
+        assert!(output.contains("reply:hello pty"), "output: {output:?}");
+        assert_eq!(
+            fs::read_to_string(args_file).unwrap(),
+            "compose\n--file\ncompose.yml\n--project-name\nmyapp\nexec\nweb\nsh\n"
+        );
     }
 
     #[tokio::test]

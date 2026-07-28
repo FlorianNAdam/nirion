@@ -1113,6 +1113,23 @@ esac
         );
     }
 
+    #[tokio::test]
+    async fn coordinator_skips_attaching_existing_current_source() {
+        let (mut coordinator, mut rx) = coordinator();
+        let source = source();
+        let key = source.key();
+        let mut readers = JoinSet::new();
+        coordinator
+            .attached
+            .insert(key.clone(), source.clone());
+
+        coordinator.attach_new_sources(vec![source.clone()], &mut readers);
+
+        assert_eq!(coordinator.attached[&key], source);
+        assert!(rx.try_recv().is_err());
+        assert!(readers.is_empty());
+    }
+
     #[test]
     fn coordinator_does_not_update_replaced_source() {
         let (mut coordinator, mut rx) = coordinator();
