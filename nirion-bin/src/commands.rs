@@ -120,3 +120,59 @@ define_commands!([
     inspect,
     health
 ]);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::num::NonZeroUsize;
+
+    fn lifecycle_args(
+        plain: bool,
+        quiet: bool,
+        jobs: Option<usize>,
+    ) -> LifecycleArgs {
+        LifecycleArgs {
+            plain,
+            refresh: Duration::from_millis(123),
+            quiet,
+            jobs: jobs.map(|jobs| NonZeroUsize::new(jobs).unwrap()),
+        }
+    }
+
+    #[test]
+    fn lifecycle_presentation_defaults_to_progress() {
+        assert_eq!(
+            lifecycle_args(false, false, None).presentation(),
+            ProgressPresentation::Progress
+        );
+    }
+
+    #[test]
+    fn lifecycle_presentation_prefers_quiet_over_plain() {
+        assert_eq!(
+            lifecycle_args(true, true, None).presentation(),
+            ProgressPresentation::Hidden
+        );
+        assert_eq!(
+            lifecycle_args(true, false, None).presentation(),
+            ProgressPresentation::Plain
+        );
+    }
+
+    #[test]
+    fn lifecycle_jobs_defaults_to_unbounded_or_uses_configured_value() {
+        assert_eq!(lifecycle_args(false, false, None).jobs(), usize::MAX);
+        assert_eq!(lifecycle_args(false, false, Some(3)).jobs(), 3);
+    }
+
+    #[test]
+    fn lifecycle_options_include_refresh_jobs_presentation_and_wait_target() {
+        let options = lifecycle_args(true, false, Some(2))
+            .options(WaitTarget::Healthchecks);
+
+        assert_eq!(options.presentation, ProgressPresentation::Plain);
+        assert_eq!(options.jobs, 2);
+        assert_eq!(options.refresh_interval, Duration::from_millis(123));
+        assert_eq!(options.wait, WaitTarget::Healthchecks);
+    }
+}

@@ -10,9 +10,8 @@ use anyhow::Context;
 use rustix::{
     fs::{OFlags, fcntl_getfl, fcntl_setfl},
     io::dup,
-    pty::{grantpt, ioctl_tiocgptpeer, openpt, unlockpt, OpenptFlags},
-    termios::{
-        tcsetwinsize, OptionalActions, Winsize, },
+    pty::{OpenptFlags, grantpt, ioctl_tiocgptpeer, openpt, unlockpt},
+    termios::{Winsize, tcsetwinsize},
 };
 use tokio::{
     io::unix::AsyncFd,
@@ -724,9 +723,10 @@ exit {exit_code}
         .await
         .unwrap_err();
 
-        assert!(err
-            .to_string()
-            .contains("Command failed in myapp.web with status"));
+        assert!(
+            err.to_string()
+                .contains("Command failed in myapp.web with status")
+        );
     }
 
     #[tokio::test]
@@ -742,9 +742,10 @@ exit {exit_code}
         .await
         .unwrap_err();
 
-        assert!(err
-            .to_string()
-            .contains("failed to execute docker compose exec"));
+        assert!(
+            err.to_string()
+                .contains("failed to execute docker compose exec")
+        );
     }
 
     #[tokio::test]

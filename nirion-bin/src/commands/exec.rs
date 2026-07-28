@@ -303,3 +303,78 @@ async fn read_interactive_stdin(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nirion_lib::projects::ServiceSelector;
+
+    fn exec_args() -> ExecArgs {
+        ExecArgs {
+            target: ServiceSelector {
+                project: "app".to_string(),
+                service: "web".to_string(),
+            },
+            detach: true,
+            no_tty: true,
+            user: Some("1000".to_string()),
+            workdir: Some("/work".to_string()),
+            index: Some(2),
+            env: vec!["A=B".to_string()],
+            privileged: true,
+            cmd: vec!["sh".to_string(), "-c".to_string(), "true".to_string()],
+        }
+    }
+
+    #[test]
+    fn request_copies_cli_arguments() {
+        let request = exec_args().request();
+
+        assert_eq!(request.target.project, "app");
+        assert_eq!(request.target.service, "web");
+        assert!(request.detach);
+        assert!(request.no_tty);
+        assert_eq!(request.user.as_deref(), Some("1000"));
+        assert_eq!(request.workdir.as_deref(), Some("/work"));
+        assert_eq!(request.index, Some(2));
+        assert_eq!(request.env, vec!["A=B"]);
+        assert!(request.privileged);
+        assert_eq!(request.cmd, vec!["sh", "-c", "true"]);
+    }
+
+    #[test]
+    fn disabled_forwarders_do_not_spawn_tasks() {
+        let (input_tx, _input_rx) = mpsc::unbounded_channel();
+        let (_done_tx, done_rx) = watch::channel(false);
+
+        assert!(spawn_interactive_stdin_forwarder(
+            false,
+            input_tx.clone(),
+            done_rx
+        )
+        .is_none());
+        assert!(spawn_stdin_forwarder(true, input_tx.clone()).is_none());
+        assert!(spawn_resize_forwarder(false, input_tx).is_none());
+    }
+
+    #[test]
+    fn current_terminal_size_is_safe_to_query() {
+        let _ = current_terminal_size();
+    }
+
+    #[tokio::test]
+    async fn output_forwarder_drains_output_events() {
+        let (output_tx, output_rx) = mpsc::unbounded_channel();
+        let task = spawn_output_forwarder(output_rx);
+
+        output_tx
+            .send(ExecOutput::Stdout(b"stdout\n".to_vec()))
+            .unwrap();
+        output_tx
+            .send(ExecOutput::Stderr(b"stderr\n".to_vec()))
+            .unwrap();
+        drop(output_tx);
+
+        task.await.unwrap().unwrap();
+    }
+}

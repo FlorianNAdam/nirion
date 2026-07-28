@@ -260,6 +260,21 @@ mod tests {
     }
 
     #[test]
+    fn service_target_checks_selected_service_and_skips_others() {
+        let projects = projects();
+        let statuses = BTreeMap::from([(
+            "myapp".to_string(),
+            project_status(vec![("web", ServiceState::Healthy)]),
+        )]);
+        let target = TargetSelector::Service(ServiceSelector {
+            project: "myapp".into(),
+            service: "web".into(),
+        });
+
+        assert!(healthchecks_finished(&target, &projects, &statuses));
+    }
+
+    #[test]
     fn missing_project_in_config_is_treated_as_finished() {
         let projects = projects();
         let statuses = BTreeMap::new();

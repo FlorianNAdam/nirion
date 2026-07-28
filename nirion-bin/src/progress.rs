@@ -199,8 +199,50 @@ async fn refresh_statuses(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nirion_lib::events::ExitStatus;
+    use nirion_lib::{
+        docker::{Port, ServiceState, ServiceStatus},
+        events::ExitStatus,
+        projects::ProjectSelector,
+    };
     use std::collections::BTreeMap;
+
+    fn projects() -> Projects {
+        serde_json::from_str(
+            r#"
+{
+  "app": {
+    "name": "app",
+    "dockerCompose": "compose.yml",
+    "services": {
+      "web": {"image": "nginx", "healthcheck": true, "restart": null}
+    }
+  }
+}
+"#,
+        )
+        .unwrap()
+    }
+
+    fn project_status(state: ServiceState) -> ProjectStatus {
+        ProjectStatus {
+            services: BTreeMap::from([(
+                "web".to_string(),
+                ServiceStatus {
+                    id: "web-id".to_string(),
+                    service: "web".to_string(),
+                    container_name: "web".to_string(),
+                    image: "nginx".to_string(),
+                    state,
+                    health: None,
+                    exit_code: None,
+                    running_for: None,
+                    status: None,
+                    ports: Vec::<Port>::new(),
+                    networks: Vec::new(),
+                },
+            )]),
+        }
+    }
 
     #[test]
     fn handle_compose_event_updates_running_state() {
@@ -252,5 +294,105 @@ mod tests {
         );
 
         assert_eq!(running.get("app"), Some(&true));
+    }
+
+    #[test]
+    fn progress_state_initializes_selected_projects_as_running() {
+        let state = ProgressState::new(&["app".to_string(), "api".to_string()]);
+
+        assert_eq!(state.running.get("app"), Some(&true));
+        assert_eq!(state.running.get("api"), Some(&true));
+        assert!(state.statuses.is_empty());
+        assert!(!state.compose_finished);
+        assert!(!state.status_finished);
+        assert!(!state.cancelled);
+        assert!(state.error.is_none());
+    }
+
+    #[test]
+    fn progress_state_ready_when_cancelled_or_failed() {
+        let projects = projects();
+        let target = TargetSelector::Project(ProjectSelector {
+            name: "app".to_string(),
+        });
+        let mut state = ProgressState::new(&["app".to_string()]);
+
+        assert!(!state.ready(&target, &projects, WaitTarget::Healthchecks));
+
+        state.cancel();
+        assert!(state.ready(&target, &projects, WaitTarget::Healthchecks));
+        assert_eq!(state.running.get("app"), Some(&false));
+
+        let mut state = ProgressState::new(&["app".to_string()]);
+        state.fail(anyhow::anyhow!("boom"));
+        assert!(state.ready(&target, &projects, WaitTarget::Healthchecks));
+        assert!(state.error.is_some());
+        assert!(state.compose_finished);
+        assert_eq!(state.running.get("app"), Some(&false));
+    }
+
+    #[test]
+    fn progress_state_ready_after_compose_and_healthchecks_finish() {
+        let projects = projects();
+        let target = TargetSelector::Project(ProjectSelector {
+            name: "app".to_string(),
+        });
+        let mut state = ProgressState::new(&["app".to_string()]);
+        state
+            .statuses
+            .insert("app".to_string(), project_status(ServiceState::Healthy));
+
+        assert!(!state.ready(&target, &projects, WaitTarget::Healthchecks));
+
+        state.finish_compose();
+
+        assert!(state.ready(&target, &projects, WaitTarget::Healthchecks));
+        assert_eq!(state.running.get("app"), Some(&false));
+    }
+
+    #[test]
+    fn progress_state_handles_status_events() {
+        let mut state = ProgressState::new(&["app".to_string()]);
+
+        state.handle_status_event(
+            Some(Ok(ProjectStatusEvent {
+                project: "app".to_string(),
+                status: project_status(ServiceState::Starting),
+            })),
+            WaitTarget::Healthchecks,
+        );
+        assert_eq!(
+            state.statuses["app"].services["web"].state,
+            ServiceState::Starting
+        );
+
+        state.handle_status_event(None, WaitTarget::Healthchecks);
+        assert!(state.status_finished);
+        assert!(state.error.is_some());
+
+        let mut state = ProgressState::new(&["app".to_string()]);
+        state.handle_status_event(None, WaitTarget::Forever);
+        assert!(state.status_finished);
+        assert!(state.error.is_none());
+
+        let projects = projects();
+        let target = TargetSelector::Project(ProjectSelector {
+            name: "app".to_string(),
+        });
+        assert!(state.ready(&target, &projects, WaitTarget::Forever));
+    }
+
+    #[test]
+    fn progress_state_fails_on_status_error() {
+        let mut state = ProgressState::new(&["app".to_string()]);
+
+        state.handle_status_event(
+            Some(Err(anyhow::anyhow!("status failed"))),
+            WaitTarget::Forever,
+        );
+
+        assert!(state.error.is_some());
+        assert!(state.compose_finished);
+        assert_eq!(state.running.get("app"), Some(&false));
     }
 }
