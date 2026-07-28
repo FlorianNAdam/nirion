@@ -748,6 +748,88 @@ exit {exit_code}
     }
 
     #[tokio::test]
+    async fn exec_detached_uses_null_stdin_and_no_input_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let docker = write_fake_docker(dir.path(), &args_file, 0);
+        let mut request = request(vec!["sleep", "10"]);
+        request.detach = true;
+
+        exec(&context(fake_docker_command(&docker)), &request, exec_io())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(args_file).unwrap(),
+            "compose\n--file\ncompose.yml\n--project-name\nmyapp\nexec\n-d\nweb\nsleep\n10\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_pipe_input_task_reports_missing_stdin() {
+        let mut child = tokio::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg("true")
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap();
+        let (_, input) = mpsc::unbounded_channel();
+
+        let err = spawn_pipe_input_task(&mut child, false, input).unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "failed to capture docker compose exec stdin"
+        );
+        child.wait().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn spawn_pipe_input_task_returns_none_for_detached_exec() {
+        let mut child = tokio::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg("true")
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap();
+        let (_, input) = mpsc::unbounded_channel();
+
+        let task = spawn_pipe_input_task(&mut child, true, input).unwrap();
+
+        assert!(task.is_none());
+        child.wait().await.unwrap();
+    }
+
+    #[test]
+    fn spawn_pipe_output_task_reports_missing_output() {
+        let (output, _) = mpsc::unbounded_channel();
+
+        let err = spawn_pipe_output_task::<tokio::process::ChildStdout>(
+            None,
+            ExecOutput::Stdout,
+            output,
+            "stdout",
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "failed to capture docker compose exec stdout"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_exec_output_handles_empty_stream() {
+        let (output, mut output_rx) = mpsc::unbounded_channel();
+
+        read_exec_output(tokio::io::empty(), ExecOutput::Stdout, output)
+            .await
+            .unwrap();
+
+        assert!(output_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
     async fn exec_with_pipes_forwards_stdin_and_closes_on_eof() {
         let dir = tempfile::tempdir().unwrap();
         let args_file = dir.path().join("args");
@@ -874,6 +956,54 @@ printf 'reply:%s\n' "$line"
         assert_eq!(
             fs::read_to_string(args_file).unwrap(),
             "compose\n--file\ncompose.yml\n--project-name\nmyapp\nexec\nweb\nsh\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn copy_channel_to_pty_stops_when_child_is_done() {
+        let pty = open_pty().unwrap();
+        let master = File::from(pty.master);
+        let _slave = File::from(pty.slave);
+        let (_tx, rx) = mpsc::unbounded_channel();
+        let (child_done_tx, child_done_rx) = watch::channel(false);
+
+        tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            child_done_tx.send(true).unwrap();
+        });
+
+        timeout(
+            TokioDuration::from_secs(1),
+            copy_channel_to_pty(
+                rx,
+                AsyncFd::new(master).unwrap(),
+                child_done_rx,
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn drain_pty_forwards_available_output() {
+        let pty = open_pty().unwrap();
+        let master = File::from(pty.master);
+        let mut slave = File::from(pty.slave);
+        let (output, mut output_rx) = mpsc::unbounded_channel();
+        let mut buffer = [0; 8192];
+
+        set_nonblocking(&master).unwrap();
+        slave
+            .write_all(b"drained from pty\n")
+            .unwrap();
+
+        drain_pty(&AsyncFd::new(master).unwrap(), &output, &mut buffer)
+            .unwrap();
+
+        assert_eq!(
+            output_rx.try_recv().unwrap(),
+            ExecOutput::Stdout(b"drained from pty\r\n".to_vec())
         );
     }
 
