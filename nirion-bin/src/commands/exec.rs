@@ -89,8 +89,10 @@ pub async fn handle_exec(
         input_tx.clone(),
         stdin_done_rx,
     );
-    let stdin_task =
-        spawn_stdin_forwarder(request.detach || interactive, input_tx.clone());
+    let stdin_task = spawn_stdin_forwarder(
+        request.detach || interactive || isatty(std::io::stdin()),
+        input_tx.clone(),
+    );
     let resize_task = spawn_resize_forwarder(interactive, input_tx.clone());
     let output_task = spawn_output_forwarder(output_rx);
     drop(input_tx);
