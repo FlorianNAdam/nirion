@@ -229,6 +229,19 @@ mod tests {
     }
 
     #[test]
+    fn extend_adds_multiple_entries() {
+        let mut locked = LockedImages::default();
+
+        locked.extend([
+            ("web".into(), img("nginx", "1.0", "sha256:aaa")),
+            ("db".into(), img("postgres", "1.0", "sha256:bbb")),
+        ]);
+
+        assert_eq!(locked.get("web").unwrap().digest, "sha256:aaa");
+        assert_eq!(locked.get("db").unwrap().digest, "sha256:bbb");
+    }
+
+    #[test]
     fn deserialize_full_format() {
         let json = r#"{"myapp.web":{"image":"nginx","version":"1.0","digest":"sha256:aaa"}}"#;
         let locked: LockedImages = serde_json::from_str(json).unwrap();

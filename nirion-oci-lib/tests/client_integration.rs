@@ -67,6 +67,24 @@ async fn resolves_local_registry_image_with_generic_oci_tags()
 }
 
 #[tokio::test]
+async fn generic_oci_tags_return_no_version_for_floating_tag()
+-> anyhow::Result<()> {
+    let (_handle, test_image) = push_anonymous_test_image("latest").await?;
+
+    let client = http_nirion_client().build();
+
+    let resolved = client
+        .get_versioned_image(&test_image.reference)
+        .await?;
+
+    assert_eq!(resolved.image, test_image.reference.to_string());
+    assert_eq!(resolved.digest, test_image.digest);
+    assert_eq!(resolved.version, None);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn updated_image_preserves_version_when_digest_is_unchanged()
 -> anyhow::Result<()> {
     let (_handle, test_image) = push_anonymous_test_image("1.2.3").await?;

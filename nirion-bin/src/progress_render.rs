@@ -420,4 +420,78 @@ mod tests {
         assert!(output.contains("app"));
         assert!(output.contains("(0/2)"));
     }
+
+    #[test]
+    fn create_status_uses_spinner_for_running_project() {
+        let projects = projects();
+        let selected = vec!["app".to_string()];
+        let running = BTreeMap::from([("app".to_string(), true)]);
+        let statuses = BTreeMap::new();
+        let spinner = Spinner::default();
+
+        let status = create_status(
+            Some(&spinner),
+            &selected,
+            &running,
+            &statuses,
+            &projects,
+        );
+
+        assert!(status.entries[0].prefix.contains("app"));
+        assert!(
+            status.entries[0]
+                .prefix
+                .contains(&spinner.get())
+        );
+    }
+
+    #[test]
+    fn progress_renderer_factory_sets_expected_behavior() {
+        assert!(
+            progress_renderer(ProgressPresentation::Progress)
+                .needs_status_during_compose()
+        );
+        assert!(
+            !progress_renderer(ProgressPresentation::Plain)
+                .needs_status_during_compose()
+        );
+        assert!(
+            !progress_renderer(ProgressPresentation::Hidden)
+                .needs_status_during_compose()
+        );
+    }
+
+    #[test]
+    fn render_compose_event_accepts_all_event_types() {
+        use nirion_lib::events::ExitStatus;
+
+        render_compose_event(&ComposeEvent::ProjectStarted {
+            project: "app".to_string(),
+        });
+        render_compose_event(&ComposeEvent::Process {
+            project: Some("app".to_string()),
+            event: ProcessEvent::StdoutLine("hello".to_string()),
+        });
+        render_compose_event(&ComposeEvent::Process {
+            project: Some("app".to_string()),
+            event: ProcessEvent::StderrLine("warning".to_string()),
+        });
+        render_compose_event(&ComposeEvent::Process {
+            project: Some("app".to_string()),
+            event: ProcessEvent::StderrLine(
+                "the attribute `version` is obsolete".to_string(),
+            ),
+        });
+        render_compose_event(&ComposeEvent::Process {
+            project: Some("app".to_string()),
+            event: ProcessEvent::Exited(ExitStatus {
+                code: Some(0),
+                success: true,
+            }),
+        });
+        render_compose_event(&ComposeEvent::ProjectFailed {
+            project: "app".to_string(),
+            error: "failed".to_string(),
+        });
+    }
 }

@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, process::Stdio, time::Duration};
 
 use anyhow::Context;
 use futures::{StreamExt, channel::mpsc, stream::BoxStream};
@@ -555,8 +555,9 @@ fn docker_logs_command(
     }
     command
         .arg(&source.container_id)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .kill_on_drop(true);
     command
 }
@@ -1110,6 +1111,23 @@ esac
             rx.try_recv().unwrap().unwrap(),
             LogEvent::SourceExited(coordinator.attached[&key].clone())
         );
+    }
+
+    #[tokio::test]
+    async fn coordinator_skips_attaching_existing_current_source() {
+        let (mut coordinator, mut rx) = coordinator();
+        let source = source();
+        let key = source.key();
+        let mut readers = JoinSet::new();
+        coordinator
+            .attached
+            .insert(key.clone(), source.clone());
+
+        coordinator.attach_new_sources(vec![source.clone()], &mut readers);
+
+        assert_eq!(coordinator.attached[&key], source);
+        assert!(rx.try_recv().is_err());
+        assert!(readers.is_empty());
     }
 
     #[test]

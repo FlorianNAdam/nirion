@@ -1591,6 +1591,31 @@ fn exec_forwards_options_and_command() {
 }
 
 #[test]
+fn exec_uses_no_tty_when_stdio_is_not_tty() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_file = dir.path().join("projects.json");
+    let lock_file = dir.path().join("nirion.lock");
+    let docker_script = dir.path().join("fake-docker.sh");
+    let args_file = dir.path().join("docker-args");
+    write_projects(&project_file);
+    fs::write(&lock_file, "{}").unwrap();
+    write_fake_docker(&docker_script, &args_file, "", "", 0);
+
+    let output = nirion_command(&project_file, &lock_file, &docker_script)
+        .arg("exec")
+        .arg("myapp.web")
+        .arg("true")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    assert_eq!(
+        fs::read_to_string(args_file).unwrap(),
+        "compose\n--file\ncompose.yml\n--project-name\nmyapp\nexec\n-T\nweb\ntrue\n"
+    );
+}
+
+#[test]
 fn exec_requires_command() {
     let dir = tempfile::tempdir().unwrap();
     let project_file = dir.path().join("projects.json");
