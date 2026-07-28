@@ -91,8 +91,9 @@ pub async fn handle_exec(
     );
     let stdin_task =
         spawn_stdin_forwarder(request.detach || interactive, input_tx.clone());
-    let resize_task = spawn_resize_forwarder(interactive, input_tx);
+    let resize_task = spawn_resize_forwarder(interactive, input_tx.clone());
     let output_task = spawn_output_forwarder(output_rx);
+    drop(input_tx);
 
     let terminal_size = interactive
         .then(current_terminal_size)
