@@ -1,8 +1,72 @@
-pub use console::{Attribute, Color};
-use console::{StyledObject, style};
+use console::{
+    Attribute as ConsoleAttribute, Color as ConsoleColor, StyledObject, style,
+};
 
-pub const GREY: Color = Color::Color256(7);
-pub const DARK_GREY: Color = Color::Color256(8);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Color {
+    Black,
+    Red,
+    Green,
+    Yellow,
+    Blue,
+    Magenta,
+    Cyan,
+    White,
+    Grey,
+    DarkGrey,
+    Orange,
+    Color256(u8),
+    TrueColor(u8, u8, u8),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Attribute {
+    Bold,
+    Dim,
+    Italic,
+    Underlined,
+    Blink,
+    BlinkFast,
+    Reverse,
+    Hidden,
+    Strikethrough,
+}
+
+impl From<Color> for ConsoleColor {
+    fn from(color: Color) -> Self {
+        match color {
+            Color::Black => ConsoleColor::Black,
+            Color::Red => ConsoleColor::Red,
+            Color::Green => ConsoleColor::Green,
+            Color::Yellow => ConsoleColor::Yellow,
+            Color::Blue => ConsoleColor::Blue,
+            Color::Magenta => ConsoleColor::Magenta,
+            Color::Cyan => ConsoleColor::Cyan,
+            Color::White => ConsoleColor::White,
+            Color::Grey => ConsoleColor::Color256(7),
+            Color::DarkGrey => ConsoleColor::Color256(8),
+            Color::Orange => ConsoleColor::Color256(208),
+            Color::Color256(color) => ConsoleColor::Color256(color),
+            Color::TrueColor(r, g, b) => ConsoleColor::TrueColor(r, g, b),
+        }
+    }
+}
+
+impl From<Attribute> for ConsoleAttribute {
+    fn from(attribute: Attribute) -> Self {
+        match attribute {
+            Attribute::Bold => ConsoleAttribute::Bold,
+            Attribute::Dim => ConsoleAttribute::Dim,
+            Attribute::Italic => ConsoleAttribute::Italic,
+            Attribute::Underlined => ConsoleAttribute::Underlined,
+            Attribute::Blink => ConsoleAttribute::Blink,
+            Attribute::BlinkFast => ConsoleAttribute::BlinkFast,
+            Attribute::Reverse => ConsoleAttribute::Reverse,
+            Attribute::Hidden => ConsoleAttribute::Hidden,
+            Attribute::Strikethrough => ConsoleAttribute::StrikeThrough,
+        }
+    }
+}
 
 macro_rules! colorize {
     (
@@ -51,15 +115,15 @@ macro_rules! colorize {
             }
 
             fn fg(self, color: Color) -> StyledObject<Self> {
-                style(self).fg(color)
+                style(self).fg(color.into())
             }
 
             fn bg(self, color: Color) -> StyledObject<Self> {
-                style(self).bg(color)
+                style(self).bg(color.into())
             }
 
             fn attr(self, attr: Attribute) -> StyledObject<Self> {
-                style(self).attr(attr)
+                style(self).attr(attr.into())
             }
 
             fn color256(self, color: u8) -> StyledObject<Self> {
@@ -117,8 +181,9 @@ colorize! {
         magenta => Color::Magenta,
         cyan => Color::Cyan,
         white => Color::White,
-        grey => GREY,
-        dark_grey => DARK_GREY,
+        grey => Color::Grey,
+        dark_grey => Color::DarkGrey,
+        orange => Color::Orange,
     }
     backgrounds {
         on_black => Color::Black,
@@ -129,8 +194,9 @@ colorize! {
         on_magenta => Color::Magenta,
         on_cyan => Color::Cyan,
         on_white => Color::White,
-        on_grey => GREY,
-        on_dark_grey => DARK_GREY,
+        on_grey => Color::Grey,
+        on_dark_grey => Color::DarkGrey,
+        on_orange => Color::Orange,
     }
     attrs {
         bold => Attribute::Bold,
@@ -141,7 +207,7 @@ colorize! {
         blink_fast => Attribute::BlinkFast,
         reverse => Attribute::Reverse,
         hidden => Attribute::Hidden,
-        strikethrough => Attribute::StrikeThrough,
+        strikethrough => Attribute::Strikethrough,
     }
 }
 
@@ -193,11 +259,20 @@ mod tests {
                 forced("text".fg(Color::White)),
                 forced("text".white()),
             ),
-            ("grey", forced("text".fg(GREY)), forced("text".grey())),
+            (
+                "grey",
+                forced("text".fg(Color::Grey)),
+                forced("text".grey()),
+            ),
             (
                 "dark_grey",
-                forced("text".fg(DARK_GREY)),
+                forced("text".fg(Color::DarkGrey)),
                 forced("text".dark_grey()),
+            ),
+            (
+                "orange",
+                forced("text".fg(Color::Orange)),
+                forced("text".orange()),
             ),
         ];
 
@@ -249,11 +324,20 @@ mod tests {
                 forced("text".bg(Color::White)),
                 forced("text".on_white()),
             ),
-            ("on_grey", forced("text".bg(GREY)), forced("text".on_grey())),
+            (
+                "on_grey",
+                forced("text".bg(Color::Grey)),
+                forced("text".on_grey()),
+            ),
             (
                 "on_dark_grey",
-                forced("text".bg(DARK_GREY)),
+                forced("text".bg(Color::DarkGrey)),
                 forced("text".on_dark_grey()),
+            ),
+            (
+                "on_orange",
+                forced("text".bg(Color::Orange)),
+                forced("text".on_orange()),
             ),
         ];
 
@@ -327,7 +411,7 @@ mod tests {
             ),
             (
                 "strikethrough",
-                forced("text".attr(Attribute::StrikeThrough)),
+                forced("text".attr(Attribute::Strikethrough)),
                 forced("text".strikethrough()),
             ),
         ];
