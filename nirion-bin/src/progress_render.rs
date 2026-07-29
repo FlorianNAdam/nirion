@@ -5,7 +5,7 @@ use nirion_lib::{
     projects::Projects,
 };
 use nirion_tui_lib::{
-    color::{Colorize, GREY},
+    color::{Color, Colorize},
     line_renderer::LineRenderer,
     spinner::Spinner,
     status::{Status, StatusEntry},
@@ -59,7 +59,7 @@ fn create_status(
         let mut segments = project_status_segments(&project_status);
 
         for _ in 0..(num_services.saturating_sub(segments.len())) {
-            segments.push(GREY);
+            segments.push(Color::Grey);
         }
 
         let suffix = format!("({progressing}/{num_services})    ");
@@ -358,7 +358,7 @@ mod tests {
             create_status(None, &selected, &running, &statuses, &projects);
 
         assert_eq!(status.entries.len(), 1);
-        assert_eq!(status.entries[0].segments, vec![GREY, GREY]);
+        assert_eq!(status.entries[0].segments, vec![Color::Grey, Color::Grey]);
         assert_eq!(status.entries[0].suffix, "(0/2)    ");
     }
 
@@ -386,7 +386,7 @@ mod tests {
             status.entries[0].segments[0],
             project_status_segments(&statuses["app"])[0]
         );
-        assert_eq!(status.entries[0].segments[1], GREY);
+        assert_eq!(status.entries[0].segments[1], Color::Grey);
         assert_eq!(status.entries[0].suffix, "(1/2)    ");
     }
 

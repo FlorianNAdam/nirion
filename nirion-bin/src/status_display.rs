@@ -1,7 +1,7 @@
 use nirion_lib::docker::{
     ProjectState, ProjectStatus, ServiceState, ServiceStatus,
 };
-use nirion_tui_lib::color::{Color, Colorize, DARK_GREY, GREY};
+use nirion_tui_lib::color::{Color, Colorize};
 
 pub fn project_state_icon(state: &ProjectState) -> String {
     use ProjectState::*;
@@ -32,6 +32,7 @@ fn service_state_order(state: &ServiceState) -> usize {
     let order = [
         ServiceState::Healthy,
         ServiceState::Succeeded,
+        ServiceState::Checking,
         ServiceState::Running,
         ServiceState::Paused,
         ServiceState::Starting,
@@ -50,16 +51,17 @@ fn service_state_order(state: &ServiceState) -> usize {
 
 fn service_state_color(state: &ServiceState) -> Color {
     match state {
-        ServiceState::Created => GREY,
-        ServiceState::Starting => DARK_GREY,
+        ServiceState::Created => Color::Grey,
+        ServiceState::Starting => Color::DarkGrey,
+        ServiceState::Checking => Color::Orange,
         ServiceState::Running => Color::Yellow,
         ServiceState::Paused => Color::Blue,
-        ServiceState::Restarting => DARK_GREY,
+        ServiceState::Restarting => Color::DarkGrey,
         ServiceState::Succeeded => Color::Cyan,
         ServiceState::Failed => Color::Magenta,
         ServiceState::Healthy => Color::Green,
         ServiceState::Unhealthy => Color::Red,
-        ServiceState::Unknown => GREY,
+        ServiceState::Unknown => Color::Grey,
     }
 }
 
@@ -140,6 +142,7 @@ mod tests {
         let unhealthy = service_state_color(&ServiceState::Unhealthy);
         let failed = service_state_color(&ServiceState::Failed);
         let running = service_state_color(&ServiceState::Running);
+        let checking = service_state_color(&ServiceState::Checking);
         let paused = service_state_color(&ServiceState::Paused);
         let succeeded = service_state_color(&ServiceState::Succeeded);
         let neutral = service_state_color(&ServiceState::Created);
@@ -148,8 +151,9 @@ mod tests {
         assert_eq!(neutral, service_state_color(&ServiceState::Unknown));
         assert_eq!(active, service_state_color(&ServiceState::Restarting));
 
-        let primary_colors =
-            [healthy, unhealthy, failed, running, paused, succeeded];
+        let primary_colors = [
+            healthy, unhealthy, failed, running, checking, paused, succeeded,
+        ];
         for (i, left) in primary_colors.iter().enumerate() {
             for right in primary_colors.iter().skip(i + 1) {
                 assert_ne!(left, right);

@@ -199,6 +199,7 @@ fn project_status_stream_for_command(
 pub enum ServiceState {
     Created,
     Starting,
+    Checking,
     Running,
     Paused,
     Restarting,
@@ -353,6 +354,7 @@ impl ProjectStatus {
                     s.state,
                     Healthy
                         | Succeeded
+                        | Checking
                         | Running
                         | Paused
                         | Starting
@@ -390,7 +392,7 @@ impl ProjectStatus {
         project_states!(states, {
             all [Healthy | Succeeded] => ProjectState::Healthy,
             any [Failed | Unhealthy] => ProjectState::Degraded,
-            any [Starting | Restarting] => ProjectState::Starting,
+            any [Starting | Restarting | Checking] => ProjectState::Starting,
             all [Healthy | Succeeded | Running] => ProjectState::Running,
             all [Healthy | Succeeded | Running | Paused] => ProjectState::Paused,
         })
@@ -469,7 +471,10 @@ impl ServiceState {
             "running" => match c.health.as_deref() {
                 Some("healthy") => ServiceState::Healthy,
                 Some("unhealthy") => ServiceState::Unhealthy,
-                _ => ServiceState::Running,
+                Some(health) if !health.trim().is_empty() => {
+                    ServiceState::Checking
+                }
+                Some(_) | None => ServiceState::Running,
             },
             "paused" => ServiceState::Paused,
             "restarting" => ServiceState::Restarting,
@@ -856,8 +861,27 @@ exit {exit_code}
     }
 
     #[test]
+    fn service_state_from_container_treats_running_health_starting_as_checking()
+    {
+        let container = container_info("running", Some("starting"), None);
+        assert_eq!(
+            ServiceState::from_container(&container),
+            ServiceState::Checking
+        );
+    }
+
+    #[test]
     fn service_state_from_container_treats_running_without_health_as_running() {
         let container = container_info("running", None, None);
+        assert_eq!(
+            ServiceState::from_container(&container),
+            ServiceState::Running
+        );
+    }
+
+    #[test]
+    fn service_state_from_container_treats_empty_health_as_running() {
+        let container = container_info("running", Some(""), None);
         assert_eq!(
             ServiceState::from_container(&container),
             ServiceState::Running
@@ -982,6 +1006,20 @@ exit {exit_code}
             ServiceStatus {
                 state: ServiceState::Starting,
                 ..service(ServiceState::Starting)
+            },
+        );
+        let status = ProjectStatus { services };
+        assert_eq!(status.project_state(), ProjectState::Starting);
+    }
+
+    #[test]
+    fn project_state_starting_when_service_waits_for_healthcheck() {
+        let mut services = BTreeMap::new();
+        services.insert(
+            "a".into(),
+            ServiceStatus {
+                state: ServiceState::Checking,
+                ..service(ServiceState::Checking)
             },
         );
         let status = ProjectStatus { services };
