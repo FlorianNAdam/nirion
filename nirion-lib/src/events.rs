@@ -35,6 +35,7 @@ pub enum WaitEvent {
 pub enum LockUpdateEvent {
     NoImages,
     ImageStarted { service: String, image: String },
+    Warning { service: String, message: String },
     ImageResolved { service: String },
     UpToDate,
     ChangesDetected { diffs: Vec<DiffEntry> },
