@@ -1,11 +1,277 @@
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
+
 use oci_client::{
     Client, Reference,
     config::{Architecture, ConfigFile},
-    manifest::OciManifest,
-    secrets::RegistryAuth,
+    manifest::{OciImageManifest, OciManifest},
 };
 
-use crate::version::{canonical_version_score, clean_tag, is_non_version_tag};
+use crate::{
+    auth::RegistryAuth,
+    client::NirionOciClientConfig,
+    version::{canonical_version_score, clean_tag, is_non_version_tag},
+};
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ClientKey {
+    registry: String,
+    auth: RegistryAuth,
+}
+
+#[derive(Clone)]
+struct RegistryClientState {
+    client: Arc<Client>,
+    auth: RegistryAuth,
+}
+
+impl RegistryClientState {
+    async fn new(
+        client: Arc<Client>,
+        registry: &str,
+        auth: RegistryAuth,
+    ) -> Self {
+        let oci_auth = auth.to_oci_auth();
+        client
+            .store_auth_if_needed(registry, &oci_auth)
+            .await;
+
+        Self { client, auth }
+    }
+}
+
+pub struct RegistryClient {
+    config: NirionOciClientConfig,
+    clients: Mutex<HashMap<ClientKey, RegistryClientState>>,
+}
+
+impl Default for RegistryClient {
+    fn default() -> Self {
+        Self::new(NirionOciClientConfig::default())
+    }
+}
+
+impl RegistryClient {
+    pub fn new(config: NirionOciClientConfig) -> Self {
+        Self {
+            config,
+            clients: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn config(&self) -> &NirionOciClientConfig {
+        &self.config
+    }
+
+    pub async fn pull_manifest_and_config(
+        &self,
+        image: &Reference,
+        auth: RegistryAuth,
+    ) -> anyhow::Result<(OciImageManifest, String, String)> {
+        let state = self.client_for(image, auth).await;
+        Ok(state
+            .client
+            .pull_manifest_and_config(image, &state.auth.to_oci_auth())
+            .await?)
+    }
+
+    pub async fn pull_manifest(
+        &self,
+        image: &Reference,
+        auth: RegistryAuth,
+    ) -> anyhow::Result<(OciManifest, String)> {
+        let state = self.client_for(image, auth).await;
+        Ok(state
+            .client
+            .pull_manifest(image, &state.auth.to_oci_auth())
+            .await?)
+    }
+
+    pub async fn list_tags(
+        &self,
+        image: &Reference,
+        auth: RegistryAuth,
+        n: Option<usize>,
+        last: Option<&str>,
+    ) -> anyhow::Result<crate::oci_client::client::TagResponse> {
+        let state = self.client_for(image, auth).await;
+        Ok(state
+            .client
+            .list_tags(image, &state.auth.to_oci_auth(), n, last)
+            .await?)
+    }
+
+    pub async fn alias_tags(
+        &self,
+        image: &Reference,
+        digest: &str,
+        auth: RegistryAuth,
+    ) -> anyhow::Result<Vec<String>> {
+        let tags = self
+            .list_all_tags(image, auth.clone())
+            .await?;
+
+        let mut tag_refs = tags
+            .into_iter()
+            .map(|tag| {
+                Reference::with_tag(
+                    image.registry().to_string(),
+                    image.repository().to_string(),
+                    tag.clone(),
+                )
+            })
+            .rev()
+            .peekable();
+
+        while let Some(image) = tag_refs.peek() {
+            let tag_digest = self
+                .pull_platform_digest(image, auth.clone())
+                .await?;
+            if tag_digest == digest {
+                break;
+            } else {
+                tag_refs.next();
+            }
+        }
+
+        let mut candidates = Vec::new();
+
+        while let Some(image) = tag_refs.peek() {
+            let tag_digest = self
+                .pull_platform_digest(image, auth.clone())
+                .await?;
+            if tag_digest != digest {
+                break;
+            } else {
+                if let Some(tag) = image.tag() {
+                    candidates.push(tag.to_string());
+                }
+                tag_refs.next();
+            }
+        }
+
+        Ok(candidates)
+    }
+
+    pub async fn list_all_tags(
+        &self,
+        image: &Reference,
+        auth: RegistryAuth,
+    ) -> anyhow::Result<Vec<String>> {
+        let page_size = 1000; // reasonable default
+        let mut all_tags = Vec::new();
+        let mut last: Option<String> = None;
+
+        loop {
+            let tags = self
+                .list_tags(
+                    image,
+                    auth.clone(),
+                    Some(page_size),
+                    last.as_deref(),
+                )
+                .await?
+                .tags;
+
+            let count = tags.len();
+            last = tags.last().cloned();
+            all_tags.extend(tags);
+
+            if count < page_size {
+                break;
+            }
+        }
+
+        Ok(all_tags)
+    }
+
+    pub async fn pull_platform_digest(
+        &self,
+        image: &Reference,
+        auth: RegistryAuth,
+    ) -> anyhow::Result<String> {
+        let (manifest, digest) = self.pull_manifest(image, auth).await?;
+
+        get_digest_from_manifest(&digest, &manifest)
+    }
+
+    pub async fn version_from_tags(
+        &self,
+        image: &Reference,
+        digest: &str,
+        auth: RegistryAuth,
+    ) -> anyhow::Result<Option<String>> {
+        let tags = self
+            .list_all_tags(image, auth.clone())
+            .await?;
+
+        let mut tags = tags
+            .into_iter()
+            .filter(|version| !is_non_version_tag(version))
+            .collect::<Vec<_>>();
+
+        tags.sort_by_cached_key(|tag| {
+            let clean_tag = clean_tag(tag);
+            canonical_version_score(clean_tag)
+        });
+
+        for tag in tags.into_iter().rev() {
+            let tag_reference = Reference::with_tag(
+                image.registry().to_string(),
+                image.repository().to_string(),
+                tag.clone(),
+            );
+
+            let tag_digest = self
+                .pull_platform_digest(&tag_reference, auth.clone())
+                .await?;
+            if tag_digest == digest {
+                let clean_tag = clean_tag(&tag).to_string();
+                return Ok(Some(clean_tag));
+            }
+        }
+
+        Ok(None)
+    }
+
+    async fn client_for(
+        &self,
+        image: &Reference,
+        auth: RegistryAuth,
+    ) -> RegistryClientState {
+        let registry = image.resolve_registry().to_string();
+        let key = ClientKey {
+            registry: registry.clone(),
+            auth: auth.clone(),
+        };
+
+        if let Some(client) = self
+            .clients
+            .lock()
+            .unwrap()
+            .get(&key)
+            .cloned()
+        {
+            return client;
+        }
+
+        let client = RegistryClientState::new(
+            Arc::new(Client::new(self.config.to_oci_client_config())),
+            &registry,
+            auth,
+        )
+        .await;
+
+        self.clients
+            .lock()
+            .unwrap()
+            .entry(key)
+            .or_insert_with(|| client.clone())
+            .clone()
+    }
+}
 
 pub fn resolve_registry(registry: String) -> String {
     Reference::with_tag(registry, "dummy".to_string(), "dummy".to_string())
@@ -20,91 +286,6 @@ pub fn get_version_from_config(config: &ConfigFile) -> Option<String> {
         .get("org.opencontainers.image.version")
         .filter(|version| !is_non_version_tag(version))
         .map(|t| clean_tag(t).to_string())
-}
-
-pub async fn get_alias_oci_tags(
-    client: &Client,
-    image: &Reference,
-    digest: &str,
-    auth: &RegistryAuth,
-) -> anyhow::Result<Vec<String>> {
-    let tags = list_all_tags(client, image, auth).await?;
-
-    let mut tag_refs = tags
-        .into_iter()
-        .map(|tag| {
-            Reference::with_tag(
-                image.registry().to_string(),
-                image.repository().to_string(),
-                tag.clone(),
-            )
-        })
-        .rev()
-        .peekable();
-
-    while let Some(image) = tag_refs.peek() {
-        let tag_digest = pull_platform_digest(client, image, auth).await?;
-        if tag_digest == digest {
-            break;
-        } else {
-            tag_refs.next();
-        }
-    }
-
-    let mut candidates = Vec::new();
-
-    while let Some(image) = tag_refs.peek() {
-        let tag_digest = pull_platform_digest(client, image, auth).await?;
-        if tag_digest != digest {
-            break;
-        } else {
-            if let Some(tag) = image.tag() {
-                candidates.push(tag.to_string());
-            }
-            tag_refs.next();
-        }
-    }
-
-    Ok(candidates)
-}
-
-pub async fn list_all_tags(
-    client: &Client,
-    image: &Reference,
-    auth: &RegistryAuth,
-) -> anyhow::Result<Vec<String>> {
-    let page_size = 1000; // reasonable default
-    let mut all_tags = Vec::new();
-    let mut last: Option<String> = None;
-
-    loop {
-        let tags = client
-            .list_tags(image, auth, Some(page_size), last.as_deref())
-            .await?
-            .tags;
-
-        let count = tags.len();
-        last = tags.last().cloned();
-        all_tags.extend(tags);
-
-        if count < page_size {
-            break;
-        }
-    }
-
-    Ok(all_tags)
-}
-
-pub async fn pull_platform_digest(
-    client: &Client,
-    image: &Reference,
-    auth: &RegistryAuth,
-) -> anyhow::Result<String> {
-    let (manifest, digest) = client
-        .pull_manifest(image, auth)
-        .await?;
-
-    get_digest_from_manifest(&digest, &manifest)
 }
 
 pub fn get_digest_from_manifest(
@@ -130,42 +311,6 @@ pub fn get_digest_from_manifest(
             Ok(descriptor.digest.clone())
         }
     }
-}
-
-pub async fn get_version_from_oci_tags(
-    client: &Client,
-    image: &Reference,
-    digest: &str,
-    auth: &RegistryAuth,
-) -> anyhow::Result<Option<String>> {
-    let tags = list_all_tags(client, image, auth).await?;
-
-    let mut tags = tags
-        .into_iter()
-        .filter(|version| !is_non_version_tag(version))
-        .collect::<Vec<_>>();
-
-    tags.sort_by_cached_key(|tag| {
-        let clean_tag = clean_tag(tag);
-        canonical_version_score(clean_tag)
-    });
-
-    for tag in tags.into_iter().rev() {
-        let tag_reference = Reference::with_tag(
-            image.registry().to_string(),
-            image.repository().to_string(),
-            tag.clone(),
-        );
-
-        let tag_digest =
-            pull_platform_digest(client, &tag_reference, auth).await?;
-        if tag_digest == digest {
-            let clean_tag = clean_tag(&tag).to_string();
-            return Ok(Some(clean_tag));
-        }
-    }
-
-    Ok(None)
 }
 
 #[cfg(test)]
