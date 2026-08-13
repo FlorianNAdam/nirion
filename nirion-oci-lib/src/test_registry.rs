@@ -7,6 +7,7 @@ use std::{
 
 use crate::{
     client::{AuthConfig, NirionOciClient, NirionOciClientConfig},
+    oci::RegistryClient,
     oci_client::{
         Client, Reference,
         client::{ClientConfig, ClientProtocol, Config, ImageLayer},
@@ -176,10 +177,10 @@ pub async fn push_anonymous_test_image(
 pub fn http_nirion_client() -> crate::client::NirionOciClientBuilder {
     NirionOciClient::builder()
         .auth(AuthConfig::default())
-        .oci_client_config(NirionOciClientConfig {
+        .registry_client(RegistryClient::new(NirionOciClientConfig {
             protocol: ClientProtocol::Http,
             ..Default::default()
-        })
+        }))
 }
 
 fn write_registry_config(

@@ -2,14 +2,10 @@ use std::io::ErrorKind;
 
 use nirion_oci_lib::{
     auth::RegistryAuth as NirionRegistryAuth,
-    client::AuthConfig,
+    client::{AuthConfig, NirionOciClientConfig},
     docker_hub::{DockerHubClient, DockerHubError},
-    oci::get_alias_oci_tags,
-    oci_client::{
-        Client, Reference,
-        client::{ClientConfig, ClientProtocol},
-        secrets::RegistryAuth,
-    },
+    oci::RegistryClient,
+    oci_client::{Reference, client::ClientProtocol, secrets::RegistryAuth},
     test_registry::{
         ACCOUNT_A, ACCOUNT_B, RegistryHandle, http_nirion_client,
         push_anonymous_test_image,
@@ -32,7 +28,7 @@ async fn resolves_local_registry_image_with_mocked_docker_hub_metadata()
         .with_registries([test_image.registry_addr.clone()]);
 
     let client = http_nirion_client()
-        .docker_hub(docker_hub)
+        .docker_hub_client(docker_hub)
         .build();
 
     let resolved = client
@@ -346,7 +342,7 @@ async fn docker_hub_client_follows_pagination() -> anyhow::Result<()> {
         .with_registries(["localhost:5000".to_string()]);
 
     let tags = client
-        .fetch_all_tags(&reference, 1)
+        .fetch_all_tags(&reference, NirionRegistryAuth::Anonymous, 1)
         .await?;
 
     assert_eq!(tags.count, 2);
@@ -360,6 +356,44 @@ async fn docker_hub_client_follows_pagination() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn docker_hub_client_rejects_external_pagination_url()
+-> anyhow::Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let first = docker_hub_tags_page(
+        Some(
+            "https://example.test/repositories/library/nirion-test/tags?page=2",
+        ),
+        &["latest"],
+    );
+
+    let server = tokio::spawn(async move {
+        serve_http_response(
+            &listener,
+            200,
+            &first,
+            "/namespaces/library/repositories/nirion-test/tags?page_size=1&page=1",
+        )
+        .await?;
+        Ok::<_, anyhow::Error>(())
+    });
+
+    let reference = Reference::try_from("localhost:5000/nirion-test:latest")?;
+    let client = DockerHubClient::with_base_url(format!("http://{addr}"))
+        .with_registries(["localhost:5000".to_string()]);
+
+    let err = client
+        .fetch_all_tags(&reference, NirionRegistryAuth::Anonymous, 1)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, DockerHubError::InvalidPaginationUrl(_)));
+    server.await??;
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn docker_hub_client_parses_api_errors() -> anyhow::Result<()> {
     let (base_url, server) = start_error_mock_docker_hub().await?;
     let reference = Reference::try_from("localhost:5000/nirion-test:latest")?;
@@ -367,7 +401,7 @@ async fn docker_hub_client_parses_api_errors() -> anyhow::Result<()> {
         .with_registries(["localhost:5000".to_string()]);
 
     let err = client
-        .fetch_all_tags(&reference, 100)
+        .fetch_all_tags(&reference, NirionRegistryAuth::Anonymous, 100)
         .await
         .unwrap_err();
 
@@ -396,11 +430,125 @@ async fn docker_hub_client_fetches_single_tag() -> anyhow::Result<()> {
     let client = DockerHubClient::with_base_url(base_url)
         .with_registries(["localhost:5000".to_string()]);
 
-    let tag = client.fetch_tag(&reference).await?;
+    let tag = client
+        .fetch_tag(&reference, NirionRegistryAuth::Anonymous)
+        .await?;
 
     assert_eq!(tag.name, "1.2.3");
     assert_eq!(tag.images[0].digest.as_deref(), Some(digest));
 
+    server.await??;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn docker_hub_client_applies_authentication() -> anyhow::Result<()> {
+    let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let arch =
+        nirion_oci_lib::oci_client::config::Architecture::default().to_string();
+    let body = docker_hub_tag("1.2.3", &arch, digest);
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+
+    let server = tokio::spawn(async move {
+        serve_http_response(
+            &listener,
+            200,
+            r#"{"access_token":"hub-token"}"#,
+            "/auth/token",
+        )
+        .await?;
+        serve_http_response_with_auth(
+            &listener,
+            200,
+            &body,
+            "/namespaces/library/repositories/nirion-test/tags/1.2.3",
+            "authorization: Bearer hub-token",
+        )
+        .await?;
+        serve_http_response_with_auth(
+            &listener,
+            200,
+            &body,
+            "/namespaces/library/repositories/nirion-test/tags/1.2.3",
+            "authorization: Bearer hub-token",
+        )
+        .await?;
+        Ok::<_, anyhow::Error>(())
+    });
+
+    let reference = Reference::try_from("localhost:5000/nirion-test:1.2.3")?;
+    let client = DockerHubClient::with_base_url(format!("http://{addr}"))
+        .with_registries(["localhost:5000".to_string()]);
+
+    let tag = client
+        .fetch_tag(&reference, NirionRegistryAuth::basic("user", "pass"))
+        .await?;
+    let cached_tag = client
+        .fetch_tag(&reference, NirionRegistryAuth::basic("user", "pass"))
+        .await?;
+
+    assert_eq!(tag.name, "1.2.3");
+    assert_eq!(cached_tag.name, "1.2.3");
+    server.await??;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn docker_hub_client_refreshes_token_after_unauthorized()
+-> anyhow::Result<()> {
+    let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let arch =
+        nirion_oci_lib::oci_client::config::Architecture::default().to_string();
+    let body = docker_hub_tag("1.2.3", &arch, digest);
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+
+    let server = tokio::spawn(async move {
+        serve_http_response(
+            &listener,
+            200,
+            r#"{"access_token":"expired-token"}"#,
+            "/auth/token",
+        )
+        .await?;
+        serve_http_response_with_auth(
+            &listener,
+            401,
+            r#"{"detail":"expired","message":"unauthorized"}"#,
+            "/namespaces/library/repositories/nirion-test/tags/1.2.3",
+            "authorization: Bearer expired-token",
+        )
+        .await?;
+        serve_http_response(
+            &listener,
+            200,
+            r#"{"access_token":"fresh-token"}"#,
+            "/auth/token",
+        )
+        .await?;
+        serve_http_response_with_auth(
+            &listener,
+            200,
+            &body,
+            "/namespaces/library/repositories/nirion-test/tags/1.2.3",
+            "authorization: Bearer fresh-token",
+        )
+        .await?;
+        Ok::<_, anyhow::Error>(())
+    });
+
+    let reference = Reference::try_from("localhost:5000/nirion-test:1.2.3")?;
+    let client = DockerHubClient::with_base_url(format!("http://{addr}"))
+        .with_registries(["localhost:5000".to_string()]);
+
+    let tag = client
+        .fetch_tag(&reference, NirionRegistryAuth::basic("user", "pass"))
+        .await?;
+
+    assert_eq!(tag.name, "1.2.3");
     server.await??;
 
     Ok(())
@@ -415,7 +563,7 @@ async fn docker_hub_client_rejects_digest_references() -> anyhow::Result<()> {
 
     assert!(matches!(
         client
-            .fetch_tag(&digest_reference)
+            .fetch_tag(&digest_reference, NirionRegistryAuth::Anonymous)
             .await,
         Err(DockerHubError::DigestNotSupported)
     ));
@@ -431,7 +579,7 @@ async fn docker_hub_client_rejects_unsupported_registry() -> anyhow::Result<()>
 
     assert!(matches!(
         client
-            .fetch_all_tags(&reference, 100)
+            .fetch_all_tags(&reference, NirionRegistryAuth::Anonymous, 100)
             .await,
         Err(DockerHubError::UnsupportedRegistry)
     ));
@@ -450,7 +598,7 @@ async fn docker_hub_client_reports_unparseable_error_status()
         .with_registries(["localhost:5000".to_string()]);
 
     let err = client
-        .fetch_tag(&reference)
+        .fetch_tag(&reference, NirionRegistryAuth::Anonymous)
         .await
         .unwrap_err();
 
@@ -483,17 +631,17 @@ async fn oci_alias_tags_return_tags_with_matching_digest() -> anyhow::Result<()>
         )
         .await?;
 
-    let client = Client::new(ClientConfig {
+    let client = RegistryClient::new(NirionOciClientConfig {
         protocol: ClientProtocol::Http,
         ..Default::default()
     });
-    let tags = get_alias_oci_tags(
-        &client,
-        &latest.reference,
-        &latest.digest,
-        &RegistryAuth::Anonymous,
-    )
-    .await?;
+    let tags = client
+        .alias_tags(
+            &latest.reference,
+            &latest.digest,
+            NirionRegistryAuth::Anonymous,
+        )
+        .await?;
 
     assert!(tags.contains(&"latest".to_string()));
     assert!(tags.contains(&"1.2.3".to_string()));
@@ -513,7 +661,7 @@ async fn start_mock_docker_hub(
             &listener,
             200,
             &body,
-            "/repositories/library/nirion-test/tags?page_size=100&page=1",
+            "/namespaces/library/repositories/nirion-test/tags?page_size=100&page=1",
         )
         .await?;
         Ok(())
@@ -527,7 +675,7 @@ async fn start_paginated_mock_docker_hub()
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
     let second_url = format!(
-        "http://{addr}/repositories/library/nirion-test/tags?page_size=1&page=2"
+        "http://{addr}/namespaces/library/repositories/nirion-test/tags?page_size=1&page=2"
     );
     let first = docker_hub_tags_page(Some(&second_url), &["latest"]);
     let second = docker_hub_tags_page(None, &["1.2.3"]);
@@ -537,14 +685,14 @@ async fn start_paginated_mock_docker_hub()
             &listener,
             200,
             &first,
-            "/repositories/library/nirion-test/tags?page_size=1&page=1",
+            "/namespaces/library/repositories/nirion-test/tags?page_size=1&page=1",
         )
         .await?;
         serve_http_response(
             &listener,
             200,
             &second,
-            "/repositories/library/nirion-test/tags?page_size=1&page=2",
+            "/namespaces/library/repositories/nirion-test/tags?page_size=1&page=2",
         )
         .await?;
         Ok(())
@@ -564,7 +712,7 @@ async fn start_error_mock_docker_hub()
             &listener,
             500,
             &body,
-            "/repositories/library/nirion-test/tags?page_size=100&page=1",
+            "/namespaces/library/repositories/nirion-test/tags?page_size=100&page=1",
         )
         .await?;
         Ok(())
@@ -621,6 +769,52 @@ async fn serve_http_response(
             anyhow::anyhow!("mock Docker Hub request was invalid")
         })?;
     assert_eq!(target, expected_target);
+
+    let reason = if status == 200 { "OK" } else { "Error" };
+    let response = format!(
+        "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    socket
+        .write_all(response.as_bytes())
+        .await?;
+    Ok(())
+}
+
+async fn serve_http_response_with_auth(
+    listener: &TcpListener,
+    status: u16,
+    body: &str,
+    expected_target: &str,
+    expected_auth: &str,
+) -> anyhow::Result<()> {
+    let (mut socket, _) = listener.accept().await?;
+    let mut request = vec![0; 4096];
+    let read = socket.read(&mut request).await?;
+
+    if read == 0 {
+        return Err(std::io::Error::new(
+            ErrorKind::UnexpectedEof,
+            "mock Docker Hub request was empty",
+        )
+        .into());
+    }
+
+    let request = std::str::from_utf8(&request[..read])?;
+    let target = request
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .ok_or_else(|| {
+            anyhow::anyhow!("mock Docker Hub request was invalid")
+        })?;
+    assert_eq!(target, expected_target);
+    assert!(
+        request
+            .lines()
+            .any(|line| line.eq_ignore_ascii_case(expected_auth))
+    );
 
     let reason = if status == 200 { "OK" } else { "Error" };
     let response = format!(

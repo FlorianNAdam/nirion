@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{collections::HashMap, time::Duration};
 
 use oci_client::config::ConfigFile;
 use serde::Deserialize;
@@ -10,15 +6,12 @@ use serde::Deserialize;
 use crate::{
     auth::RegistryAuth,
     docker_hub::DockerHubClient,
-    oci::{
-        get_version_from_config, get_version_from_oci_tags, resolve_registry,
-    },
+    oci::{RegistryClient, get_version_from_config, resolve_registry},
     oci_client::{
-        Client, Reference,
+        Reference,
         client::{Certificate, ClientConfig, ClientProtocol},
-        secrets::RegistryAuth as OciRegistryAuth,
     },
-    version::{VersionedImage, canonical_version_tag},
+    version::VersionedImage,
 };
 
 #[derive(Clone, Debug)]
@@ -62,7 +55,7 @@ impl Default for NirionOciClientConfig {
 }
 
 impl NirionOciClientConfig {
-    fn to_oci_client_config(&self) -> ClientConfig {
+    pub(crate) fn to_oci_client_config(&self) -> ClientConfig {
         ClientConfig {
             protocol: self.protocol.clone(),
             accept_invalid_certificates: self.accept_invalid_certificates,
@@ -155,17 +148,10 @@ fn normalize_scope(scope: &str) -> String {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct ClientKey {
-    registry: String,
-    auth: RegistryAuth,
-}
-
 pub struct NirionOciClient {
     auth: AuthConfig,
-    docker_hub: DockerHubClient,
-    oci_client_config: NirionOciClientConfig,
-    clients: Mutex<HashMap<ClientKey, Arc<Client>>>,
+    docker_hub_client: DockerHubClient,
+    registry_client: RegistryClient,
 }
 
 impl NirionOciClient {
@@ -178,11 +164,9 @@ impl NirionOciClient {
         image: &Reference,
     ) -> anyhow::Result<VersionedImage> {
         let auth = self.auth.auth_for(image);
-        let client = self.client_for(image, &auth).await;
-        let oci_auth = auth.to_oci_auth();
 
         let (version, digest) = self
-            .resolve_version_and_digest(&client, image, &oci_auth)
+            .resolve_version_and_digest(image, auth)
             .await?;
 
         Ok(VersionedImage {
@@ -198,11 +182,10 @@ impl NirionOciClient {
     ) -> anyhow::Result<VersionedImage> {
         let image = Reference::try_from(versioned_image.image.as_str())?;
         let auth = self.auth.auth_for(&image);
-        let client = self.client_for(&image, &auth).await;
-        let oci_auth = auth.to_oci_auth();
 
-        let (_, current_digest, _) = client
-            .pull_manifest_and_config(&image, &oci_auth)
+        let (_, current_digest, _) = self
+            .registry_client
+            .pull_manifest_and_config(&image, auth.clone())
             .await?;
 
         if current_digest == versioned_image.digest {
@@ -214,7 +197,7 @@ impl NirionOciClient {
         }
 
         let (version, digest) = self
-            .resolve_version_and_digest(&client, &image, &oci_auth)
+            .resolve_version_and_digest(&image, auth)
             .await?;
 
         Ok(VersionedImage {
@@ -226,12 +209,12 @@ impl NirionOciClient {
 
     async fn resolve_version_and_digest(
         &self,
-        client: &Client,
         image: &Reference,
-        auth: &OciRegistryAuth,
+        auth: RegistryAuth,
     ) -> anyhow::Result<(Option<String>, String)> {
-        let (_, digest, raw_config) = client
-            .pull_manifest_and_config(image, auth)
+        let (_, digest, raw_config) = self
+            .registry_client
+            .pull_manifest_and_config(image, auth.clone())
             .await?;
 
         let config: ConfigFile = serde_json::from_str(&raw_config)?;
@@ -241,7 +224,7 @@ impl NirionOciClient {
         }
 
         let version = self
-            .resolve_version_from_tags(client, image, &digest, auth)
+            .resolve_version_from_tags(image, &digest, auth)
             .await?;
 
         Ok((version, digest))
@@ -249,71 +232,34 @@ impl NirionOciClient {
 
     async fn resolve_version_from_tags(
         &self,
-        client: &Client,
         image: &Reference,
         digest: &str,
-        auth: &OciRegistryAuth,
+        auth: RegistryAuth,
     ) -> anyhow::Result<Option<String>> {
-        if self.docker_hub.supports(image) {
-            let alias_tags = self
-                .docker_hub
-                .get_alias_tags(image, digest)
-                .await?;
-            Ok(canonical_version_tag(&alias_tags))
+        if self.docker_hub_client.supports(image) {
+            self.docker_hub_client
+                .version_from_tags(image, digest, auth)
+                .await
         } else {
-            get_version_from_oci_tags(client, image, digest, auth).await
+            self.registry_client
+                .version_from_tags(image, digest, auth)
+                .await
         }
-    }
-
-    async fn client_for(
-        &self,
-        image: &Reference,
-        auth: &RegistryAuth,
-    ) -> Arc<Client> {
-        let key = ClientKey {
-            registry: image.resolve_registry().to_string(),
-            auth: auth.clone(),
-        };
-
-        if let Some(client) = self
-            .clients
-            .lock()
-            .unwrap()
-            .get(&key)
-            .cloned()
-        {
-            return client;
-        }
-
-        let client = Arc::new(Client::new(
-            self.oci_client_config
-                .to_oci_client_config(),
-        ));
-        client
-            .store_auth_if_needed(&key.registry, &auth.to_oci_auth())
-            .await;
-
-        self.clients
-            .lock()
-            .unwrap()
-            .entry(key)
-            .or_insert_with(|| Arc::clone(&client))
-            .clone()
     }
 }
 
 pub struct NirionOciClientBuilder {
     auth: AuthConfig,
-    docker_hub: DockerHubClient,
-    oci_client_config: NirionOciClientConfig,
+    docker_hub_client: DockerHubClient,
+    registry_client: RegistryClient,
 }
 
 impl Default for NirionOciClientBuilder {
     fn default() -> Self {
         Self {
             auth: AuthConfig::default(),
-            docker_hub: DockerHubClient::default(),
-            oci_client_config: NirionOciClientConfig::default(),
+            docker_hub_client: DockerHubClient::default(),
+            registry_client: RegistryClient::default(),
         }
     }
 }
@@ -336,36 +282,27 @@ impl NirionOciClientBuilder {
         self
     }
 
-    pub fn docker_hub(
+    pub fn docker_hub_client(
         mut self,
-        docker_hub: DockerHubClient,
+        docker_hub_client: DockerHubClient,
     ) -> Self {
-        self.docker_hub = docker_hub;
+        self.docker_hub_client = docker_hub_client;
         self
     }
 
-    pub fn oci_client_config(
+    pub fn registry_client(
         mut self,
-        config: NirionOciClientConfig,
+        registry_client: RegistryClient,
     ) -> Self {
-        self.oci_client_config = config;
-        self
-    }
-
-    pub fn oci_client_protocol(
-        mut self,
-        protocol: ClientProtocol,
-    ) -> Self {
-        self.oci_client_config.protocol = protocol;
+        self.registry_client = registry_client;
         self
     }
 
     pub fn build(self) -> NirionOciClient {
         NirionOciClient {
             auth: self.auth,
-            docker_hub: self.docker_hub,
-            oci_client_config: self.oci_client_config,
-            clients: Mutex::new(HashMap::new()),
+            docker_hub_client: self.docker_hub_client,
+            registry_client: self.registry_client,
         }
     }
 }
@@ -451,7 +388,10 @@ mod tests {
     fn builder_add_auth_and_protocol_configures_client() {
         let client = NirionOciClient::builder()
             .add_auth("ghcr.io/example", auth("repo"))
-            .oci_client_protocol(ClientProtocol::Http)
+            .registry_client(RegistryClient::new(NirionOciClientConfig {
+                protocol: ClientProtocol::Http,
+                ..Default::default()
+            }))
             .build();
 
         let image = Reference::try_from("ghcr.io/example/app:latest").unwrap();
@@ -460,7 +400,10 @@ mod tests {
             username(client.auth.auth_for(&image)),
             Some("repo".to_string())
         );
-        assert_eq!(client.oci_client_config.protocol, ClientProtocol::Http);
+        assert_eq!(
+            client.registry_client.config().protocol,
+            ClientProtocol::Http
+        );
     }
 
     #[test]
@@ -476,8 +419,8 @@ mod tests {
 
         let client = NirionOciClient::builder()
             .auth(auth_config)
-            .docker_hub(docker_hub)
-            .oci_client_config(config)
+            .docker_hub_client(docker_hub)
+            .registry_client(RegistryClient::new(config))
             .build();
 
         let ghcr = Reference::try_from("ghcr.io/example/app:latest").unwrap();
@@ -487,7 +430,14 @@ mod tests {
             username(client.auth.auth_for(&ghcr)),
             Some("registry".to_string())
         );
-        assert!(client.docker_hub.supports(&local));
-        assert_eq!(client.oci_client_config.protocol, ClientProtocol::Http);
+        assert!(
+            client
+                .docker_hub_client
+                .supports(&local)
+        );
+        assert_eq!(
+            client.registry_client.config().protocol,
+            ClientProtocol::Http
+        );
     }
 }

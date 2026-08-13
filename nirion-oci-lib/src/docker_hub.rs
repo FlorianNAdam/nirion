@@ -1,9 +1,15 @@
-use std::collections::HashSet;
+use std::{collections::HashMap, collections::HashSet, sync::Arc};
 
 use oci_client::{Reference, config::Architecture};
-use reqwest::StatusCode;
-use serde::Deserialize;
+use reqwest::{StatusCode, Url};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio::sync::Mutex;
+
+use crate::{
+    auth::{Authenticable, RegistryAuth},
+    version::canonical_version_tag,
+};
 
 const DOCKERHUB_BASE: &str = "https://hub.docker.com/v2";
 
@@ -12,6 +18,7 @@ pub struct DockerHubClient {
     http: reqwest::Client,
     base_url: String,
     registries: HashSet<String>,
+    tokens: Arc<Mutex<HashMap<RegistryAuth, String>>>,
 }
 
 impl Default for DockerHubClient {
@@ -20,6 +27,7 @@ impl Default for DockerHubClient {
             http: reqwest::Client::new(),
             base_url: DOCKERHUB_BASE.to_string(),
             registries: HashSet::from(["docker.io".to_string()]),
+            tokens: Arc::default(),
         }
     }
 }
@@ -55,12 +63,13 @@ impl DockerHubClient {
     pub async fn fetch_all_tags(
         &self,
         reference: &Reference,
+        auth: RegistryAuth,
         page_size: u32,
     ) -> Result<TagsResponse, DockerHubError> {
         let (namespace, repository) = self.dockerhub_parts(reference)?;
 
         let mut next_url = Some(format!(
-            "{base}/repositories/{namespace}/{repository}/tags?page_size={page_size}&page=1",
+            "{base}/namespaces/{namespace}/repositories/{repository}/tags?page_size={page_size}&page=1",
             base = self.base_url
         ));
 
@@ -68,7 +77,8 @@ impl DockerHubClient {
         let mut total_count = 0;
 
         while let Some(url) = next_url {
-            let mut body = self.fetch_tags_url(&url).await?;
+            self.validate_url(&url)?;
+            let mut body = self.fetch_tags_url(&url, &auth).await?;
             total_count = body.count;
             all_results.append(&mut body.results);
             next_url = body.next;
@@ -85,6 +95,7 @@ impl DockerHubClient {
     pub async fn fetch_tag(
         &self,
         reference: &Reference,
+        auth: RegistryAuth,
     ) -> Result<Tag, DockerHubError> {
         let (namespace, repository) = self.dockerhub_parts(reference)?;
 
@@ -101,7 +112,9 @@ impl DockerHubClient {
             base = self.base_url
         );
 
-        let resp = self.http.get(&url).send().await?;
+        let resp = self
+            .authenticated_get(&url, &auth)
+            .await?;
 
         if resp.status().is_success() {
             Ok(resp.json::<Tag>().await?)
@@ -110,13 +123,14 @@ impl DockerHubClient {
         }
     }
 
-    pub async fn get_alias_tags(
+    pub async fn alias_tags(
         &self,
         image: &Reference,
         digest: &str,
+        auth: RegistryAuth,
     ) -> anyhow::Result<Vec<String>> {
         let tags = self
-            .fetch_all_tags(image, 100)
+            .fetch_all_tags(image, auth, 100)
             .await?
             .results;
 
@@ -125,6 +139,18 @@ impl DockerHubClient {
             digest,
             Architecture::default(),
         ))
+    }
+
+    pub async fn version_from_tags(
+        &self,
+        image: &Reference,
+        digest: &str,
+        auth: RegistryAuth,
+    ) -> anyhow::Result<Option<String>> {
+        let alias_tags = self
+            .alias_tags(image, digest, auth)
+            .await?;
+        Ok(canonical_version_tag(&alias_tags))
     }
 
     fn dockerhub_parts(
@@ -141,14 +167,112 @@ impl DockerHubClient {
     async fn fetch_tags_url(
         &self,
         url: &str,
+        auth: &RegistryAuth,
     ) -> Result<TagsResponse, DockerHubError> {
-        let resp = self.http.get(url).send().await?;
+        let resp = self
+            .authenticated_get(url, auth)
+            .await?;
 
         if resp.status().is_success() {
             Ok(resp.json::<TagsResponse>().await?)
         } else {
             parse_dockerhub_error(resp).await
         }
+    }
+
+    async fn authenticated_get(
+        &self,
+        url: &str,
+        auth: &RegistryAuth,
+    ) -> Result<reqwest::Response, DockerHubError> {
+        let mut resp = self
+            .http
+            .get(url)
+            .apply_authentication(&self.hub_api_auth(auth).await?)
+            .send()
+            .await?;
+
+        if resp.status() == StatusCode::UNAUTHORIZED
+            && matches!(auth, RegistryAuth::Basic { .. })
+        {
+            self.tokens.lock().await.remove(auth);
+            resp = self
+                .http
+                .get(url)
+                .apply_authentication(&self.hub_api_auth(auth).await?)
+                .send()
+                .await?;
+        }
+
+        Ok(resp)
+    }
+
+    fn validate_url(
+        &self,
+        url: &str,
+    ) -> Result<(), DockerHubError> {
+        let base = Url::parse(&self.base_url).map_err(|_| {
+            DockerHubError::InvalidPaginationUrl(url.to_string())
+        })?;
+        let url = Url::parse(url).map_err(|_| {
+            DockerHubError::InvalidPaginationUrl(url.to_string())
+        })?;
+
+        if url.scheme() == base.scheme()
+            && url.host_str() == base.host_str()
+            && url.port_or_known_default() == base.port_or_known_default()
+            && url.path().starts_with(base.path())
+        {
+            Ok(())
+        } else {
+            Err(DockerHubError::InvalidPaginationUrl(url.to_string()))
+        }
+    }
+
+    async fn hub_api_auth(
+        &self,
+        auth: &RegistryAuth,
+    ) -> Result<RegistryAuth, DockerHubError> {
+        let RegistryAuth::Basic { username, password } = auth else {
+            return Ok(auth.clone());
+        };
+
+        if let Some(token) = self
+            .tokens
+            .lock()
+            .await
+            .get(auth)
+            .cloned()
+        {
+            return Ok(RegistryAuth::Bearer { token });
+        }
+
+        let url = format!("{base}/auth/token", base = self.base_url);
+        let resp = self
+            .http
+            .post(&url)
+            .json(&AccessTokenRequest {
+                identifier: username.to_string(),
+                secret: password.to_string(),
+            })
+            .send()
+            .await?;
+
+        let token = if resp.status().is_success() {
+            resp.json::<AccessTokenResponse>()
+                .await?
+        } else {
+            return parse_dockerhub_error(resp).await;
+        };
+
+        self.tokens
+            .lock()
+            .await
+            .insert(auth.clone(), token.access_token.clone());
+
+        Ok(RegistryAuth::Bearer {
+            token: token.access_token,
+        })
     }
 }
 
@@ -165,6 +289,9 @@ pub enum DockerHubError {
 
     #[error("Unexpected status code: {0}")]
     UnexpectedStatus(StatusCode),
+
+    #[error("Invalid DockerHub pagination URL: {0}")]
+    InvalidPaginationUrl(String),
 
     #[error("Only docker.io images are supported")]
     UnsupportedRegistry,
@@ -237,6 +364,17 @@ pub struct Layer {
 pub struct ApiErrorResponse {
     pub detail: Option<String>,
     pub message: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct AccessTokenRequest {
+    identifier: String,
+    secret: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AccessTokenResponse {
+    access_token: String,
 }
 
 fn dockerhub_repository_parts(
