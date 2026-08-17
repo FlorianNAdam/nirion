@@ -60,7 +60,7 @@ pub fn target_selector_completer(
 
     let projects = tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current()
-            .block_on(core_cli.backend.get_projects())
+            .block_on(core_cli.backend.load_projects())
     })
     .unwrap_or_default();
 
@@ -136,7 +136,7 @@ pub fn service_selector_completer(
 
     let projects = tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current()
-            .block_on(core_cli.backend.get_projects())
+            .block_on(core_cli.backend.load_projects())
     })
     .unwrap_or_default();
 
@@ -216,19 +216,19 @@ struct BackendCli {
 }
 
 impl BackendCli {
-    async fn get_lock_file(&self) -> anyhow::Result<PathBuf> {
-        self.files.get_lock_file().await
+    async fn load_lock_file(&self) -> anyhow::Result<PathBuf> {
+        self.files.load_lock_file().await
     }
 
-    async fn get_locked_images(&self) -> anyhow::Result<LockedImages> {
-        self.files.get_locked_images().await
+    async fn load_locked_images(&self) -> anyhow::Result<LockedImages> {
+        self.files.load_locked_images().await
     }
 
-    async fn get_projects(&self) -> anyhow::Result<Projects> {
-        self.files.get_projects().await
+    async fn load_projects(&self) -> anyhow::Result<Projects> {
+        self.files.load_projects().await
     }
 
-    async fn get_auth(
+    async fn load_auth(
         &self
     ) -> anyhow::Result<nirion_oci_lib::client::AuthConfig> {
         load_auth_config(self.auth_file.as_deref())
@@ -247,10 +247,10 @@ impl BackendCli {
     }
 
     async fn init_backend(&self) -> anyhow::Result<Box<dyn NirionBackend>> {
-        let lock_file = self.get_lock_file().await?;
-        let locked_images = self.get_locked_images().await?;
-        let projects = self.get_projects().await?;
-        let auth = self.get_auth().await?;
+        let lock_file = self.load_lock_file().await?;
+        let locked_images = self.load_locked_images().await?;
+        let projects = self.load_projects().await?;
+        let auth = self.load_auth().await?;
         let oci_client = Arc::new(
             NirionOciClient::builder()
                 .auth(auth)
@@ -301,7 +301,7 @@ struct FileCli {
 }
 
 impl FileCli {
-    async fn get_lock_file(&self) -> anyhow::Result<PathBuf> {
+    async fn load_lock_file(&self) -> anyhow::Result<PathBuf> {
         if let Some(file) = &self.lock_file {
             Ok(file.clone())
         } else {
@@ -313,12 +313,12 @@ impl FileCli {
         }
     }
 
-    async fn get_locked_images(&self) -> anyhow::Result<LockedImages> {
-        let lock_file = self.get_lock_file().await?;
+    async fn load_locked_images(&self) -> anyhow::Result<LockedImages> {
+        let lock_file = self.load_lock_file().await?;
         load_locked_images(&lock_file)
     }
 
-    async fn get_project_file(&self) -> anyhow::Result<PathBuf> {
+    async fn load_project_file(&self) -> anyhow::Result<PathBuf> {
         if self.nix_eval {
             let nix_eval_target = self
                 .nix_target
@@ -343,8 +343,8 @@ impl FileCli {
         }
     }
 
-    async fn get_projects(&self) -> anyhow::Result<Projects> {
-        let project_file = self.get_project_file().await?;
+    async fn load_projects(&self) -> anyhow::Result<Projects> {
+        let project_file = self.load_project_file().await?;
         load_projects(&project_file)
     }
 }

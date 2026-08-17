@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, time::Duration};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::{StreamExt, stream::BoxStream};
@@ -16,7 +16,6 @@ use crate::{
         inspect_container, inspect_image, inspect_project_containers,
         inspect_project_images,
     },
-    lock::LockedImages,
     lock_update::image_update_stream,
     logs::{LogEvent, LogStreamOptions, logs_stream},
     projects::{ProjectSelector, Projects, TargetSelector, get_images},
@@ -26,6 +25,9 @@ pub type OperationEventStream =
     BoxStream<'static, anyhow::Result<OperationEvent>>;
 pub type CommandOutputEventStream =
     BoxStream<'static, anyhow::Result<CommandOutputEvent>>;
+pub type TopOutputEventStream = CommandOutputEventStream;
+pub type VolumesOutputEventStream = CommandOutputEventStream;
+pub type PassthroughOutputEventStream = CommandOutputEventStream;
 pub type StatusEventStream =
     BoxStream<'static, anyhow::Result<ProjectStatusEvent>>;
 pub type LogEventStream = BoxStream<'static, anyhow::Result<LogEvent>>;
@@ -187,7 +189,7 @@ pub enum LockUpdateMode {
 }
 
 #[async_trait]
-pub trait NirionBackend {
+pub trait NirionBackend: Send + Sync {
     fn projects(&self) -> Projects;
 
     async fn lifecycle(
@@ -203,17 +205,17 @@ pub trait NirionBackend {
     async fn top(
         &self,
         operation: TopOperation,
-    ) -> CommandOutputEventStream;
+    ) -> TopOutputEventStream;
 
     async fn volumes(
         &self,
         operation: VolumesOperation,
-    ) -> CommandOutputEventStream;
+    ) -> VolumesOutputEventStream;
 
     async fn compose_passthrough(
         &self,
         operation: ComposePassthroughOperation,
-    ) -> CommandOutputEventStream;
+    ) -> PassthroughOutputEventStream;
 
     async fn status_stream(
         &self,
@@ -296,7 +298,7 @@ impl NirionBackend for LocalBackend {
     async fn top(
         &self,
         operation: TopOperation,
-    ) -> CommandOutputEventStream {
+    ) -> TopOutputEventStream {
         command_output_events(compose_stream(
             self.context.clone(),
             operation.target,
@@ -308,7 +310,7 @@ impl NirionBackend for LocalBackend {
     async fn volumes(
         &self,
         operation: VolumesOperation,
-    ) -> CommandOutputEventStream {
+    ) -> VolumesOutputEventStream {
         let args = volumes_args(&operation);
         command_output_events(compose_stream(
             self.context.clone(),
@@ -321,7 +323,7 @@ impl NirionBackend for LocalBackend {
     async fn compose_passthrough(
         &self,
         operation: ComposePassthroughOperation,
-    ) -> CommandOutputEventStream {
+    ) -> PassthroughOutputEventStream {
         command_output_events(compose_stream(
             self.context.clone(),
             operation.target,
@@ -383,10 +385,13 @@ impl NirionBackend for LocalBackend {
     ) -> LockUpdateEventStream {
         let mut images = get_images(&request.target, &self.context.projects);
         if request.mode == LockUpdateMode::MissingOnly {
-            retain_images_missing_lock_entries(
-                &mut images,
-                &self.context.locked_images,
-            );
+            images.retain(|name, image| {
+                self.context
+                    .locked_images
+                    .get(name)
+                    .map(|locked| locked.image != *image)
+                    .unwrap_or(true)
+            });
         }
 
         image_update_stream(&self.context, images, request.jobs)
@@ -407,18 +412,6 @@ fn command_output_events(
     events
         .map(|event| event.map(CommandOutputEvent::from))
         .boxed()
-}
-
-fn retain_images_missing_lock_entries(
-    images: &mut BTreeMap<String, String>,
-    locked_images: &LockedImages,
-) {
-    images.retain(|name, image| {
-        locked_images
-            .get(name)
-            .map(|locked| locked.image != *image)
-            .unwrap_or(true)
-    });
 }
 
 async fn inspect_targets(
