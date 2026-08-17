@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::Args;
 use nirion_lib::{
-    context::NirionContext,
-    docker::{query_project_status, Port, ServiceStatus},
+    backend::{NirionBackend, ProjectStatusRequest},
+    docker::{Port, ServiceStatus},
 };
 use nirion_tui_lib::color::Colorize;
 use nirion_tui_lib::table::print_table;
@@ -24,30 +24,31 @@ pub struct PsArgs {
 
 pub async fn handle_ps(
     args: &PsArgs,
-    context: &NirionContext,
+    backend: &impl NirionBackend,
 ) -> Result<()> {
     let mut rows = vec![];
+    let projects = backend.projects();
 
     match &args.target {
         TargetSelector::All => {
-            for (project_name, _) in context.projects.iter() {
-                rows.extend(print_project_status(context, project_name).await?);
+            for (project_name, _) in projects.iter() {
+                rows.extend(print_project_status(backend, project_name).await?);
             }
         }
 
         TargetSelector::Project(sel) => {
-            if context.projects.contains_key(&sel.name) {
-                rows.extend(print_project_status(context, &sel.name).await?);
+            if projects.contains_key(&sel.name) {
+                rows.extend(print_project_status(backend, &sel.name).await?);
             }
         }
 
         TargetSelector::Service(sel) => {
-            if context
-                .projects
-                .contains_key(&sel.project)
-            {
-                let status =
-                    query_project_status(context, &sel.project).await?;
+            if projects.contains_key(&sel.project) {
+                let status = backend
+                    .project_status(ProjectStatusRequest {
+                        project: sel.project.clone(),
+                    })
+                    .await?;
 
                 if let Some(svc) = status.services.get(&sel.service) {
                     rows.push(print_header(&sel.project));
@@ -62,14 +63,18 @@ pub async fn handle_ps(
 }
 
 async fn print_project_status(
-    context: &NirionContext,
+    backend: &impl NirionBackend,
     project_name: &str,
 ) -> anyhow::Result<Vec<String>> {
     let mut rows = vec![];
 
     rows.push(print_header(project_name));
 
-    let status = query_project_status(context, project_name).await?;
+    let status = backend
+        .project_status(ProjectStatusRequest {
+            project: project_name.to_string(),
+        })
+        .await?;
 
     for svc in status.services.values() {
         rows.push(print_row(svc)?);

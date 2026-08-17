@@ -1,5 +1,5 @@
 use clap::Args;
-use nirion_lib::context::NirionContext;
+use nirion_lib::backend::NirionBackend;
 
 use crate::{ClapSelector, TargetSelector};
 
@@ -17,18 +17,20 @@ pub struct ListArgs {
 
 pub async fn handle_list(
     args: &ListArgs,
-    context: &NirionContext,
+    backend: &impl NirionBackend,
 ) -> anyhow::Result<()> {
+    let projects = backend.projects();
+
     match &args.target {
         TargetSelector::All => {
             println!("Projects:");
-            for (project_name, _) in context.projects.iter() {
+            for (project_name, _) in projects.iter() {
                 println!("- {}", project_name);
             }
         }
 
         TargetSelector::Project(proj) => {
-            let project = &context.projects[&proj.name];
+            let project = &projects[&proj.name];
             println!("Images in project '{}':", proj.name);
             for image in project.services.keys() {
                 println!("- {}", image);
