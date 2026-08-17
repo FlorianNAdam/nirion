@@ -44,7 +44,7 @@ struct HealthLogsArgs {
 
 pub async fn handle_health(
     args: &HealthArgs,
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
 ) -> Result<()> {
     match &args.command {
         HealthCommand::Logs(args) => handle_health_logs(args, backend).await?,
@@ -55,7 +55,7 @@ pub async fn handle_health(
 
 async fn handle_health_logs(
     args: &HealthLogsArgs,
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
 ) -> Result<()> {
     let options = HealthLogStreamOptions {
         follow: args.follow,

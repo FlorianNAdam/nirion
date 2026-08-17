@@ -44,7 +44,7 @@ struct InspectTargetArgs {
 
 pub async fn handle_inspect(
     args: &InspectArgs,
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
 ) -> Result<()> {
     match &args.command {
         InspectCommand::Container(args) => {
@@ -60,7 +60,7 @@ pub async fn handle_inspect(
 
 async fn inspect_targets(
     args: &InspectTargetArgs,
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
     kind: InspectKind,
 ) -> Result<()> {
     for output in backend

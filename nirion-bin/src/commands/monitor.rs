@@ -27,7 +27,7 @@ pub struct MonitorArgs {
 
 pub async fn handle_monitor(
     args: &MonitorArgs,
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
 ) -> anyhow::Result<()> {
     run_progress(
         backend,

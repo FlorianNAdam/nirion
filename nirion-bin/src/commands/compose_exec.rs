@@ -23,7 +23,7 @@ pub struct ComposeExecArgs {
 
 pub async fn handle_compose_exec(
     args: &ComposeExecArgs,
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
 ) -> anyhow::Result<()> {
     render_operation_events(backend.dispatch(
         DispatchRequest::ComposePassthrough(ComposePassthroughRequest {

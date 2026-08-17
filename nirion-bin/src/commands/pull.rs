@@ -22,7 +22,7 @@ pub struct PullArgs {
 
 pub async fn handle_pull(
     args: &PullArgs,
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
 ) -> Result<()> {
     render_operation_events(backend.dispatch(DispatchRequest::Pull(
         PullRequest {

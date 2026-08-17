@@ -30,7 +30,7 @@ pub struct RestartArgs {
 
 pub async fn handle_restart(
     args: &RestartArgs,
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
 ) -> Result<()> {
     run_lifecycle_command(
         backend,

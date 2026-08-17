@@ -22,7 +22,7 @@ pub struct CatArgs {
 
 pub async fn handle_cat(
     args: &CatArgs,
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
 ) -> Result<()> {
     let projects = backend.projects();
 

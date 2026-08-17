@@ -28,7 +28,7 @@ pub struct LockArgs {
 
 pub async fn handle_lock(
     args: &LockArgs,
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
 ) -> anyhow::Result<()> {
     let mut events = backend.lock_updates(LockUpdateRequest {
         target: args.target.clone(),

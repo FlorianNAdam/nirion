@@ -23,7 +23,7 @@ pub struct LifecycleOptions {
 }
 
 pub async fn run_lifecycle_command(
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
     target: &TargetSelector,
     action: LifecycleAction,
     options: LifecycleOptions,

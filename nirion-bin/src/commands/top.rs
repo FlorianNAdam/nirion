@@ -17,7 +17,7 @@ pub struct TopArgs {
 
 pub async fn handle_top(
     args: &TopArgs,
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
 ) -> anyhow::Result<()> {
     render_operation_events(backend.dispatch(DispatchRequest::Top(
         TopRequest {

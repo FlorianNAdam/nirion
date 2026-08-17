@@ -62,7 +62,7 @@ pub struct ExecArgs {
 
 pub async fn handle_exec(
     args: &ExecArgs,
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
 ) -> anyhow::Result<()> {
     let mut request = args.request();
 

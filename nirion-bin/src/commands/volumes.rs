@@ -26,7 +26,7 @@ pub struct VolumesArgs {
 
 pub async fn handle_volumes(
     args: &VolumesArgs,
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
 ) -> Result<()> {
     render_operation_events(backend.dispatch(DispatchRequest::Volumes(
         VolumesRequest {

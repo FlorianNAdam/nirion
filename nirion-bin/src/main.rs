@@ -1,7 +1,7 @@
 use crate::commands::{Commands, handle_command};
 use clap::{CommandFactory, Parser};
 use clap_complete::{ArgValueCompleter, CompletionCandidate};
-use nirion_lib::backend::LocalBackend;
+use nirion_lib::backend::{LocalBackend, NirionBackend};
 use nirion_lib::config::{
     build_nix_project_file, load_auth_config, load_locked_images,
     load_projects, nix_config_target,
@@ -60,7 +60,7 @@ pub fn target_selector_completer(
 
     let projects = tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current()
-            .block_on(core_cli.files.get_projects())
+            .block_on(core_cli.backend.get_projects())
     })
     .unwrap_or_default();
 
@@ -136,7 +136,7 @@ pub fn service_selector_completer(
 
     let projects = tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current()
-            .block_on(core_cli.files.get_projects())
+            .block_on(core_cli.backend.get_projects())
     })
     .unwrap_or_default();
 
@@ -194,10 +194,77 @@ pub fn service_selector_completer(
 )]
 struct CoreCli {
     #[command(flatten)]
-    files: FileCli,
+    backend: BackendCli,
 
     #[clap(trailing_var_arg = true)]
     args: Vec<String>,
+}
+
+#[derive(clap::Args, Debug)]
+struct BackendCli {
+    #[command(flatten)]
+    files: FileCli,
+
+    #[arg(long, env = "NIRION_AUTH_FILE", hide_env_values = true)]
+    auth_file: Option<PathBuf>,
+
+    #[arg(long, hide = true, value_name = "PROGRAM")]
+    docker_command: Option<PathBuf>,
+
+    #[arg(long, hide = true, value_name = "ARG")]
+    docker_command_arg: Vec<OsString>,
+}
+
+impl BackendCli {
+    async fn get_lock_file(&self) -> anyhow::Result<PathBuf> {
+        self.files.get_lock_file().await
+    }
+
+    async fn get_locked_images(&self) -> anyhow::Result<LockedImages> {
+        self.files.get_locked_images().await
+    }
+
+    async fn get_projects(&self) -> anyhow::Result<Projects> {
+        self.files.get_projects().await
+    }
+
+    async fn get_auth(
+        &self
+    ) -> anyhow::Result<nirion_oci_lib::client::AuthConfig> {
+        load_auth_config(self.auth_file.as_deref())
+    }
+
+    fn docker_command(&self) -> DockerCommand {
+        self.docker_command
+            .clone()
+            .map(|program| {
+                DockerCommand::with_args(
+                    program,
+                    self.docker_command_arg.clone(),
+                )
+            })
+            .unwrap_or_default()
+    }
+
+    async fn init_backend(&self) -> anyhow::Result<Box<dyn NirionBackend>> {
+        let lock_file = self.get_lock_file().await?;
+        let locked_images = self.get_locked_images().await?;
+        let projects = self.get_projects().await?;
+        let auth = self.get_auth().await?;
+        let oci_client = Arc::new(
+            NirionOciClient::builder()
+                .auth(auth)
+                .build(),
+        );
+
+        Ok(Box::new(LocalBackend::new(NirionContext {
+            projects,
+            locked_images,
+            lock_file,
+            oci_client,
+            docker_command: self.docker_command(),
+        })))
+    }
 }
 
 #[derive(clap::Args, Debug)]
@@ -286,39 +353,10 @@ impl FileCli {
 #[command(name = "nirion")]
 struct Cli {
     #[command(flatten)]
-    files: FileCli,
-
-    #[arg(long, env = "NIRION_AUTH_FILE", hide_env_values = true)]
-    auth_file: Option<PathBuf>,
-
-    #[arg(long, hide = true, value_name = "PROGRAM")]
-    docker_command: Option<PathBuf>,
-
-    #[arg(long, hide = true, value_name = "ARG")]
-    docker_command_arg: Vec<OsString>,
+    backend: BackendCli,
 
     #[command(subcommand)]
     command: Commands,
-}
-
-impl Cli {
-    async fn get_auth(
-        &self
-    ) -> anyhow::Result<nirion_oci_lib::client::AuthConfig> {
-        load_auth_config(self.auth_file.as_deref())
-    }
-
-    fn docker_command(&self) -> DockerCommand {
-        self.docker_command
-            .clone()
-            .map(|program| {
-                DockerCommand::with_args(
-                    program,
-                    self.docker_command_arg.clone(),
-                )
-            })
-            .unwrap_or_default()
-    }
 }
 
 #[tokio::main]
@@ -327,13 +365,8 @@ async fn main() -> anyhow::Result<()> {
 
     let core_cli = CoreCli::parse();
 
-    let lock_file = core_cli.files.get_lock_file().await?;
-    let locked_images = core_cli
-        .files
-        .get_locked_images()
-        .await?;
-
-    let projects = core_cli.files.get_projects().await?;
+    let backend = core_cli.backend.init_backend().await?;
+    let projects = backend.projects();
 
     PROJECTS
         .set(projects.clone())
@@ -344,23 +377,7 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse_from(args);
 
-    let auth = cli.get_auth().await?;
-    let oci_client = Arc::new(
-        NirionOciClient::builder()
-            .auth(auth)
-            .build(),
-    );
-
-    let context = NirionContext {
-        projects,
-        locked_images,
-        lock_file,
-        oci_client,
-        docker_command: cli.docker_command(),
-    };
-    let backend = LocalBackend::new(context);
-
-    handle_command(&cli.command, &backend).await?;
+    handle_command(&cli.command, backend.as_ref()).await?;
 
     Ok(())
 }

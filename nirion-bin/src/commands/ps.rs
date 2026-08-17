@@ -24,7 +24,7 @@ pub struct PsArgs {
 
 pub async fn handle_ps(
     args: &PsArgs,
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
 ) -> Result<()> {
     let mut rows = vec![];
     let projects = backend.projects();
@@ -63,7 +63,7 @@ pub async fn handle_ps(
 }
 
 async fn print_project_status(
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
     project_name: &str,
 ) -> anyhow::Result<Vec<String>> {
     let mut rows = vec![];

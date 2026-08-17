@@ -30,7 +30,7 @@ pub struct UpArgs {
 
 pub async fn handle_up(
     args: &UpArgs,
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
 ) -> Result<()> {
     run_lifecycle_command(
         backend,

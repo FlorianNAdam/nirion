@@ -30,7 +30,7 @@ pub struct ReloadArgs {
 
 pub async fn handle_reload(
     args: &ReloadArgs,
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
 ) -> Result<()> {
     run_lifecycle_command(
         backend,

@@ -1,7 +1,7 @@
 use paste::paste;
 
 use clap::{Args, Subcommand};
-use nirion_lib::backend::LocalBackend;
+use nirion_lib::backend::NirionBackend;
 use std::num::NonZeroUsize;
 use tokio::time::Duration;
 
@@ -84,7 +84,7 @@ macro_rules! define_commands {
 
             pub async fn handle_command(
                 command: &Commands,
-                backend: &LocalBackend
+                backend: &dyn NirionBackend
             ) -> anyhow::Result<()> {
                 match command {
                     $(

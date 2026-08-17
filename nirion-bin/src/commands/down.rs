@@ -27,7 +27,7 @@ pub struct DownArgs {
 
 pub async fn handle_down(
     args: &DownArgs,
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
 ) -> Result<()> {
     run_lifecycle_command(
         backend,

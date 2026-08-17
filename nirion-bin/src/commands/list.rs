@@ -17,7 +17,7 @@ pub struct ListArgs {
 
 pub async fn handle_list(
     args: &ListArgs,
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
 ) -> anyhow::Result<()> {
     let projects = backend.projects();
 

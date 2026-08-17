@@ -102,7 +102,7 @@ impl ProgressState {
 }
 
 pub(crate) async fn run_progress(
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
     target: &TargetSelector,
     compose_stream: impl Stream<Item = anyhow::Result<OperationEvent>>,
     status_events: impl Stream<Item = anyhow::Result<ProjectStatusEvent>>,
@@ -185,7 +185,7 @@ fn handle_compose_event(
 }
 
 async fn refresh_statuses(
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
     selected: &[String],
     statuses: &mut BTreeMap<String, ProjectStatus>,
 ) -> anyhow::Result<()> {

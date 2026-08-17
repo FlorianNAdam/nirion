@@ -70,7 +70,7 @@ pub struct LogsArgs {
 
 pub async fn handle_logs(
     args: &LogsArgs,
-    backend: &impl NirionBackend,
+    backend: &dyn NirionBackend,
 ) -> anyhow::Result<()> {
     let options = LogStreamOptions {
         follow: args.follow,
