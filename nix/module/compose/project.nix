@@ -74,6 +74,11 @@ let
         default = null;
         description = "Default sops file for this project's secrets.";
       };
+      format = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Default sops file format for this project's secrets.";
+      };
       group = mkOption {
         type = types.nullOr sopsGroupType;
         default = null;

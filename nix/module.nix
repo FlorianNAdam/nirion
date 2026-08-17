@@ -81,6 +81,9 @@ let
     lib.optionalAttrs (project.sops.file != null) {
       sopsFile = lib.mkDefault project.sops.file;
     }
+    // lib.optionalAttrs (project.sops.format != null) {
+      format = lib.mkDefault project.sops.format;
+    }
     // projectSopsAccessDefaults project;
 
   projectSopsReloadUnits =
