@@ -11,8 +11,12 @@ use crate::{
     events::ComposeEvent,
     exec::{ExecIo, ExecRequest, exec as run_exec},
     health::{HealthLogEvent, HealthLogStreamOptions, health_logs_stream},
+    inspect::{
+        inspect_container, inspect_image, inspect_project_containers,
+        inspect_project_images,
+    },
     logs::{LogEvent, LogStreamOptions, logs_stream},
-    projects::{Projects, TargetSelector},
+    projects::{ProjectSelector, Projects, TargetSelector},
 };
 
 pub type OperationEvent = ComposeEvent;
@@ -84,6 +88,20 @@ pub struct HealthLogsRequest {
     pub options: HealthLogStreamOptions,
 }
 
+#[derive(Debug, Clone)]
+pub struct InspectRequest {
+    pub target: TargetSelector,
+    pub kind: InspectKind,
+    pub format: String,
+    pub raw: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InspectKind {
+    Container,
+    Image,
+}
+
 pub trait NirionBackend {
     fn projects(&self) -> Projects;
 
@@ -117,6 +135,11 @@ pub trait NirionBackend {
         request: ExecRequest,
         io: ExecIo,
     ) -> impl Future<Output = anyhow::Result<()>> + Send;
+
+    fn inspect(
+        &self,
+        request: InspectRequest,
+    ) -> impl Future<Output = anyhow::Result<Vec<String>>> + Send;
 }
 
 #[derive(Clone)]
@@ -220,6 +243,89 @@ impl NirionBackend for LocalBackend {
         io: ExecIo,
     ) -> anyhow::Result<()> {
         run_exec(&self.context, &request, io).await
+    }
+
+    async fn inspect(
+        &self,
+        request: InspectRequest,
+    ) -> anyhow::Result<Vec<String>> {
+        inspect_targets(&self.context, request).await
+    }
+}
+
+async fn inspect_targets(
+    context: &NirionContext,
+    request: InspectRequest,
+) -> anyhow::Result<Vec<String>> {
+    match request.target {
+        TargetSelector::All => {
+            let mut outputs = Vec::new();
+            for (project_name, _) in context.projects.iter() {
+                outputs.extend(
+                    inspect_project(
+                        context,
+                        request.kind,
+                        &ProjectSelector {
+                            name: project_name.to_string(),
+                        },
+                        &request.format,
+                        request.raw,
+                    )
+                    .await?,
+                );
+            }
+            Ok(outputs)
+        }
+        TargetSelector::Project(project) => {
+            inspect_project(
+                context,
+                request.kind,
+                &project,
+                &request.format,
+                request.raw,
+            )
+            .await
+        }
+        TargetSelector::Service(service) => {
+            let output = match request.kind {
+                InspectKind::Container => {
+                    inspect_container(
+                        context,
+                        &service,
+                        &request.format,
+                        request.raw,
+                    )
+                    .await?
+                }
+                InspectKind::Image => {
+                    inspect_image(
+                        context,
+                        &service,
+                        &request.format,
+                        request.raw,
+                    )
+                    .await?
+                }
+            };
+            Ok(vec![output])
+        }
+    }
+}
+
+async fn inspect_project(
+    context: &NirionContext,
+    kind: InspectKind,
+    project: &ProjectSelector,
+    format: &str,
+    raw: bool,
+) -> anyhow::Result<Vec<String>> {
+    match kind {
+        InspectKind::Container => {
+            inspect_project_containers(context, project, format, raw).await
+        }
+        InspectKind::Image => {
+            inspect_project_images(context, project, format, raw).await
+        }
     }
 }
 
