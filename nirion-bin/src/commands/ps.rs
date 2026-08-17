@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Args;
 use nirion_lib::{
-    backend::{NirionBackend, ProjectStatusRequest},
+    backend::{NirionBackend, ProjectStatusQuery},
     docker::{Port, ServiceStatus},
 };
 use nirion_tui_lib::color::Colorize;
@@ -45,7 +45,7 @@ pub async fn handle_ps(
         TargetSelector::Service(sel) => {
             if projects.contains_key(&sel.project) {
                 let status = backend
-                    .project_status(ProjectStatusRequest {
+                    .project_status(ProjectStatusQuery {
                         project: sel.project.clone(),
                     })
                     .await?;
@@ -71,7 +71,7 @@ async fn print_project_status(
     rows.push(print_header(project_name));
 
     let status = backend
-        .project_status(ProjectStatusRequest {
+        .project_status(ProjectStatusQuery {
             project: project_name.to_string(),
         })
         .await?;

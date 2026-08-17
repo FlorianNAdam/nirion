@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
 use nirion_lib::{
-    backend::{InspectKind, InspectRequest, NirionBackend},
+    backend::{InspectKind, InspectQuery, NirionBackend},
     projects::TargetSelector,
 };
 
@@ -64,7 +64,7 @@ async fn inspect_targets(
     kind: InspectKind,
 ) -> Result<()> {
     for output in backend
-        .inspect(InspectRequest {
+        .inspect(InspectQuery {
             target: args.target.clone(),
             kind,
             format: args.format.clone(),

@@ -1,8 +1,7 @@
 use futures::{StreamExt, stream};
 use nirion_lib::{
     backend::{
-        DispatchRequest, LifecycleAction, LifecycleRequest, NirionBackend,
-        StatusStreamRequest,
+        LifecycleAction, LifecycleOperation, NirionBackend, StatusStreamRequest,
     },
     compose::ComposeConcurrency,
     wait::{WaitTarget, wait_finished},
@@ -28,12 +27,13 @@ pub async fn run_lifecycle_command(
     action: LifecycleAction,
     options: LifecycleOptions,
 ) -> anyhow::Result<()> {
-    let compose_events =
-        backend.dispatch(DispatchRequest::Lifecycle(LifecycleRequest {
+    let compose_events = backend
+        .lifecycle(LifecycleOperation {
             target: target.clone(),
             action,
             concurrency: ComposeConcurrency::Jobs(options.jobs),
-        }));
+        })
+        .await;
 
     let renderer = progress_renderer(options.presentation);
     let projects = backend.projects();
@@ -47,10 +47,12 @@ pub async fn run_lifecycle_command(
                 WaitTarget::Healthchecks,
             ));
     let status_events = if needs_status {
-        backend.status_stream(StatusStreamRequest {
-            target: target.clone(),
-            refresh_interval: options.refresh_interval,
-        })
+        backend
+            .status_stream(StatusStreamRequest {
+                target: target.clone(),
+                refresh_interval: options.refresh_interval,
+            })
+            .await
     } else {
         stream::pending().boxed()
     };

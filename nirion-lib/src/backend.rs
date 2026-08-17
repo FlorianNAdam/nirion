@@ -24,6 +24,15 @@ use crate::{
 
 pub type OperationEventStream =
     BoxStream<'static, anyhow::Result<OperationEvent>>;
+pub type CommandOutputEventStream =
+    BoxStream<'static, anyhow::Result<CommandOutputEvent>>;
+pub type StatusEventStream =
+    BoxStream<'static, anyhow::Result<ProjectStatusEvent>>;
+pub type LogEventStream = BoxStream<'static, anyhow::Result<LogEvent>>;
+pub type HealthLogEventStream =
+    BoxStream<'static, anyhow::Result<HealthLogEvent>>;
+pub type LockUpdateEventStream =
+    BoxStream<'static, anyhow::Result<LockUpdateEvent>>;
 
 #[derive(Debug, Clone)]
 pub enum OperationEvent {
@@ -31,6 +40,21 @@ pub enum OperationEvent {
         project: String,
     },
     Process {
+        project: Option<String>,
+        event: ProcessEvent,
+    },
+    ProjectFailed {
+        project: String,
+        error: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum CommandOutputEvent {
+    ProjectStarted {
+        project: String,
+    },
+    Output {
         project: Option<String>,
         event: ProcessEvent,
     },
@@ -56,17 +80,24 @@ impl From<ComposeEvent> for OperationEvent {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum DispatchRequest {
-    Lifecycle(LifecycleRequest),
-    Pull(PullRequest),
-    Top(TopRequest),
-    Volumes(VolumesRequest),
-    ComposePassthrough(ComposePassthroughRequest),
+impl From<ComposeEvent> for CommandOutputEvent {
+    fn from(event: ComposeEvent) -> Self {
+        match event {
+            ComposeEvent::ProjectStarted { project } => {
+                Self::ProjectStarted { project }
+            }
+            ComposeEvent::Process { project, event } => {
+                Self::Output { project, event }
+            }
+            ComposeEvent::ProjectFailed { project, error } => {
+                Self::ProjectFailed { project, error }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
-pub struct LifecycleRequest {
+pub struct LifecycleOperation {
     pub target: TargetSelector,
     pub action: LifecycleAction,
     pub concurrency: ComposeConcurrency,
@@ -82,25 +113,25 @@ pub enum LifecycleAction {
 }
 
 #[derive(Debug, Clone)]
-pub struct PullRequest {
+pub struct PullOperation {
     pub target: TargetSelector,
     pub concurrency: ComposeConcurrency,
 }
 
 #[derive(Debug, Clone)]
-pub struct TopRequest {
+pub struct TopOperation {
     pub target: TargetSelector,
 }
 
 #[derive(Debug, Clone)]
-pub struct VolumesRequest {
+pub struct VolumesOperation {
     pub target: TargetSelector,
     pub format: String,
     pub quiet: bool,
 }
 
 #[derive(Debug, Clone)]
-pub struct ComposePassthroughRequest {
+pub struct ComposePassthroughOperation {
     pub target: TargetSelector,
     pub args: Vec<String>,
 }
@@ -112,7 +143,7 @@ pub struct StatusStreamRequest {
 }
 
 #[derive(Debug, Clone)]
-pub struct ProjectStatusRequest {
+pub struct ProjectStatusQuery {
     pub project: String,
 }
 
@@ -129,7 +160,7 @@ pub struct HealthLogsRequest {
 }
 
 #[derive(Debug, Clone)]
-pub struct InspectRequest {
+pub struct InspectQuery {
     pub target: TargetSelector,
     pub kind: InspectKind,
     pub format: String,
@@ -143,7 +174,7 @@ pub enum InspectKind {
 }
 
 #[derive(Debug, Clone)]
-pub struct LockUpdateRequest {
+pub struct LockUpdateOperation {
     pub target: TargetSelector,
     pub mode: LockUpdateMode,
     pub jobs: usize,
@@ -159,30 +190,50 @@ pub enum LockUpdateMode {
 pub trait NirionBackend {
     fn projects(&self) -> Projects;
 
-    fn dispatch(
+    async fn lifecycle(
         &self,
-        request: DispatchRequest,
+        operation: LifecycleOperation,
     ) -> OperationEventStream;
 
-    fn status_stream(
+    async fn pull(
+        &self,
+        operation: PullOperation,
+    ) -> OperationEventStream;
+
+    async fn top(
+        &self,
+        operation: TopOperation,
+    ) -> CommandOutputEventStream;
+
+    async fn volumes(
+        &self,
+        operation: VolumesOperation,
+    ) -> CommandOutputEventStream;
+
+    async fn compose_passthrough(
+        &self,
+        operation: ComposePassthroughOperation,
+    ) -> CommandOutputEventStream;
+
+    async fn status_stream(
         &self,
         request: StatusStreamRequest,
-    ) -> BoxStream<'static, anyhow::Result<ProjectStatusEvent>>;
+    ) -> StatusEventStream;
 
     async fn project_status(
         &self,
-        request: ProjectStatusRequest,
+        query: ProjectStatusQuery,
     ) -> anyhow::Result<ProjectStatus>;
 
-    fn logs(
+    async fn log_stream(
         &self,
         request: LogsRequest,
-    ) -> BoxStream<'static, anyhow::Result<LogEvent>>;
+    ) -> LogEventStream;
 
-    fn health_logs(
+    async fn health_log_stream(
         &self,
         request: HealthLogsRequest,
-    ) -> BoxStream<'static, anyhow::Result<HealthLogEvent>>;
+    ) -> HealthLogEventStream;
 
     async fn exec(
         &self,
@@ -192,13 +243,13 @@ pub trait NirionBackend {
 
     async fn inspect(
         &self,
-        request: InspectRequest,
+        query: InspectQuery,
     ) -> anyhow::Result<Vec<String>>;
 
-    fn lock_updates(
+    async fn lock_updates(
         &self,
-        request: LockUpdateRequest,
-    ) -> BoxStream<'static, anyhow::Result<LockUpdateEvent>>;
+        request: LockUpdateOperation,
+    ) -> LockUpdateEventStream;
 }
 
 #[derive(Clone)]
@@ -218,76 +269,92 @@ impl NirionBackend for LocalBackend {
         self.context.projects.clone()
     }
 
-    fn dispatch(
+    async fn lifecycle(
         &self,
-        request: DispatchRequest,
+        operation: LifecycleOperation,
     ) -> OperationEventStream {
-        let events = match request {
-            DispatchRequest::Lifecycle(request) => compose_stream(
-                self.context.clone(),
-                request.target,
-                lifecycle_args(request.action),
-                request.concurrency,
-            ),
-            DispatchRequest::Pull(request) => compose_stream(
-                self.context.clone(),
-                request.target,
-                vec!["pull".to_string()],
-                request.concurrency,
-            ),
-            DispatchRequest::Top(request) => compose_stream(
-                self.context.clone(),
-                request.target,
-                vec!["top".to_string()],
-                ComposeConcurrency::sequential(),
-            ),
-            DispatchRequest::Volumes(request) => {
-                let args = volumes_args(&request);
-                compose_stream(
-                    self.context.clone(),
-                    request.target,
-                    args,
-                    ComposeConcurrency::sequential(),
-                )
-            }
-            DispatchRequest::ComposePassthrough(request) => compose_stream(
-                self.context.clone(),
-                request.target,
-                request.args,
-                ComposeConcurrency::sequential(),
-            ),
-        };
-
-        events
-            .map(|event| event.map(OperationEvent::from))
-            .boxed()
+        operation_events(compose_stream(
+            self.context.clone(),
+            operation.target,
+            lifecycle_args(operation.action),
+            operation.concurrency,
+        ))
     }
 
-    fn status_stream(
+    async fn pull(
+        &self,
+        operation: PullOperation,
+    ) -> OperationEventStream {
+        operation_events(compose_stream(
+            self.context.clone(),
+            operation.target,
+            vec!["pull".to_string()],
+            operation.concurrency,
+        ))
+    }
+
+    async fn top(
+        &self,
+        operation: TopOperation,
+    ) -> CommandOutputEventStream {
+        command_output_events(compose_stream(
+            self.context.clone(),
+            operation.target,
+            vec!["top".to_string()],
+            ComposeConcurrency::sequential(),
+        ))
+    }
+
+    async fn volumes(
+        &self,
+        operation: VolumesOperation,
+    ) -> CommandOutputEventStream {
+        let args = volumes_args(&operation);
+        command_output_events(compose_stream(
+            self.context.clone(),
+            operation.target,
+            args,
+            ComposeConcurrency::sequential(),
+        ))
+    }
+
+    async fn compose_passthrough(
+        &self,
+        operation: ComposePassthroughOperation,
+    ) -> CommandOutputEventStream {
+        command_output_events(compose_stream(
+            self.context.clone(),
+            operation.target,
+            operation.args,
+            ComposeConcurrency::sequential(),
+        ))
+    }
+
+    async fn status_stream(
         &self,
         request: StatusStreamRequest,
-    ) -> BoxStream<'static, anyhow::Result<ProjectStatusEvent>> {
+    ) -> StatusEventStream {
         status_stream(&self.context, request.target, request.refresh_interval)
     }
 
     async fn project_status(
         &self,
-        request: ProjectStatusRequest,
+        query: ProjectStatusQuery,
     ) -> anyhow::Result<ProjectStatus> {
-        query_project_status(&self.context, &request.project).await
+        query_project_status(&self.context, &query.project).await
     }
 
-    fn logs(
+    async fn log_stream(
         &self,
         request: LogsRequest,
-    ) -> BoxStream<'static, anyhow::Result<LogEvent>> {
+    ) -> LogEventStream {
         logs_stream(self.context.clone(), request.target, request.options)
     }
 
-    fn health_logs(
+    async fn health_log_stream(
         &self,
         request: HealthLogsRequest,
-    ) -> BoxStream<'static, anyhow::Result<HealthLogEvent>> {
+    ) -> HealthLogEventStream {
         health_logs_stream(
             self.context.clone(),
             request.target,
@@ -305,15 +372,15 @@ impl NirionBackend for LocalBackend {
 
     async fn inspect(
         &self,
-        request: InspectRequest,
+        query: InspectQuery,
     ) -> anyhow::Result<Vec<String>> {
-        inspect_targets(&self.context, request).await
+        inspect_targets(&self.context, query).await
     }
 
-    fn lock_updates(
+    async fn lock_updates(
         &self,
-        request: LockUpdateRequest,
-    ) -> BoxStream<'static, anyhow::Result<LockUpdateEvent>> {
+        request: LockUpdateOperation,
+    ) -> LockUpdateEventStream {
         let mut images = get_images(&request.target, &self.context.projects);
         if request.mode == LockUpdateMode::MissingOnly {
             retain_images_missing_lock_entries(
@@ -324,6 +391,22 @@ impl NirionBackend for LocalBackend {
 
         image_update_stream(&self.context, images, request.jobs)
     }
+}
+
+fn operation_events(
+    events: BoxStream<'static, anyhow::Result<ComposeEvent>>
+) -> OperationEventStream {
+    events
+        .map(|event| event.map(OperationEvent::from))
+        .boxed()
+}
+
+fn command_output_events(
+    events: BoxStream<'static, anyhow::Result<ComposeEvent>>
+) -> CommandOutputEventStream {
+    events
+        .map(|event| event.map(CommandOutputEvent::from))
+        .boxed()
 }
 
 fn retain_images_missing_lock_entries(
@@ -340,21 +423,21 @@ fn retain_images_missing_lock_entries(
 
 async fn inspect_targets(
     context: &NirionContext,
-    request: InspectRequest,
+    query: InspectQuery,
 ) -> anyhow::Result<Vec<String>> {
-    match request.target {
+    match query.target {
         TargetSelector::All => {
             let mut outputs = Vec::new();
             for (project_name, _) in context.projects.iter() {
                 outputs.extend(
                     inspect_project(
                         context,
-                        request.kind,
+                        query.kind,
                         &ProjectSelector {
                             name: project_name.to_string(),
                         },
-                        &request.format,
-                        request.raw,
+                        &query.format,
+                        query.raw,
                     )
                     .await?,
                 );
@@ -364,32 +447,27 @@ async fn inspect_targets(
         TargetSelector::Project(project) => {
             inspect_project(
                 context,
-                request.kind,
+                query.kind,
                 &project,
-                &request.format,
-                request.raw,
+                &query.format,
+                query.raw,
             )
             .await
         }
         TargetSelector::Service(service) => {
-            let output = match request.kind {
+            let output = match query.kind {
                 InspectKind::Container => {
                     inspect_container(
                         context,
                         &service,
-                        &request.format,
-                        request.raw,
+                        &query.format,
+                        query.raw,
                     )
                     .await?
                 }
                 InspectKind::Image => {
-                    inspect_image(
-                        context,
-                        &service,
-                        &request.format,
-                        request.raw,
-                    )
-                    .await?
+                    inspect_image(context, &service, &query.format, query.raw)
+                        .await?
                 }
             };
             Ok(vec![output])
@@ -424,7 +502,7 @@ fn lifecycle_args(action: LifecycleAction) -> Vec<String> {
     }
 }
 
-fn volumes_args(request: &VolumesRequest) -> Vec<String> {
+fn volumes_args(request: &VolumesOperation) -> Vec<String> {
     let mut args = vec![
         "volumes".to_string(),
         "--format".to_string(),

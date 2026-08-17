@@ -1,8 +1,10 @@
 use anyhow::Result;
 use clap::Args;
 
-use crate::{docker::render_operation_events, ClapSelector, TargetSelector};
-use nirion_lib::backend::{DispatchRequest, NirionBackend, VolumesRequest};
+use crate::{
+    docker::render_command_output_events, ClapSelector, TargetSelector,
+};
+use nirion_lib::backend::{NirionBackend, VolumesOperation};
 
 /// List volumes
 #[derive(Args, Debug, Clone)]
@@ -28,12 +30,14 @@ pub async fn handle_volumes(
     args: &VolumesArgs,
     backend: &dyn NirionBackend,
 ) -> Result<()> {
-    render_operation_events(backend.dispatch(DispatchRequest::Volumes(
-        VolumesRequest {
-            target: args.target.clone(),
-            format: args.format.clone(),
-            quiet: args.quiet,
-        },
-    )))
+    render_command_output_events(
+        backend
+            .volumes(VolumesOperation {
+                target: args.target.clone(),
+                format: args.format.clone(),
+                quiet: args.quiet,
+            })
+            .await,
+    )
     .await
 }

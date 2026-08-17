@@ -1,7 +1,7 @@
 use clap::Args;
 use futures::StreamExt;
 use nirion_lib::{
-    backend::{LockUpdateMode, LockUpdateRequest, NirionBackend},
+    backend::{LockUpdateMode, LockUpdateOperation, NirionBackend},
     events::LockUpdateEvent,
     lock::DiffEntry,
     projects::TargetSelector,
@@ -30,11 +30,13 @@ pub async fn handle_lock(
     args: &LockArgs,
     backend: &dyn NirionBackend,
 ) -> anyhow::Result<()> {
-    let mut events = backend.lock_updates(LockUpdateRequest {
-        target: args.target.clone(),
-        mode: LockUpdateMode::MissingOnly,
-        jobs: args.jobs,
-    });
+    let mut events = backend
+        .lock_updates(LockUpdateOperation {
+            target: args.target.clone(),
+            mode: LockUpdateMode::MissingOnly,
+            jobs: args.jobs,
+        })
+        .await;
 
     while let Some(event) = events.next().await {
         println!("{}", format_lock_update_event(event?));

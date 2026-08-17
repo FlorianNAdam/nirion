@@ -1,7 +1,9 @@
 use clap::Args;
 
-use crate::{docker::render_operation_events, ClapSelector, TargetSelector};
-use nirion_lib::backend::{DispatchRequest, NirionBackend, TopRequest};
+use crate::{
+    docker::render_command_output_events, ClapSelector, TargetSelector,
+};
+use nirion_lib::backend::{NirionBackend, TopOperation};
 
 /// Display the running processes of a service container
 #[derive(Args, Debug, Clone)]
@@ -19,10 +21,12 @@ pub async fn handle_top(
     args: &TopArgs,
     backend: &dyn NirionBackend,
 ) -> anyhow::Result<()> {
-    render_operation_events(backend.dispatch(DispatchRequest::Top(
-        TopRequest {
-            target: args.target.clone(),
-        },
-    )))
+    render_command_output_events(
+        backend
+            .top(TopOperation {
+                target: args.target.clone(),
+            })
+            .await,
+    )
     .await
 }

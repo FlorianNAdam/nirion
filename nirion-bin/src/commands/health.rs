@@ -62,10 +62,12 @@ async fn handle_health_logs(
         refresh_interval: args.refresh,
     };
     let mut renderer = HealthRenderer::new();
-    let mut stream = backend.health_logs(HealthLogsRequest {
-        target: args.target.clone(),
-        options,
-    });
+    let mut stream = backend
+        .health_log_stream(HealthLogsRequest {
+            target: args.target.clone(),
+            options,
+        })
+        .await;
 
     while let Some(event) = stream.next().await {
         renderer.render(event?)?;

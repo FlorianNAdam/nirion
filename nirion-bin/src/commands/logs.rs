@@ -81,10 +81,12 @@ pub async fn handle_logs(
         timestamps: args.timestamps,
     };
     let mut renderer = LogRenderer::new(args.label, args.events, args.follow);
-    let mut stream = backend.logs(LogsRequest {
-        target: args.target.clone(),
-        options,
-    });
+    let mut stream = backend
+        .log_stream(LogsRequest {
+            target: args.target.clone(),
+            options,
+        })
+        .await;
     let shutdown = tokio::signal::ctrl_c();
     tokio::pin!(shutdown);
 

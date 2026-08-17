@@ -4,7 +4,7 @@ use clap::Args;
 use crate::docker::render_operation_events;
 use crate::{ClapSelector, TargetSelector};
 use nirion_lib::{
-    backend::{DispatchRequest, NirionBackend, PullRequest},
+    backend::{NirionBackend, PullOperation},
     compose::ComposeConcurrency,
 };
 
@@ -24,11 +24,13 @@ pub async fn handle_pull(
     args: &PullArgs,
     backend: &dyn NirionBackend,
 ) -> Result<()> {
-    render_operation_events(backend.dispatch(DispatchRequest::Pull(
-        PullRequest {
-            target: args.target.clone(),
-            concurrency: ComposeConcurrency::sequential(),
-        },
-    )))
+    render_operation_events(
+        backend
+            .pull(PullOperation {
+                target: args.target.clone(),
+                concurrency: ComposeConcurrency::sequential(),
+            })
+            .await,
+    )
     .await
 }

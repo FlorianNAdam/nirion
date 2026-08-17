@@ -1,6 +1,6 @@
 use futures::{Stream, StreamExt};
 use nirion_lib::{
-    backend::{NirionBackend, OperationEvent, ProjectStatusRequest},
+    backend::{NirionBackend, OperationEvent, ProjectStatusQuery},
     docker::{ProjectStatus, ProjectStatusEvent},
     events::ProcessEvent,
     projects::{Projects, selected_project_names},
@@ -191,7 +191,7 @@ async fn refresh_statuses(
 ) -> anyhow::Result<()> {
     for name in selected {
         let status = backend
-            .project_status(ProjectStatusRequest {
+            .project_status(ProjectStatusQuery {
                 project: name.clone(),
             })
             .await?;

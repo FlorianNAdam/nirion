@@ -33,10 +33,12 @@ pub async fn handle_monitor(
         backend,
         &args.target,
         stream::empty(),
-        backend.status_stream(StatusStreamRequest {
-            target: args.target.clone(),
-            refresh_interval: args.refresh,
-        }),
+        backend
+            .status_stream(StatusStreamRequest {
+                target: args.target.clone(),
+                refresh_interval: args.refresh,
+            })
+            .await,
         StatusProgressRenderer::without_spinner(),
         WaitTarget::Forever,
     )
