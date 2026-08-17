@@ -147,6 +147,11 @@ in
       type = types.nullOr types.str;
       default = null;
     };
+    meta = mkOption {
+      type = types.attrsOf types.anything;
+      default = { };
+      description = "Arbitrary service metadata for Nix-side integrations. Not rendered into Docker Compose.";
+    };
     build = mkOption {
       type = buildType;
       default = { };
