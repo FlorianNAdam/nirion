@@ -126,8 +126,8 @@ Projects can declare sops-nix secrets and templates. If `sops.group` is set, Nir
 {
   virtualisation.nirion.projects.password = {
     sops = {
-      file = ./secrets.yaml;
-      format = "yaml";
+      defaultSopsFile = ./secrets.yaml;
+      defaultSopsFormat = "yaml";
 
       group = {
         gid = 9004;
@@ -150,7 +150,9 @@ Projects can declare sops-nix secrets and templates. If `sops.group` is set, Nir
 }
 ```
 
-`sops.file` and `sops.format` are optional and are used as the default `sopsFile` and `format` for the project's secrets. They do not apply to templates. `sops.group.name` defaults to `nirion-<project-name>`, while `sops.group.gid` must be set when a group is used. Project secret and template declarations are forwarded to the global `sops.secrets` and `sops.templates` options, so sops-nix must be imported when they are used.
+Project-level `sops.defaultSopsFile` and `sops.defaultSopsFormat` are optional and are used as the default `sopsFile` and `format` for the project's secrets. They do not apply to templates. `sops.group.name` defaults to `nirion-<project-name>`, while `sops.group.gid` must be set when a group is used. Project secret and template declarations are forwarded to the global `sops.secrets` and `sops.templates` options, so sops-nix must be imported when they are used.
+
+Use `virtualisation.nirion.sops.defaultSopsFile` and `virtualisation.nirion.sops.defaultSopsFormat` to set defaults for all Nirion project secrets. Project-level `sops.defaultSopsFile` and `sops.defaultSopsFormat` override these defaults for that project.
 
 Project sops secrets and templates reload the generated `nirion-<project>.service` unit by default when their materialized contents change. Any explicitly configured `reloadUnits` are preserved and the Nirion unit is appended. Generated compose-file templates do the same when `virtualisation.nirion.sops.overrideComposeFile` is enabled. Set `sops.reloadOnChange = false;` on a project to opt out.
 

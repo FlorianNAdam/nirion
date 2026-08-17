@@ -69,12 +69,12 @@ let
   };
   sopsType = types.submodule {
     options = {
-      file = mkOption {
+      defaultSopsFile = mkOption {
         type = types.nullOr types.path;
         default = null;
         description = "Default sops file for this project's secrets.";
       };
-      format = mkOption {
+      defaultSopsFormat = mkOption {
         type = types.nullOr types.str;
         default = null;
         description = "Default sops file format for this project's secrets.";

@@ -48,6 +48,18 @@ in
   };
 
   sops = {
+    defaultSopsFile = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      description = "Default sops file for all Nirion project secrets.";
+    };
+
+    defaultSopsFormat = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      description = "Default sops file format for all Nirion project secrets.";
+    };
+
     overrideComposeFile = mkOption {
       type = types.bool;
       default = false;
