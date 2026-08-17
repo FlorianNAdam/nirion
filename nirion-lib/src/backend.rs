@@ -12,13 +12,10 @@ use crate::{
     events::{ComposeEvent, LockUpdateEvent, ProcessEvent},
     exec::{ExecIo, ExecRequest, exec as run_exec},
     health::{HealthLogEvent, HealthLogStreamOptions, health_logs_stream},
-    inspect::{
-        inspect_container, inspect_image, inspect_project_containers,
-        inspect_project_images,
-    },
+    inspect::{InspectQuery, inspect_targets},
     lock_update::image_update_stream,
     logs::{LogEvent, LogStreamOptions, logs_stream},
-    projects::{ProjectSelector, Projects, TargetSelector, get_images},
+    projects::{Projects, TargetSelector, get_images},
 };
 
 pub type OperationEventStream =
@@ -159,20 +156,6 @@ pub struct LogsRequest {
 pub struct HealthLogsRequest {
     pub target: TargetSelector,
     pub options: HealthLogStreamOptions,
-}
-
-#[derive(Debug, Clone)]
-pub struct InspectQuery {
-    pub target: TargetSelector,
-    pub kind: InspectKind,
-    pub format: String,
-    pub raw: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InspectKind {
-    Container,
-    Image,
 }
 
 #[derive(Debug, Clone)]
@@ -412,77 +395,6 @@ fn command_output_events(
     events
         .map(|event| event.map(CommandOutputEvent::from))
         .boxed()
-}
-
-async fn inspect_targets(
-    context: &NirionContext,
-    query: InspectQuery,
-) -> anyhow::Result<Vec<String>> {
-    match query.target {
-        TargetSelector::All => {
-            let mut outputs = Vec::new();
-            for (project_name, _) in context.projects.iter() {
-                outputs.extend(
-                    inspect_project(
-                        context,
-                        query.kind,
-                        &ProjectSelector {
-                            name: project_name.to_string(),
-                        },
-                        &query.format,
-                        query.raw,
-                    )
-                    .await?,
-                );
-            }
-            Ok(outputs)
-        }
-        TargetSelector::Project(project) => {
-            inspect_project(
-                context,
-                query.kind,
-                &project,
-                &query.format,
-                query.raw,
-            )
-            .await
-        }
-        TargetSelector::Service(service) => {
-            let output = match query.kind {
-                InspectKind::Container => {
-                    inspect_container(
-                        context,
-                        &service,
-                        &query.format,
-                        query.raw,
-                    )
-                    .await?
-                }
-                InspectKind::Image => {
-                    inspect_image(context, &service, &query.format, query.raw)
-                        .await?
-                }
-            };
-            Ok(vec![output])
-        }
-    }
-}
-
-async fn inspect_project(
-    context: &NirionContext,
-    kind: InspectKind,
-    project: &ProjectSelector,
-    format: &str,
-    raw: bool,
-) -> anyhow::Result<Vec<String>> {
-    match kind {
-        InspectKind::Container => {
-            inspect_project_containers(context, project, format, raw).await
-        }
-        InspectKind::Image => {
-            inspect_project_images(context, project, format, raw).await
-        }
-    }
 }
 
 fn lifecycle_args(action: LifecycleAction) -> Vec<String> {

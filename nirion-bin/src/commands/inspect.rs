@@ -1,7 +1,8 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
 use nirion_lib::{
-    backend::{InspectKind, InspectQuery, NirionBackend},
+    backend::NirionBackend,
+    inspect::{InspectKind, InspectQuery},
     projects::TargetSelector,
 };
 
