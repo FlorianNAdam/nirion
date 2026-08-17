@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, future::Future, ops::Deref, time::Duration};
+use std::{collections::BTreeMap, future::Future, time::Duration};
 
 use futures::stream::BoxStream;
 
@@ -31,6 +31,7 @@ pub enum DispatchRequest {
     Pull(PullRequest),
     Top(TopRequest),
     Volumes(VolumesRequest),
+    ComposePassthrough(ComposePassthroughRequest),
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +66,12 @@ pub struct VolumesRequest {
     pub target: TargetSelector,
     pub format: String,
     pub quiet: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ComposePassthroughRequest {
+    pub target: TargetSelector,
+    pub args: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -171,18 +178,6 @@ impl LocalBackend {
     pub fn new(context: NirionContext) -> Self {
         Self { context }
     }
-
-    pub fn context(&self) -> &NirionContext {
-        &self.context
-    }
-}
-
-impl Deref for LocalBackend {
-    type Target = NirionContext;
-
-    fn deref(&self) -> &Self::Target {
-        &self.context
-    }
 }
 
 impl NirionBackend for LocalBackend {
@@ -222,6 +217,12 @@ impl NirionBackend for LocalBackend {
                     ComposeConcurrency::sequential(),
                 )
             }
+            DispatchRequest::ComposePassthrough(request) => compose_stream(
+                self.context.clone(),
+                request.target,
+                request.args,
+                ComposeConcurrency::sequential(),
+            ),
         }
     }
 

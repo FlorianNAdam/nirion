@@ -1,33 +1,9 @@
 use futures::StreamExt;
 use nirion_lib::{
     backend::OperationEventStream,
-    compose::{ComposeConcurrency, compose_stream},
-    context::NirionContext,
     events::{ComposeEvent, ProcessEvent},
-    projects::TargetSelector,
 };
 use nirion_tui_lib::color::Colorize;
-
-pub async fn compose_target_cmd(
-    context: &NirionContext,
-    target: &TargetSelector,
-    args: &[&str],
-) -> anyhow::Result<()> {
-    let mut stream = compose_stream(
-        context.clone(),
-        target.clone(),
-        args.iter()
-            .map(|arg| arg.to_string())
-            .collect(),
-        ComposeConcurrency::sequential(),
-    );
-
-    while let Some(event) = stream.next().await {
-        render_compose_event(event?);
-    }
-
-    Ok(())
-}
 
 pub async fn render_operation_events(
     mut events: OperationEventStream
