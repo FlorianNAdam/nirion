@@ -30,6 +30,10 @@ let
                 type = lib.types.nullOr lib.types.path;
                 default = null;
               };
+              format = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+              };
               reloadUnits = lib.mkOption {
                 type = lib.types.listOf lib.types.str;
                 default = [ ];
@@ -105,6 +109,7 @@ let
         projects.secret = {
           sops = {
             file = projectSopsFile;
+            format = "yaml";
             group = {
               name = "apps-secrets";
               gid = 9004;
@@ -172,8 +177,9 @@ in
       && cfg.sops.secrets."app/password".group == "apps-secrets"
       && cfg.sops.secrets."app/password".mode == "0440"
       && cfg.sops.secrets."app/password".sopsFile == projectSopsFile
+      && cfg.sops.secrets."app/password".format == "yaml"
       && cfg.sops.secrets."app/password".reloadUnits == [ "nirion-secret.service" ];
-    message = "project sops secret defaults and sopsFile were not forwarded";
+    message = "project sops secret defaults, sopsFile, and format were not forwarded";
   }
   {
     assertion =
@@ -181,6 +187,7 @@ in
       && cfg.sops.secrets."custom/token".group == "apps-secrets"
       && cfg.sops.secrets."custom/token".mode == "0400"
       && cfg.sops.secrets."custom/token".sopsFile == projectSopsFile
+      && cfg.sops.secrets."custom/token".format == "yaml"
       &&
         cfg.sops.secrets."custom/token".reloadUnits == [
           "custom-reload.service"
