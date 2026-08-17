@@ -6,6 +6,7 @@
 }:
 
 let
+  globalSopsFile = builtins.toFile "global-secrets.json" "{}";
   projectSopsFile = builtins.toFile "project-secrets.yaml" "{}";
 
   fakeSopsModule = {
@@ -104,12 +105,16 @@ let
     fakeSopsModule
     ({ config, ... }: {
       virtualisation.nirion = baseNirionConfig // {
-        sops.overrideComposeFile = true;
+        sops = {
+          defaultSopsFile = globalSopsFile;
+          defaultSopsFormat = "json";
+          overrideComposeFile = true;
+        };
 
         projects.secret = {
           sops = {
-            file = projectSopsFile;
-            format = "yaml";
+            defaultSopsFile = projectSopsFile;
+            defaultSopsFormat = "yaml";
             group = {
               name = "apps-secrets";
               gid = 9004;
@@ -245,6 +250,12 @@ in
   {
     assertion = cfg.sops.secrets."no-reload/password".reloadUnits == [ ];
     message = "sops.reloadOnChange = false should not add secret reloadUnits";
+  }
+  {
+    assertion =
+      cfg.sops.secrets."no-reload/password".sopsFile == globalSopsFile
+      && cfg.sops.secrets."no-reload/password".format == "json";
+    message = "nirion sops defaults were not forwarded to project secrets";
   }
   {
     assertion = cfg.sops.templates."no-reload.env".reloadUnits == [ ];
