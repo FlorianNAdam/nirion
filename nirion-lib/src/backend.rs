@@ -1,6 +1,7 @@
-use std::{collections::BTreeMap, future::Future, time::Duration};
+use std::{collections::BTreeMap, time::Duration};
 
-use futures::stream::BoxStream;
+use async_trait::async_trait;
+use futures::{StreamExt, stream::BoxStream};
 
 use crate::{
     compose::{ComposeConcurrency, compose_stream},
@@ -8,7 +9,7 @@ use crate::{
     docker::{
         ProjectStatus, ProjectStatusEvent, query_project_status, status_stream,
     },
-    events::{ComposeEvent, LockUpdateEvent},
+    events::{ComposeEvent, LockUpdateEvent, ProcessEvent},
     exec::{ExecIo, ExecRequest, exec as run_exec},
     health::{HealthLogEvent, HealthLogStreamOptions, health_logs_stream},
     inspect::{
@@ -21,9 +22,39 @@ use crate::{
     projects::{ProjectSelector, Projects, TargetSelector, get_images},
 };
 
-pub type OperationEvent = ComposeEvent;
 pub type OperationEventStream =
     BoxStream<'static, anyhow::Result<OperationEvent>>;
+
+#[derive(Debug, Clone)]
+pub enum OperationEvent {
+    ProjectStarted {
+        project: String,
+    },
+    Process {
+        project: Option<String>,
+        event: ProcessEvent,
+    },
+    ProjectFailed {
+        project: String,
+        error: String,
+    },
+}
+
+impl From<ComposeEvent> for OperationEvent {
+    fn from(event: ComposeEvent) -> Self {
+        match event {
+            ComposeEvent::ProjectStarted { project } => {
+                Self::ProjectStarted { project }
+            }
+            ComposeEvent::Process { project, event } => {
+                Self::Process { project, event }
+            }
+            ComposeEvent::ProjectFailed { project, error } => {
+                Self::ProjectFailed { project, error }
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum DispatchRequest {
@@ -124,6 +155,7 @@ pub enum LockUpdateMode {
     UpdateAll,
 }
 
+#[async_trait]
 pub trait NirionBackend {
     fn projects(&self) -> Projects;
 
@@ -137,10 +169,10 @@ pub trait NirionBackend {
         request: StatusStreamRequest,
     ) -> BoxStream<'static, anyhow::Result<ProjectStatusEvent>>;
 
-    fn project_status(
+    async fn project_status(
         &self,
         request: ProjectStatusRequest,
-    ) -> impl Future<Output = anyhow::Result<ProjectStatus>> + Send;
+    ) -> anyhow::Result<ProjectStatus>;
 
     fn logs(
         &self,
@@ -152,16 +184,16 @@ pub trait NirionBackend {
         request: HealthLogsRequest,
     ) -> BoxStream<'static, anyhow::Result<HealthLogEvent>>;
 
-    fn exec(
+    async fn exec(
         &self,
         request: ExecRequest,
         io: ExecIo,
-    ) -> impl Future<Output = anyhow::Result<()>> + Send;
+    ) -> anyhow::Result<()>;
 
-    fn inspect(
+    async fn inspect(
         &self,
         request: InspectRequest,
-    ) -> impl Future<Output = anyhow::Result<Vec<String>>> + Send;
+    ) -> anyhow::Result<Vec<String>>;
 
     fn lock_updates(
         &self,
@@ -180,6 +212,7 @@ impl LocalBackend {
     }
 }
 
+#[async_trait]
 impl NirionBackend for LocalBackend {
     fn projects(&self) -> Projects {
         self.context.projects.clone()
@@ -189,7 +222,7 @@ impl NirionBackend for LocalBackend {
         &self,
         request: DispatchRequest,
     ) -> OperationEventStream {
-        match request {
+        let events = match request {
             DispatchRequest::Lifecycle(request) => compose_stream(
                 self.context.clone(),
                 request.target,
@@ -223,7 +256,11 @@ impl NirionBackend for LocalBackend {
                 request.args,
                 ComposeConcurrency::sequential(),
             ),
-        }
+        };
+
+        events
+            .map(|event| event.map(OperationEvent::from))
+            .boxed()
     }
 
     fn status_stream(

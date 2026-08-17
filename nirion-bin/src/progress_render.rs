@@ -1,6 +1,5 @@
 use nirion_lib::{
-    docker::ProjectStatus,
-    events::{ComposeEvent, ProcessEvent},
+    backend::OperationEvent, docker::ProjectStatus, events::ProcessEvent,
     projects::Projects,
 };
 use nirion_tui_lib::{
@@ -90,7 +89,7 @@ pub(crate) trait ProgressRenderer {
 
     fn compose_event(
         &mut self,
-        _event: &ComposeEvent,
+        _event: &OperationEvent,
     ) -> anyhow::Result<()> {
         Ok(())
     }
@@ -136,7 +135,7 @@ where
 
     fn compose_event(
         &mut self,
-        event: &ComposeEvent,
+        event: &OperationEvent,
     ) -> anyhow::Result<()> {
         (**self).compose_event(event)
     }
@@ -256,7 +255,7 @@ struct PlainRenderer;
 impl ProgressRenderer for PlainRenderer {
     fn compose_event(
         &mut self,
-        event: &ComposeEvent,
+        event: &OperationEvent,
     ) -> anyhow::Result<()> {
         render_compose_event(event);
         Ok(())
@@ -279,13 +278,13 @@ pub(crate) fn progress_renderer(
     }
 }
 
-fn render_compose_event(event: &ComposeEvent) {
+fn render_compose_event(event: &OperationEvent) {
     match event {
-        ComposeEvent::ProjectStarted { project } => {
+        OperationEvent::ProjectStarted { project } => {
             println!("[{}]", project.as_str().cyan());
         }
-        ComposeEvent::Process { event, .. } => render_process_event(event),
-        ComposeEvent::ProjectFailed { project, error } => {
+        OperationEvent::Process { event, .. } => render_process_event(event),
+        OperationEvent::ProjectFailed { project, error } => {
             eprintln!("Project '{}' failed: {}", project, error);
             println!();
         }
@@ -464,31 +463,31 @@ mod tests {
     fn render_compose_event_accepts_all_event_types() {
         use nirion_lib::events::ExitStatus;
 
-        render_compose_event(&ComposeEvent::ProjectStarted {
+        render_compose_event(&OperationEvent::ProjectStarted {
             project: "app".to_string(),
         });
-        render_compose_event(&ComposeEvent::Process {
+        render_compose_event(&OperationEvent::Process {
             project: Some("app".to_string()),
             event: ProcessEvent::StdoutLine("hello".to_string()),
         });
-        render_compose_event(&ComposeEvent::Process {
+        render_compose_event(&OperationEvent::Process {
             project: Some("app".to_string()),
             event: ProcessEvent::StderrLine("warning".to_string()),
         });
-        render_compose_event(&ComposeEvent::Process {
+        render_compose_event(&OperationEvent::Process {
             project: Some("app".to_string()),
             event: ProcessEvent::StderrLine(
                 "the attribute `version` is obsolete".to_string(),
             ),
         });
-        render_compose_event(&ComposeEvent::Process {
+        render_compose_event(&OperationEvent::Process {
             project: Some("app".to_string()),
             event: ProcessEvent::Exited(ExitStatus {
                 code: Some(0),
                 success: true,
             }),
         });
-        render_compose_event(&ComposeEvent::ProjectFailed {
+        render_compose_event(&OperationEvent::ProjectFailed {
             project: "app".to_string(),
             error: "failed".to_string(),
         });

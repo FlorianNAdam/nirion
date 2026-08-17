@@ -1,8 +1,8 @@
 use futures::{Stream, StreamExt};
 use nirion_lib::{
-    backend::{NirionBackend, ProjectStatusRequest},
+    backend::{NirionBackend, OperationEvent, ProjectStatusRequest},
     docker::{ProjectStatus, ProjectStatusEvent},
-    events::{ComposeEvent, ProcessEvent},
+    events::ProcessEvent,
     projects::{Projects, selected_project_names},
     wait::{WaitTarget, wait_finished},
 };
@@ -104,7 +104,7 @@ impl ProgressState {
 pub(crate) async fn run_progress(
     backend: &impl NirionBackend,
     target: &TargetSelector,
-    compose_stream: impl Stream<Item = anyhow::Result<ComposeEvent>>,
+    compose_stream: impl Stream<Item = anyhow::Result<OperationEvent>>,
     status_events: impl Stream<Item = anyhow::Result<ProjectStatusEvent>>,
     mut renderer: impl ProgressRenderer,
     wait: WaitTarget,
@@ -164,23 +164,23 @@ pub(crate) async fn run_progress(
 }
 
 fn handle_compose_event(
-    event: &ComposeEvent,
+    event: &OperationEvent,
     running: &mut BTreeMap<String, bool>,
 ) {
     match event {
-        ComposeEvent::ProjectStarted { project } => {
+        OperationEvent::ProjectStarted { project } => {
             running.insert(project.clone(), true);
         }
-        ComposeEvent::ProjectFailed { project, .. } => {
+        OperationEvent::ProjectFailed { project, .. } => {
             running.insert(project.clone(), false);
         }
-        ComposeEvent::Process {
+        OperationEvent::Process {
             project: Some(project),
             event: ProcessEvent::Exited(_),
         } => {
             running.insert(project.clone(), false);
         }
-        ComposeEvent::Process { .. } => {}
+        OperationEvent::Process { .. } => {}
     }
 }
 
@@ -254,7 +254,7 @@ mod tests {
         let mut running = BTreeMap::new();
 
         handle_compose_event(
-            &ComposeEvent::ProjectStarted {
+            &OperationEvent::ProjectStarted {
                 project: "app".to_string(),
             },
             &mut running,
@@ -262,7 +262,7 @@ mod tests {
         assert_eq!(running.get("app"), Some(&true));
 
         handle_compose_event(
-            &ComposeEvent::Process {
+            &OperationEvent::Process {
                 project: Some("app".to_string()),
                 event: ProcessEvent::Exited(ExitStatus {
                     code: Some(0),
@@ -274,7 +274,7 @@ mod tests {
         assert_eq!(running.get("app"), Some(&false));
 
         handle_compose_event(
-            &ComposeEvent::ProjectFailed {
+            &OperationEvent::ProjectFailed {
                 project: "app".to_string(),
                 error: "failed".to_string(),
             },
@@ -288,7 +288,7 @@ mod tests {
         let mut running = BTreeMap::from([("app".to_string(), true)]);
 
         handle_compose_event(
-            &ComposeEvent::Process {
+            &OperationEvent::Process {
                 project: None,
                 event: ProcessEvent::Exited(ExitStatus {
                     code: Some(0),
