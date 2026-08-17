@@ -71,7 +71,7 @@ in
 
         projects.web = {
           sops = {
-            file = "${sopsFixture}/secrets.yaml";
+            defaultSopsFile = "${sopsFixture}/secrets.yaml";
             secrets."app/token" = { };
             templates."app.env".content = ''
               SECRET_TOKEN=${config.sops.placeholder."app/token"}

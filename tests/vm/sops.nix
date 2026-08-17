@@ -70,7 +70,7 @@ in
 
         projects.secret = {
           sops = {
-            file = "${sopsFixture}/secrets.yaml";
+            defaultSopsFile = "${sopsFixture}/secrets.yaml";
             group.gid = 9006;
             secrets."app/message" = { };
             secrets."app/token" = { };

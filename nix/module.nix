@@ -78,11 +78,17 @@ let
 
   projectSopsSecretDefaults =
     projectName: project:
-    lib.optionalAttrs (project.sops.file != null) {
-      sopsFile = lib.mkDefault project.sops.file;
+    lib.optionalAttrs (cfg.sops.defaultSopsFile != null) {
+      sopsFile = lib.mkDefault cfg.sops.defaultSopsFile;
     }
-    // lib.optionalAttrs (project.sops.format != null) {
-      format = lib.mkDefault project.sops.format;
+    // lib.optionalAttrs (cfg.sops.defaultSopsFormat != null) {
+      format = lib.mkDefault cfg.sops.defaultSopsFormat;
+    }
+    // lib.optionalAttrs (project.sops.defaultSopsFile != null) {
+      sopsFile = lib.mkDefault project.sops.defaultSopsFile;
+    }
+    // lib.optionalAttrs (project.sops.defaultSopsFormat != null) {
+      format = lib.mkDefault project.sops.defaultSopsFormat;
     }
     // projectSopsAccessDefaults project;
 
