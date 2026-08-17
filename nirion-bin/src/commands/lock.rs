@@ -1,13 +1,10 @@
-use std::collections::BTreeMap;
-
 use clap::Args;
 use futures::StreamExt;
 use nirion_lib::{
-    context::NirionContext,
+    backend::{LockUpdateMode, LockUpdateRequest, NirionBackend},
     events::LockUpdateEvent,
-    lock::{DiffEntry, LockedImages},
-    lock_update::image_update_stream,
-    projects::{get_images, TargetSelector},
+    lock::DiffEntry,
+    projects::TargetSelector,
 };
 use nirion_tui_lib::color::Colorize;
 
@@ -31,30 +28,19 @@ pub struct LockArgs {
 
 pub async fn handle_lock(
     args: &LockArgs,
-    context: &NirionContext,
+    backend: &impl NirionBackend,
 ) -> anyhow::Result<()> {
-    let mut images = get_images(&args.target, &context.projects);
-    retain_images_missing_lock_entries(&mut images, &context.locked_images);
-
-    let mut events = image_update_stream(context, images, args.jobs);
+    let mut events = backend.lock_updates(LockUpdateRequest {
+        target: args.target.clone(),
+        mode: LockUpdateMode::MissingOnly,
+        jobs: args.jobs,
+    });
 
     while let Some(event) = events.next().await {
         println!("{}", format_lock_update_event(event?));
     }
 
     Ok(())
-}
-
-fn retain_images_missing_lock_entries(
-    images: &mut BTreeMap<String, String>,
-    locked_images: &LockedImages,
-) {
-    images.retain(|name, image| {
-        locked_images
-            .get(name)
-            .map(|locked| locked.image != *image)
-            .unwrap_or(true)
-    });
 }
 
 pub fn format_lock_update_event(event: LockUpdateEvent) -> String {
@@ -132,8 +118,21 @@ fn format_diff(diffs: &[DiffEntry]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nirion_lib::lock::VersionedImage;
+    use nirion_lib::lock::{LockedImages, VersionedImage};
     use nirion_tui_lib::ansi::strip_ansi_codes;
+    use std::collections::BTreeMap;
+
+    fn retain_images_missing_lock_entries(
+        images: &mut BTreeMap<String, String>,
+        locked_images: &LockedImages,
+    ) {
+        images.retain(|name, image| {
+            locked_images
+                .get(name)
+                .map(|locked| locked.image != *image)
+                .unwrap_or(true)
+        });
+    }
 
     fn image(
         image: &str,

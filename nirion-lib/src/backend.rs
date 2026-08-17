@@ -1,4 +1,4 @@
-use std::{future::Future, ops::Deref, time::Duration};
+use std::{collections::BTreeMap, future::Future, ops::Deref, time::Duration};
 
 use futures::stream::BoxStream;
 
@@ -8,15 +8,17 @@ use crate::{
     docker::{
         ProjectStatus, ProjectStatusEvent, query_project_status, status_stream,
     },
-    events::ComposeEvent,
+    events::{ComposeEvent, LockUpdateEvent},
     exec::{ExecIo, ExecRequest, exec as run_exec},
     health::{HealthLogEvent, HealthLogStreamOptions, health_logs_stream},
     inspect::{
         inspect_container, inspect_image, inspect_project_containers,
         inspect_project_images,
     },
+    lock::LockedImages,
+    lock_update::image_update_stream,
     logs::{LogEvent, LogStreamOptions, logs_stream},
-    projects::{ProjectSelector, Projects, TargetSelector},
+    projects::{ProjectSelector, Projects, TargetSelector, get_images},
 };
 
 pub type OperationEvent = ComposeEvent;
@@ -102,6 +104,19 @@ pub enum InspectKind {
     Image,
 }
 
+#[derive(Debug, Clone)]
+pub struct LockUpdateRequest {
+    pub target: TargetSelector,
+    pub mode: LockUpdateMode,
+    pub jobs: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LockUpdateMode {
+    MissingOnly,
+    UpdateAll,
+}
+
 pub trait NirionBackend {
     fn projects(&self) -> Projects;
 
@@ -140,6 +155,11 @@ pub trait NirionBackend {
         &self,
         request: InspectRequest,
     ) -> impl Future<Output = anyhow::Result<Vec<String>>> + Send;
+
+    fn lock_updates(
+        &self,
+        request: LockUpdateRequest,
+    ) -> BoxStream<'static, anyhow::Result<LockUpdateEvent>>;
 }
 
 #[derive(Clone)]
@@ -251,6 +271,33 @@ impl NirionBackend for LocalBackend {
     ) -> anyhow::Result<Vec<String>> {
         inspect_targets(&self.context, request).await
     }
+
+    fn lock_updates(
+        &self,
+        request: LockUpdateRequest,
+    ) -> BoxStream<'static, anyhow::Result<LockUpdateEvent>> {
+        let mut images = get_images(&request.target, &self.context.projects);
+        if request.mode == LockUpdateMode::MissingOnly {
+            retain_images_missing_lock_entries(
+                &mut images,
+                &self.context.locked_images,
+            );
+        }
+
+        image_update_stream(&self.context, images, request.jobs)
+    }
+}
+
+fn retain_images_missing_lock_entries(
+    images: &mut BTreeMap<String, String>,
+    locked_images: &LockedImages,
+) {
+    images.retain(|name, image| {
+        locked_images
+            .get(name)
+            .map(|locked| locked.image != *image)
+            .unwrap_or(true)
+    });
 }
 
 async fn inspect_targets(
