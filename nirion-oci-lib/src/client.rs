@@ -15,6 +15,12 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
+pub struct VersionedImageResolution {
+    pub image: VersionedImage,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
 pub struct NirionOciClientConfig {
     pub protocol: ClientProtocol,
     pub accept_invalid_certificates: bool,
@@ -163,16 +169,29 @@ impl NirionOciClient {
         &self,
         image: &Reference,
     ) -> anyhow::Result<VersionedImage> {
+        Ok(self
+            .get_versioned_image_resolution(image)
+            .await?
+            .image)
+    }
+
+    pub async fn get_versioned_image_resolution(
+        &self,
+        image: &Reference,
+    ) -> anyhow::Result<VersionedImageResolution> {
         let auth = self.auth.auth_for(image);
 
-        let (version, digest) = self
+        let (version, digest, warnings) = self
             .resolve_version_and_digest(image, auth)
             .await?;
 
-        Ok(VersionedImage {
-            image: image.to_string(),
-            version,
-            digest,
+        Ok(VersionedImageResolution {
+            image: VersionedImage {
+                image: image.to_string(),
+                version,
+                digest,
+            },
+            warnings,
         })
     }
 
@@ -180,6 +199,16 @@ impl NirionOciClient {
         &self,
         versioned_image: &VersionedImage,
     ) -> anyhow::Result<VersionedImage> {
+        Ok(self
+            .get_updated_versioned_image_resolution(versioned_image)
+            .await?
+            .image)
+    }
+
+    pub async fn get_updated_versioned_image_resolution(
+        &self,
+        versioned_image: &VersionedImage,
+    ) -> anyhow::Result<VersionedImageResolution> {
         let image = Reference::try_from(versioned_image.image.as_str())?;
         let auth = self.auth.auth_for(&image);
 
@@ -189,21 +218,27 @@ impl NirionOciClient {
             .await?;
 
         if current_digest == versioned_image.digest {
-            return Ok(VersionedImage {
-                image: versioned_image.image.clone(),
-                version: versioned_image.version.clone(),
-                digest: versioned_image.digest.clone(),
+            return Ok(VersionedImageResolution {
+                image: VersionedImage {
+                    image: versioned_image.image.clone(),
+                    version: versioned_image.version.clone(),
+                    digest: versioned_image.digest.clone(),
+                },
+                warnings: Vec::new(),
             });
         }
 
-        let (version, digest) = self
+        let (version, digest, warnings) = self
             .resolve_version_and_digest(&image, auth)
             .await?;
 
-        Ok(VersionedImage {
-            image: versioned_image.image.clone(),
-            version,
-            digest,
+        Ok(VersionedImageResolution {
+            image: VersionedImage {
+                image: versioned_image.image.clone(),
+                version,
+                digest,
+            },
+            warnings,
         })
     }
 
@@ -211,7 +246,7 @@ impl NirionOciClient {
         &self,
         image: &Reference,
         auth: RegistryAuth,
-    ) -> anyhow::Result<(Option<String>, String)> {
+    ) -> anyhow::Result<(Option<String>, String, Vec<String>)> {
         let (_, digest, raw_config) = self
             .registry_client
             .pull_manifest_and_config(image, auth.clone())
@@ -220,14 +255,23 @@ impl NirionOciClient {
         let config: ConfigFile = serde_json::from_str(&raw_config)?;
 
         if let Some(version) = get_version_from_config(&config) {
-            return Ok((Some(version), digest));
+            return Ok((Some(version), digest, Vec::new()));
         }
 
-        let version = self
+        let (version, warnings) = match self
             .resolve_version_from_tags(image, &digest, auth)
-            .await?;
+            .await
+        {
+            Ok(version) => (version, Vec::new()),
+            Err(error) => (
+                None,
+                vec![format!(
+                    "Failed to resolve version tag for {image}: {error}"
+                )],
+            ),
+        };
 
-        Ok((version, digest))
+        Ok((version, digest, warnings))
     }
 
     async fn resolve_version_from_tags(
