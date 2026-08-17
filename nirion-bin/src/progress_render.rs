@@ -1,5 +1,4 @@
 use nirion_lib::{
-    context::NirionContext,
     docker::ProjectStatus,
     events::{ComposeEvent, ProcessEvent},
     projects::Projects,
@@ -81,7 +80,7 @@ pub(crate) trait ProgressRenderer {
 
     fn start(
         &mut self,
-        _context: &NirionContext,
+        _projects: &Projects,
         _selected: &[String],
         _running: &BTreeMap<String, bool>,
         _statuses: &BTreeMap<String, ProjectStatus>,
@@ -98,7 +97,7 @@ pub(crate) trait ProgressRenderer {
 
     fn tick(
         &mut self,
-        _context: &NirionContext,
+        _projects: &Projects,
         _selected: &[String],
         _running: &BTreeMap<String, bool>,
         _statuses: &BTreeMap<String, ProjectStatus>,
@@ -108,7 +107,7 @@ pub(crate) trait ProgressRenderer {
 
     fn finish(
         &mut self,
-        _context: &NirionContext,
+        _projects: &Projects,
         _selected: &[String],
         _running: &BTreeMap<String, bool>,
         _statuses: &BTreeMap<String, ProjectStatus>,
@@ -127,12 +126,12 @@ where
 
     fn start(
         &mut self,
-        context: &NirionContext,
+        projects: &Projects,
         selected: &[String],
         running: &BTreeMap<String, bool>,
         statuses: &BTreeMap<String, ProjectStatus>,
     ) -> anyhow::Result<()> {
-        (**self).start(context, selected, running, statuses)
+        (**self).start(projects, selected, running, statuses)
     }
 
     fn compose_event(
@@ -144,22 +143,22 @@ where
 
     fn tick(
         &mut self,
-        context: &NirionContext,
+        projects: &Projects,
         selected: &[String],
         running: &BTreeMap<String, bool>,
         statuses: &BTreeMap<String, ProjectStatus>,
     ) -> anyhow::Result<()> {
-        (**self).tick(context, selected, running, statuses)
+        (**self).tick(projects, selected, running, statuses)
     }
 
     fn finish(
         &mut self,
-        context: &NirionContext,
+        projects: &Projects,
         selected: &[String],
         running: &BTreeMap<String, bool>,
         statuses: &BTreeMap<String, ProjectStatus>,
     ) -> anyhow::Result<()> {
-        (**self).finish(context, selected, running, statuses)
+        (**self).finish(projects, selected, running, statuses)
     }
 }
 
@@ -198,7 +197,7 @@ impl ProgressRenderer for StatusProgressRenderer {
 
     fn start(
         &mut self,
-        context: &NirionContext,
+        projects: &Projects,
         selected: &[String],
         running: &BTreeMap<String, bool>,
         statuses: &BTreeMap<String, ProjectStatus>,
@@ -209,7 +208,7 @@ impl ProgressRenderer for StatusProgressRenderer {
             selected,
             running,
             statuses,
-            &context.projects,
+            projects,
         )
         .render(terminal_width());
         self.lines.start(&progress)
@@ -217,7 +216,7 @@ impl ProgressRenderer for StatusProgressRenderer {
 
     fn tick(
         &mut self,
-        context: &NirionContext,
+        projects: &Projects,
         selected: &[String],
         running: &BTreeMap<String, bool>,
         statuses: &BTreeMap<String, ProjectStatus>,
@@ -227,7 +226,7 @@ impl ProgressRenderer for StatusProgressRenderer {
             selected,
             running,
             statuses,
-            &context.projects,
+            projects,
         )
         .render(terminal_width());
         self.lines.render(&progress)
@@ -235,7 +234,7 @@ impl ProgressRenderer for StatusProgressRenderer {
 
     fn finish(
         &mut self,
-        context: &NirionContext,
+        projects: &Projects,
         selected: &[String],
         running: &BTreeMap<String, bool>,
         statuses: &BTreeMap<String, ProjectStatus>,
@@ -245,7 +244,7 @@ impl ProgressRenderer for StatusProgressRenderer {
             selected,
             running,
             statuses,
-            &context.projects,
+            projects,
         )
         .render(terminal_width());
         self.lines.finish(&progress)

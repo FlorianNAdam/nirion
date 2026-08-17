@@ -1,7 +1,7 @@
 use futures::{Stream, StreamExt};
 use nirion_lib::{
-    context::NirionContext,
-    docker::{ProjectStatus, ProjectStatusEvent, query_project_status},
+    backend::{NirionBackend, ProjectStatusRequest},
+    docker::{ProjectStatus, ProjectStatusEvent},
     events::{ComposeEvent, ProcessEvent},
     projects::{Projects, selected_project_names},
     wait::{WaitTarget, wait_finished},
@@ -102,7 +102,7 @@ impl ProgressState {
 }
 
 pub(crate) async fn run_progress(
-    context: &NirionContext,
+    backend: &impl NirionBackend,
     target: &TargetSelector,
     compose_stream: impl Stream<Item = anyhow::Result<ComposeEvent>>,
     status_events: impl Stream<Item = anyhow::Result<ProjectStatusEvent>>,
@@ -114,12 +114,13 @@ pub(crate) async fn run_progress(
     let cancel = tokio::signal::ctrl_c();
     tokio::pin!(cancel);
 
-    let selected = selected_project_names(target, &context.projects);
+    let projects = backend.projects();
+    let selected = selected_project_names(target, &projects);
     let mut state = ProgressState::new(&selected);
 
-    renderer.start(context, &selected, &state.running, &state.statuses)?;
+    renderer.start(&projects, &selected, &state.running, &state.statuses)?;
 
-    while !state.ready(target, &context.projects, wait) {
+    while !state.ready(target, &projects, wait) {
         tokio::select! {
             _ = &mut cancel => {
                 state.cancel();
@@ -139,17 +140,17 @@ pub(crate) async fn run_progress(
             }
         }
 
-        renderer.tick(context, &selected, &state.running, &state.statuses)?;
+        renderer.tick(&projects, &selected, &state.running, &state.statuses)?;
     }
 
     if !state.cancelled
         && state.error.is_none()
         && renderer.needs_status_during_compose()
     {
-        refresh_statuses(context, &selected, &mut state.statuses).await?;
+        refresh_statuses(backend, &selected, &mut state.statuses).await?;
     }
 
-    renderer.finish(context, &selected, &state.running, &state.statuses)?;
+    renderer.finish(&projects, &selected, &state.running, &state.statuses)?;
 
     if state.cancelled {
         return Ok(ProgressExit::Cancelled);
@@ -184,12 +185,16 @@ fn handle_compose_event(
 }
 
 async fn refresh_statuses(
-    context: &NirionContext,
+    backend: &impl NirionBackend,
     selected: &[String],
     statuses: &mut BTreeMap<String, ProjectStatus>,
 ) -> anyhow::Result<()> {
     for name in selected {
-        let status = query_project_status(context, name).await?;
+        let status = backend
+            .project_status(ProjectStatusRequest {
+                project: name.clone(),
+            })
+            .await?;
         statuses.insert(name.clone(), status);
     }
 

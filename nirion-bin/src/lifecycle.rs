@@ -1,8 +1,10 @@
 use futures::{StreamExt, stream};
 use nirion_lib::{
-    compose::{ComposeConcurrency, compose_stream},
-    context::NirionContext,
-    docker::status_stream,
+    backend::{
+        DispatchRequest, LifecycleAction, LifecycleRequest, NirionBackend,
+        StatusStreamRequest,
+    },
+    compose::ComposeConcurrency,
     wait::{WaitTarget, wait_finished},
 };
 use std::collections::BTreeMap;
@@ -21,40 +23,40 @@ pub struct LifecycleOptions {
 }
 
 pub async fn run_lifecycle_command(
-    context: &NirionContext,
+    backend: &impl NirionBackend,
     target: &TargetSelector,
-    args: &[&str],
+    action: LifecycleAction,
     options: LifecycleOptions,
 ) -> anyhow::Result<()> {
-    let args = args
-        .iter()
-        .map(|arg| arg.to_string())
-        .collect::<Vec<_>>();
-    let compose_events = compose_stream(
-        context.clone(),
-        target.clone(),
-        args,
-        ComposeConcurrency::Jobs(options.jobs),
-    );
+    let compose_events =
+        backend.dispatch(DispatchRequest::Lifecycle(LifecycleRequest {
+            target: target.clone(),
+            action,
+            concurrency: ComposeConcurrency::Jobs(options.jobs),
+        }));
 
     let renderer = progress_renderer(options.presentation);
+    let projects = backend.projects();
 
     let needs_status = renderer.needs_status_during_compose()
         || (options.wait == WaitTarget::Healthchecks
             && !wait_finished(
                 target,
-                &context.projects,
+                &projects,
                 &BTreeMap::new(),
                 WaitTarget::Healthchecks,
             ));
     let status_events = if needs_status {
-        status_stream(context, target.clone(), options.refresh_interval)
+        backend.status_stream(StatusStreamRequest {
+            target: target.clone(),
+            refresh_interval: options.refresh_interval,
+        })
     } else {
         stream::pending().boxed()
     };
 
     match run_progress(
-        context,
+        backend,
         target,
         compose_events,
         status_events,

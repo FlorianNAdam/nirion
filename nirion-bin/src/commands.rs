@@ -1,7 +1,7 @@
 use paste::paste;
 
 use clap::{Args, Subcommand};
-use nirion_lib::context::NirionContext;
+use nirion_lib::backend::LocalBackend;
 use std::num::NonZeroUsize;
 use tokio::time::Duration;
 
@@ -84,12 +84,12 @@ macro_rules! define_commands {
 
             pub async fn handle_command(
                 command: &Commands,
-                context: &NirionContext
+                backend: &LocalBackend
             ) -> anyhow::Result<()> {
                 match command {
                     $(
                         Commands::[<$modname:camel>] { args } =>
-                            [<handle_ $modname>](args, context).await?,
+                            [<handle_ $modname>](args, backend).await?,
                     )*
                 }
                 Ok(())

@@ -1,7 +1,8 @@
 use clap::Args;
 use futures::stream;
 use nirion_lib::{
-    context::NirionContext, docker::status_stream, wait::WaitTarget,
+    backend::{NirionBackend, StatusStreamRequest},
+    wait::WaitTarget,
 };
 use std::time::Duration;
 
@@ -26,13 +27,16 @@ pub struct MonitorArgs {
 
 pub async fn handle_monitor(
     args: &MonitorArgs,
-    context: &NirionContext,
+    backend: &impl NirionBackend,
 ) -> anyhow::Result<()> {
     run_progress(
-        context,
+        backend,
         &args.target,
         stream::empty(),
-        status_stream(context, args.target.clone(), args.refresh),
+        backend.status_stream(StatusStreamRequest {
+            target: args.target.clone(),
+            refresh_interval: args.refresh,
+        }),
         StatusProgressRenderer::without_spinner(),
         WaitTarget::Forever,
     )

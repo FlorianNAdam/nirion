@@ -1,6 +1,7 @@
 use crate::commands::{Commands, handle_command};
 use clap::{CommandFactory, Parser};
 use clap_complete::{ArgValueCompleter, CompletionCandidate};
+use nirion_lib::backend::LocalBackend;
 use nirion_lib::config::{
     build_nix_project_file, load_auth_config, load_locked_images,
     load_projects, nix_config_target,
@@ -357,8 +358,9 @@ async fn main() -> anyhow::Result<()> {
         oci_client,
         docker_command: cli.docker_command(),
     };
+    let backend = LocalBackend::new(context);
 
-    handle_command(&cli.command, &context).await?;
+    handle_command(&cli.command, &backend).await?;
 
     Ok(())
 }

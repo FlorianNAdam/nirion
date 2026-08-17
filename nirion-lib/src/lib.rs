@@ -1,3 +1,4 @@
+pub mod backend;
 pub mod compose;
 pub mod compose_file;
 pub mod config;
