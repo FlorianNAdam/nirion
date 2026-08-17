@@ -1,8 +1,8 @@
 use clap::{Args, ValueEnum};
 use futures::StreamExt;
 use nirion_lib::{
-    context::NirionContext,
-    logs::{logs_stream, LogStreamOptions},
+    backend::{LogsRequest, NirionBackend},
+    logs::LogStreamOptions,
     projects::TargetSelector,
 };
 use std::time::Duration;
@@ -70,7 +70,7 @@ pub struct LogsArgs {
 
 pub async fn handle_logs(
     args: &LogsArgs,
-    context: &NirionContext,
+    backend: &impl NirionBackend,
 ) -> anyhow::Result<()> {
     let options = LogStreamOptions {
         follow: args.follow,
@@ -81,7 +81,10 @@ pub async fn handle_logs(
         timestamps: args.timestamps,
     };
     let mut renderer = LogRenderer::new(args.label, args.events, args.follow);
-    let mut stream = logs_stream(context.clone(), args.target.clone(), options);
+    let mut stream = backend.logs(LogsRequest {
+        target: args.target.clone(),
+        options,
+    });
     let shutdown = tokio::signal::ctrl_c();
     tokio::pin!(shutdown);
 

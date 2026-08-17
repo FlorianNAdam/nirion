@@ -9,6 +9,8 @@ use crate::{
         ProjectStatus, ProjectStatusEvent, query_project_status, status_stream,
     },
     events::ComposeEvent,
+    health::{HealthLogEvent, HealthLogStreamOptions, health_logs_stream},
+    logs::{LogEvent, LogStreamOptions, logs_stream},
     projects::{Projects, TargetSelector},
 };
 
@@ -69,6 +71,18 @@ pub struct ProjectStatusRequest {
     pub project: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct LogsRequest {
+    pub target: TargetSelector,
+    pub options: LogStreamOptions,
+}
+
+#[derive(Debug, Clone)]
+pub struct HealthLogsRequest {
+    pub target: TargetSelector,
+    pub options: HealthLogStreamOptions,
+}
+
 pub trait NirionBackend {
     fn projects(&self) -> Projects;
 
@@ -86,6 +100,16 @@ pub trait NirionBackend {
         &self,
         request: ProjectStatusRequest,
     ) -> impl Future<Output = anyhow::Result<ProjectStatus>> + Send;
+
+    fn logs(
+        &self,
+        request: LogsRequest,
+    ) -> BoxStream<'static, anyhow::Result<LogEvent>>;
+
+    fn health_logs(
+        &self,
+        request: HealthLogsRequest,
+    ) -> BoxStream<'static, anyhow::Result<HealthLogEvent>>;
 }
 
 #[derive(Clone)]
@@ -163,6 +187,24 @@ impl NirionBackend for LocalBackend {
         request: ProjectStatusRequest,
     ) -> anyhow::Result<ProjectStatus> {
         query_project_status(&self.context, &request.project).await
+    }
+
+    fn logs(
+        &self,
+        request: LogsRequest,
+    ) -> BoxStream<'static, anyhow::Result<LogEvent>> {
+        logs_stream(self.context.clone(), request.target, request.options)
+    }
+
+    fn health_logs(
+        &self,
+        request: HealthLogsRequest,
+    ) -> BoxStream<'static, anyhow::Result<HealthLogEvent>> {
+        health_logs_stream(
+            self.context.clone(),
+            request.target,
+            request.options,
+        )
     }
 }
 
