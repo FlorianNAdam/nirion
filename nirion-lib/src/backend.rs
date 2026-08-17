@@ -9,6 +9,7 @@ use crate::{
         ProjectStatus, ProjectStatusEvent, query_project_status, status_stream,
     },
     events::ComposeEvent,
+    exec::{ExecIo, ExecRequest, exec as run_exec},
     health::{HealthLogEvent, HealthLogStreamOptions, health_logs_stream},
     logs::{LogEvent, LogStreamOptions, logs_stream},
     projects::{Projects, TargetSelector},
@@ -110,6 +111,12 @@ pub trait NirionBackend {
         &self,
         request: HealthLogsRequest,
     ) -> BoxStream<'static, anyhow::Result<HealthLogEvent>>;
+
+    fn exec(
+        &self,
+        request: ExecRequest,
+        io: ExecIo,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send;
 }
 
 #[derive(Clone)]
@@ -205,6 +212,14 @@ impl NirionBackend for LocalBackend {
             request.target,
             request.options,
         )
+    }
+
+    async fn exec(
+        &self,
+        request: ExecRequest,
+        io: ExecIo,
+    ) -> anyhow::Result<()> {
+        run_exec(&self.context, &request, io).await
     }
 }
 

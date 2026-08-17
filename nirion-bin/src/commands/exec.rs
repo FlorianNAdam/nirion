@@ -1,9 +1,7 @@
 use clap::{Args, ValueHint};
 use nirion_lib::{
-    context::NirionContext,
-    exec::{
-        exec, ExecInput, ExecIo, ExecOutput, ExecRequest, ExecTerminalSize,
-    },
+    backend::NirionBackend,
+    exec::{ExecInput, ExecIo, ExecOutput, ExecRequest, ExecTerminalSize},
 };
 use rustix::fs::{fcntl_getfl, fcntl_setfl, OFlags};
 use rustix::termios::{
@@ -64,7 +62,7 @@ pub struct ExecArgs {
 
 pub async fn handle_exec(
     args: &ExecArgs,
-    context: &NirionContext,
+    backend: &impl NirionBackend,
 ) -> anyhow::Result<()> {
     let mut request = args.request();
 
@@ -101,16 +99,16 @@ pub async fn handle_exec(
         .then(current_terminal_size)
         .flatten();
 
-    let result = exec(
-        context,
-        &request,
-        ExecIo {
-            input,
-            output,
-            terminal_size,
-        },
-    )
-    .await;
+    let result = backend
+        .exec(
+            request,
+            ExecIo {
+                input,
+                output,
+                terminal_size,
+            },
+        )
+        .await;
     let _ = stdin_done_tx.send(true);
     if let Some(stdin_task) = stdin_task {
         stdin_task.abort();
