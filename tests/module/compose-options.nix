@@ -10,6 +10,7 @@ let
       virtualisation.nirion = baseNirionConfig // {
         projects.app = {
           enableDefaultNetwork = false;
+          meta.backups.enable = false;
           volumes.data = { };
           networks.backend = {
             name = "app-backend";
@@ -17,6 +18,10 @@ let
           };
           services.api = {
             extraOptions.image = "example.invalid/api:latest";
+            meta.ingress = {
+              port = 80;
+              forwardAuth.enable = true;
+            };
             command = [ "serve" ];
             environment.PORT = "8080";
             volumes = [ "data:/data" ];
@@ -40,9 +45,24 @@ let
   ];
 
   compose = system.config.virtualisation.nirion.out.compose.app.attrs;
+  project = system.config.virtualisation.nirion.projects.app;
   service = compose.services.api;
 in
 [
+  {
+    assertion = project.meta.backups.enable == false;
+    message = "project metadata was not available in module config";
+  }
+  {
+    assertion =
+      project.services.api.meta.ingress.port == 80
+      && project.services.api.meta.ingress.forwardAuth.enable;
+    message = "service metadata was not available in module config";
+  }
+  {
+    assertion = !(compose ? meta) && !(service ? meta);
+    message = "metadata was rendered into Docker Compose";
+  }
   {
     assertion =
       compose.networks.backend == {

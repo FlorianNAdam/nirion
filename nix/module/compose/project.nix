@@ -115,6 +115,11 @@ in
       default = name;
       description = "Docker Compose project name.";
     };
+    meta = mkOption {
+      type = types.attrsOf types.anything;
+      default = { };
+      description = "Arbitrary project metadata for Nix-side integrations. Not rendered into Docker Compose.";
+    };
     enableDefaultNetwork = mkOption {
       type = types.bool;
       default = true;
