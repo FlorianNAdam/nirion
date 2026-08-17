@@ -1,9 +1,12 @@
 use anyhow::Result;
 use clap::Args;
 
-use crate::docker::compose_target_cmd;
+use crate::docker::render_operation_events;
 use crate::{ClapSelector, TargetSelector};
-use nirion_lib::context::NirionContext;
+use nirion_lib::{
+    backend::{DispatchRequest, NirionBackend, PullRequest},
+    compose::ComposeConcurrency,
+};
 
 /// Pull service images
 #[derive(Args, Debug, Clone)]
@@ -19,8 +22,13 @@ pub struct PullArgs {
 
 pub async fn handle_pull(
     args: &PullArgs,
-    context: &NirionContext,
+    backend: &impl NirionBackend,
 ) -> Result<()> {
-    compose_target_cmd(context, &args.target, &["pull"]).await?;
-    Ok(())
+    render_operation_events(backend.dispatch(DispatchRequest::Pull(
+        PullRequest {
+            target: args.target.clone(),
+            concurrency: ComposeConcurrency::sequential(),
+        },
+    )))
+    .await
 }

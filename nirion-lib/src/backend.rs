@@ -20,6 +20,8 @@ pub type OperationEventStream =
 pub enum DispatchRequest {
     Lifecycle(LifecycleRequest),
     Pull(PullRequest),
+    Top(TopRequest),
+    Volumes(VolumesRequest),
 }
 
 #[derive(Debug, Clone)]
@@ -42,6 +44,18 @@ pub enum LifecycleAction {
 pub struct PullRequest {
     pub target: TargetSelector,
     pub concurrency: ComposeConcurrency,
+}
+
+#[derive(Debug, Clone)]
+pub struct TopRequest {
+    pub target: TargetSelector,
+}
+
+#[derive(Debug, Clone)]
+pub struct VolumesRequest {
+    pub target: TargetSelector,
+    pub format: String,
+    pub quiet: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -119,6 +133,21 @@ impl NirionBackend for LocalBackend {
                 vec!["pull".to_string()],
                 request.concurrency,
             ),
+            DispatchRequest::Top(request) => compose_stream(
+                self.context.clone(),
+                request.target,
+                vec!["top".to_string()],
+                ComposeConcurrency::sequential(),
+            ),
+            DispatchRequest::Volumes(request) => {
+                let args = volumes_args(&request);
+                compose_stream(
+                    self.context.clone(),
+                    request.target,
+                    args,
+                    ComposeConcurrency::sequential(),
+                )
+            }
         }
     }
 
@@ -145,4 +174,18 @@ fn lifecycle_args(action: LifecycleAction) -> Vec<String> {
         LifecycleAction::Stop => vec!["stop".to_string()],
         LifecycleAction::Restart => vec!["restart".to_string()],
     }
+}
+
+fn volumes_args(request: &VolumesRequest) -> Vec<String> {
+    let mut args = vec![
+        "volumes".to_string(),
+        "--format".to_string(),
+        request.format.clone(),
+    ];
+
+    if request.quiet {
+        args.push("--quiet".to_string());
+    }
+
+    args
 }

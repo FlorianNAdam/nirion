@@ -1,5 +1,6 @@
 use futures::StreamExt;
 use nirion_lib::{
+    backend::OperationEventStream,
     compose::{ComposeConcurrency, compose_stream},
     context::NirionContext,
     events::{ComposeEvent, ProcessEvent},
@@ -22,6 +23,16 @@ pub async fn compose_target_cmd(
     );
 
     while let Some(event) = stream.next().await {
+        render_compose_event(event?);
+    }
+
+    Ok(())
+}
+
+pub async fn render_operation_events(
+    mut events: OperationEventStream
+) -> anyhow::Result<()> {
+    while let Some(event) = events.next().await {
         render_compose_event(event?);
     }
 

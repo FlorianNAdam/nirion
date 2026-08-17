@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::Args;
 
-use crate::{docker::compose_target_cmd, ClapSelector, TargetSelector};
-use nirion_lib::context::NirionContext;
+use crate::{docker::render_operation_events, ClapSelector, TargetSelector};
+use nirion_lib::backend::{DispatchRequest, NirionBackend, VolumesRequest};
 
 /// List volumes
 #[derive(Args, Debug, Clone)]
@@ -26,16 +26,14 @@ pub struct VolumesArgs {
 
 pub async fn handle_volumes(
     args: &VolumesArgs,
-    context: &NirionContext,
+    backend: &impl NirionBackend,
 ) -> Result<()> {
-    let mut cmd: Vec<String> =
-        vec!["volumes".into(), "--format".into(), args.format.clone()];
-
-    if args.quiet {
-        cmd.push("--quiet".into());
-    }
-
-    let cmd_slices: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
-
-    compose_target_cmd(context, &args.target, &cmd_slices).await
+    render_operation_events(backend.dispatch(DispatchRequest::Volumes(
+        VolumesRequest {
+            target: args.target.clone(),
+            format: args.format.clone(),
+            quiet: args.quiet,
+        },
+    )))
+    .await
 }
