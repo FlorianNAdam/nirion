@@ -1,8 +1,10 @@
 use clap::Args;
-use nirion_lib::projects::TargetSelector;
+use nirion_lib::{
+    backend::{ComposePassthroughOperation, NirionBackend},
+    projects::TargetSelector,
+};
 
-use crate::{docker::compose_target_cmd, ClapSelector};
-use nirion_lib::context::NirionContext;
+use crate::{docker::render_command_output_events, ClapSelector};
 
 /// Run a docker compose command for a project or service
 #[derive(Args, Debug, Clone)]
@@ -21,13 +23,15 @@ pub struct ComposeExecArgs {
 
 pub async fn handle_compose_exec(
     args: &ComposeExecArgs,
-    context: &NirionContext,
+    backend: &dyn NirionBackend,
 ) -> anyhow::Result<()> {
-    let cmd_slices: Vec<&str> = args
-        .cmd
-        .iter()
-        .map(|s| s.as_str())
-        .collect();
-
-    compose_target_cmd(context, &args.target, &cmd_slices).await
+    render_command_output_events(
+        backend
+            .compose_passthrough(ComposePassthroughOperation {
+                target: args.target.clone(),
+                args: args.cmd.clone(),
+            })
+            .await,
+    )
+    .await
 }

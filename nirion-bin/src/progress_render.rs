@@ -1,7 +1,5 @@
 use nirion_lib::{
-    context::NirionContext,
-    docker::ProjectStatus,
-    events::{ComposeEvent, ProcessEvent},
+    backend::OperationEvent, docker::ProjectStatus, events::ProcessEvent,
     projects::Projects,
 };
 use nirion_tui_lib::{
@@ -81,7 +79,7 @@ pub(crate) trait ProgressRenderer {
 
     fn start(
         &mut self,
-        _context: &NirionContext,
+        _projects: &Projects,
         _selected: &[String],
         _running: &BTreeMap<String, bool>,
         _statuses: &BTreeMap<String, ProjectStatus>,
@@ -91,14 +89,14 @@ pub(crate) trait ProgressRenderer {
 
     fn compose_event(
         &mut self,
-        _event: &ComposeEvent,
+        _event: &OperationEvent,
     ) -> anyhow::Result<()> {
         Ok(())
     }
 
     fn tick(
         &mut self,
-        _context: &NirionContext,
+        _projects: &Projects,
         _selected: &[String],
         _running: &BTreeMap<String, bool>,
         _statuses: &BTreeMap<String, ProjectStatus>,
@@ -108,7 +106,7 @@ pub(crate) trait ProgressRenderer {
 
     fn finish(
         &mut self,
-        _context: &NirionContext,
+        _projects: &Projects,
         _selected: &[String],
         _running: &BTreeMap<String, bool>,
         _statuses: &BTreeMap<String, ProjectStatus>,
@@ -127,39 +125,39 @@ where
 
     fn start(
         &mut self,
-        context: &NirionContext,
+        projects: &Projects,
         selected: &[String],
         running: &BTreeMap<String, bool>,
         statuses: &BTreeMap<String, ProjectStatus>,
     ) -> anyhow::Result<()> {
-        (**self).start(context, selected, running, statuses)
+        (**self).start(projects, selected, running, statuses)
     }
 
     fn compose_event(
         &mut self,
-        event: &ComposeEvent,
+        event: &OperationEvent,
     ) -> anyhow::Result<()> {
         (**self).compose_event(event)
     }
 
     fn tick(
         &mut self,
-        context: &NirionContext,
+        projects: &Projects,
         selected: &[String],
         running: &BTreeMap<String, bool>,
         statuses: &BTreeMap<String, ProjectStatus>,
     ) -> anyhow::Result<()> {
-        (**self).tick(context, selected, running, statuses)
+        (**self).tick(projects, selected, running, statuses)
     }
 
     fn finish(
         &mut self,
-        context: &NirionContext,
+        projects: &Projects,
         selected: &[String],
         running: &BTreeMap<String, bool>,
         statuses: &BTreeMap<String, ProjectStatus>,
     ) -> anyhow::Result<()> {
-        (**self).finish(context, selected, running, statuses)
+        (**self).finish(projects, selected, running, statuses)
     }
 }
 
@@ -198,7 +196,7 @@ impl ProgressRenderer for StatusProgressRenderer {
 
     fn start(
         &mut self,
-        context: &NirionContext,
+        projects: &Projects,
         selected: &[String],
         running: &BTreeMap<String, bool>,
         statuses: &BTreeMap<String, ProjectStatus>,
@@ -209,7 +207,7 @@ impl ProgressRenderer for StatusProgressRenderer {
             selected,
             running,
             statuses,
-            &context.projects,
+            projects,
         )
         .render(terminal_width());
         self.lines.start(&progress)
@@ -217,7 +215,7 @@ impl ProgressRenderer for StatusProgressRenderer {
 
     fn tick(
         &mut self,
-        context: &NirionContext,
+        projects: &Projects,
         selected: &[String],
         running: &BTreeMap<String, bool>,
         statuses: &BTreeMap<String, ProjectStatus>,
@@ -227,7 +225,7 @@ impl ProgressRenderer for StatusProgressRenderer {
             selected,
             running,
             statuses,
-            &context.projects,
+            projects,
         )
         .render(terminal_width());
         self.lines.render(&progress)
@@ -235,7 +233,7 @@ impl ProgressRenderer for StatusProgressRenderer {
 
     fn finish(
         &mut self,
-        context: &NirionContext,
+        projects: &Projects,
         selected: &[String],
         running: &BTreeMap<String, bool>,
         statuses: &BTreeMap<String, ProjectStatus>,
@@ -245,7 +243,7 @@ impl ProgressRenderer for StatusProgressRenderer {
             selected,
             running,
             statuses,
-            &context.projects,
+            projects,
         )
         .render(terminal_width());
         self.lines.finish(&progress)
@@ -257,7 +255,7 @@ struct PlainRenderer;
 impl ProgressRenderer for PlainRenderer {
     fn compose_event(
         &mut self,
-        event: &ComposeEvent,
+        event: &OperationEvent,
     ) -> anyhow::Result<()> {
         render_compose_event(event);
         Ok(())
@@ -280,13 +278,13 @@ pub(crate) fn progress_renderer(
     }
 }
 
-fn render_compose_event(event: &ComposeEvent) {
+fn render_compose_event(event: &OperationEvent) {
     match event {
-        ComposeEvent::ProjectStarted { project } => {
+        OperationEvent::ProjectStarted { project } => {
             println!("[{}]", project.as_str().cyan());
         }
-        ComposeEvent::Process { event, .. } => render_process_event(event),
-        ComposeEvent::ProjectFailed { project, error } => {
+        OperationEvent::Process { event, .. } => render_process_event(event),
+        OperationEvent::ProjectFailed { project, error } => {
             eprintln!("Project '{}' failed: {}", project, error);
             println!();
         }
@@ -465,31 +463,31 @@ mod tests {
     fn render_compose_event_accepts_all_event_types() {
         use nirion_lib::events::ExitStatus;
 
-        render_compose_event(&ComposeEvent::ProjectStarted {
+        render_compose_event(&OperationEvent::ProjectStarted {
             project: "app".to_string(),
         });
-        render_compose_event(&ComposeEvent::Process {
+        render_compose_event(&OperationEvent::Process {
             project: Some("app".to_string()),
             event: ProcessEvent::StdoutLine("hello".to_string()),
         });
-        render_compose_event(&ComposeEvent::Process {
+        render_compose_event(&OperationEvent::Process {
             project: Some("app".to_string()),
             event: ProcessEvent::StderrLine("warning".to_string()),
         });
-        render_compose_event(&ComposeEvent::Process {
+        render_compose_event(&OperationEvent::Process {
             project: Some("app".to_string()),
             event: ProcessEvent::StderrLine(
                 "the attribute `version` is obsolete".to_string(),
             ),
         });
-        render_compose_event(&ComposeEvent::Process {
+        render_compose_event(&OperationEvent::Process {
             project: Some("app".to_string()),
             event: ProcessEvent::Exited(ExitStatus {
                 code: Some(0),
                 success: true,
             }),
         });
-        render_compose_event(&ComposeEvent::ProjectFailed {
+        render_compose_event(&OperationEvent::ProjectFailed {
             project: "app".to_string(),
             error: "failed".to_string(),
         });

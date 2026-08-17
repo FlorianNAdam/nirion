@@ -4,8 +4,10 @@ use clap::Args;
 use crate::commands::LifecycleArgs;
 use crate::lifecycle::run_lifecycle_command;
 use crate::{ClapSelector, TargetSelector};
-use nirion_lib::context::NirionContext;
-use nirion_lib::wait::WaitTarget;
+use nirion_lib::{
+    backend::{LifecycleAction, NirionBackend},
+    wait::WaitTarget,
+};
 
 /// Create and start service containers
 #[derive(Args, Debug, Clone)]
@@ -28,12 +30,12 @@ pub struct UpArgs {
 
 pub async fn handle_up(
     args: &UpArgs,
-    context: &NirionContext,
+    backend: &dyn NirionBackend,
 ) -> Result<()> {
     run_lifecycle_command(
-        context,
+        backend,
         &args.target,
-        &["up", "-d"],
+        LifecycleAction::Up,
         args.lifecycle
             .options(if args.skip_healthcheck {
                 WaitTarget::NoWait

@@ -1,12 +1,9 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
 use nirion_lib::{
-    context::NirionContext,
-    inspect::{
-        inspect_container, inspect_image, inspect_project_containers,
-        inspect_project_images,
-    },
-    projects::{ProjectSelector, TargetSelector},
+    backend::NirionBackend,
+    inspect::{InspectKind, InspectQuery},
+    projects::TargetSelector,
 };
 
 use crate::ClapSelector;
@@ -48,96 +45,36 @@ struct InspectTargetArgs {
 
 pub async fn handle_inspect(
     args: &InspectArgs,
-    context: &NirionContext,
+    backend: &dyn NirionBackend,
 ) -> Result<()> {
     match &args.command {
         InspectCommand::Container(args) => {
-            inspect_containers(args, context).await?
+            inspect_targets(args, backend, InspectKind::Container).await?
         }
-        InspectCommand::Image(args) => inspect_images(args, context).await?,
+        InspectCommand::Image(args) => {
+            inspect_targets(args, backend, InspectKind::Image).await?
+        }
     }
 
     Ok(())
 }
 
-async fn inspect_containers(
+async fn inspect_targets(
     args: &InspectTargetArgs,
-    context: &NirionContext,
+    backend: &dyn NirionBackend,
+    kind: InspectKind,
 ) -> Result<()> {
-    match &args.target {
-        TargetSelector::All => {
-            for (project_name, _) in context.projects.iter() {
-                let project_selector = ProjectSelector {
-                    name: project_name.to_string(),
-                };
-                for output in inspect_project_containers(
-                    context,
-                    &project_selector,
-                    &args.format,
-                    args.raw,
-                )
-                .await?
-                {
-                    println!("{output}");
-                }
-            }
-        }
-        TargetSelector::Project(proj) => {
-            for output in inspect_project_containers(
-                context,
-                proj,
-                &args.format,
-                args.raw,
-            )
-            .await?
-            {
-                println!("{output}");
-            }
-        }
-        TargetSelector::Service(img) => {
-            let output =
-                inspect_container(context, img, &args.format, args.raw).await?;
-            println!("{output}");
-        }
+    for output in backend
+        .inspect(InspectQuery {
+            target: args.target.clone(),
+            kind,
+            format: args.format.clone(),
+            raw: args.raw,
+        })
+        .await?
+    {
+        println!("{output}");
     }
-    Ok(())
-}
 
-async fn inspect_images(
-    args: &InspectTargetArgs,
-    context: &NirionContext,
-) -> Result<()> {
-    match &args.target {
-        TargetSelector::All => {
-            for (project_name, _) in context.projects.iter() {
-                let project_selector = ProjectSelector {
-                    name: project_name.to_string(),
-                };
-                for output in inspect_project_images(
-                    context,
-                    &project_selector,
-                    &args.format,
-                    args.raw,
-                )
-                .await?
-                {
-                    println!("{output}");
-                }
-            }
-        }
-        TargetSelector::Project(proj) => {
-            for output in
-                inspect_project_images(context, proj, &args.format, args.raw)
-                    .await?
-            {
-                println!("{output}");
-            }
-        }
-        TargetSelector::Service(img) => {
-            let output =
-                inspect_image(context, img, &args.format, args.raw).await?;
-            println!("{output}");
-        }
-    }
     Ok(())
 }

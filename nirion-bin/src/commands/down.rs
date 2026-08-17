@@ -5,8 +5,10 @@ use nirion_lib::projects::TargetSelector;
 use crate::commands::LifecycleArgs;
 use crate::lifecycle::run_lifecycle_command;
 use crate::ClapSelector;
-use nirion_lib::context::NirionContext;
-use nirion_lib::wait::WaitTarget;
+use nirion_lib::{
+    backend::{LifecycleAction, NirionBackend},
+    wait::WaitTarget,
+};
 
 /// Stop and remove service containers, networks
 #[derive(Args, Debug, Clone)]
@@ -25,12 +27,12 @@ pub struct DownArgs {
 
 pub async fn handle_down(
     args: &DownArgs,
-    context: &NirionContext,
+    backend: &dyn NirionBackend,
 ) -> Result<()> {
     run_lifecycle_command(
-        context,
+        backend,
         &args.target,
-        &["down"],
+        LifecycleAction::Down,
         args.lifecycle
             .options(WaitTarget::NoWait),
     )

@@ -1,7 +1,9 @@
 use clap::Args;
 
-use crate::{docker::compose_target_cmd, ClapSelector, TargetSelector};
-use nirion_lib::context::NirionContext;
+use crate::{
+    docker::render_command_output_events, ClapSelector, TargetSelector,
+};
+use nirion_lib::backend::{NirionBackend, TopOperation};
 
 /// Display the running processes of a service container
 #[derive(Args, Debug, Clone)]
@@ -17,10 +19,14 @@ pub struct TopArgs {
 
 pub async fn handle_top(
     args: &TopArgs,
-    context: &NirionContext,
+    backend: &dyn NirionBackend,
 ) -> anyhow::Result<()> {
-    // docker compose top has no flags: just ["top"]
-    let cmd: Vec<&str> = vec!["top"];
-
-    compose_target_cmd(context, &args.target, &cmd).await
+    render_command_output_events(
+        backend
+            .top(TopOperation {
+                target: args.target.clone(),
+            })
+            .await,
+    )
+    .await
 }

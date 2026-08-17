@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::Args;
 use nirion_lib::{
+    backend::NirionBackend,
     compose_file::{compose_to_string, full_compose, service_compose},
-    context::NirionContext,
     projects::TargetSelector,
 };
 
@@ -22,21 +22,23 @@ pub struct CatArgs {
 
 pub async fn handle_cat(
     args: &CatArgs,
-    context: &NirionContext,
+    backend: &dyn NirionBackend,
 ) -> Result<()> {
+    let projects = backend.projects();
+
     match &args.target {
         TargetSelector::All => {
-            for (project_name, project) in context.projects.iter() {
+            for (project_name, project) in projects.iter() {
                 println!("Project {}:", project_name);
                 print_compose(&full_compose(project)?)?;
             }
         }
         TargetSelector::Project(proj) => {
-            let project = &context.projects[&proj.name];
+            let project = &projects[&proj.name];
             print_compose(&full_compose(project)?)?;
         }
         TargetSelector::Service(img) => {
-            let project = &context.projects[&img.project];
+            let project = &projects[&img.project];
             print_compose(&service_compose(
                 &img.project,
                 project,

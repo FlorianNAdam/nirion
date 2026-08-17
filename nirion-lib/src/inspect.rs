@@ -4,8 +4,93 @@ use serde_json::Value;
 use crate::{
     context::NirionContext,
     docker::query_project_status,
-    projects::{ProjectSelector, ServiceSelector},
+    projects::{ProjectSelector, ServiceSelector, TargetSelector},
 };
+
+#[derive(Debug, Clone)]
+pub struct InspectQuery {
+    pub target: TargetSelector,
+    pub kind: InspectKind,
+    pub format: String,
+    pub raw: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InspectKind {
+    Container,
+    Image,
+}
+
+pub async fn inspect_targets(
+    context: &NirionContext,
+    query: InspectQuery,
+) -> anyhow::Result<Vec<String>> {
+    match query.target {
+        TargetSelector::All => {
+            let mut outputs = Vec::new();
+            for (project_name, _) in context.projects.iter() {
+                outputs.extend(
+                    inspect_project(
+                        context,
+                        query.kind,
+                        &ProjectSelector {
+                            name: project_name.to_string(),
+                        },
+                        &query.format,
+                        query.raw,
+                    )
+                    .await?,
+                );
+            }
+            Ok(outputs)
+        }
+        TargetSelector::Project(project) => {
+            inspect_project(
+                context,
+                query.kind,
+                &project,
+                &query.format,
+                query.raw,
+            )
+            .await
+        }
+        TargetSelector::Service(service) => {
+            let output = match query.kind {
+                InspectKind::Container => {
+                    inspect_container(
+                        context,
+                        &service,
+                        &query.format,
+                        query.raw,
+                    )
+                    .await?
+                }
+                InspectKind::Image => {
+                    inspect_image(context, &service, &query.format, query.raw)
+                        .await?
+                }
+            };
+            Ok(vec![output])
+        }
+    }
+}
+
+async fn inspect_project(
+    context: &NirionContext,
+    kind: InspectKind,
+    project: &ProjectSelector,
+    format: &str,
+    raw: bool,
+) -> anyhow::Result<Vec<String>> {
+    match kind {
+        InspectKind::Container => {
+            inspect_project_containers(context, project, format, raw).await
+        }
+        InspectKind::Image => {
+            inspect_project_images(context, project, format, raw).await
+        }
+    }
+}
 
 pub async fn inspect_project_images(
     context: &NirionContext,

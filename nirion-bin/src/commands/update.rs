@@ -1,9 +1,8 @@
 use clap::Args;
 use futures::StreamExt;
 use nirion_lib::{
-    context::NirionContext,
-    lock_update::image_update_stream,
-    projects::{get_images, TargetSelector},
+    backend::{LockUpdateMode, LockUpdateOperation, NirionBackend},
+    projects::TargetSelector,
 };
 
 use crate::{commands::lock::format_lock_update_event, ClapSelector};
@@ -26,10 +25,15 @@ pub struct UpdateArgs {
 
 pub async fn handle_update(
     args: &UpdateArgs,
-    context: &NirionContext,
+    backend: &dyn NirionBackend,
 ) -> anyhow::Result<()> {
-    let images = get_images(&args.target, &context.projects);
-    let mut events = image_update_stream(context, images, args.jobs);
+    let mut events = backend
+        .lock_updates(LockUpdateOperation {
+            target: args.target.clone(),
+            mode: LockUpdateMode::UpdateAll,
+            jobs: args.jobs,
+        })
+        .await;
 
     while let Some(event) = events.next().await {
         println!("{}", format_lock_update_event(event?));

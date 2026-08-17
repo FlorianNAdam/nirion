@@ -13,6 +13,7 @@ tokio = { version = "1.53.0", features = ["io-util", "macros", "net", "process",
 serde_yaml_ng = "0.10.0"
 chrono = "0.4.45"
 rustix = { version = "1.1.4", features = ["pty", "termios", "process", "fs"] }
+async-trait = "0.1.92"
 
 [dev-dependencies]
 nirion-oci-lib = { path = "../nirion-oci-lib", features = ["test-registry"] }

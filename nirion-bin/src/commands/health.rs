@@ -2,8 +2,8 @@ use anyhow::Result;
 use clap::{Args, Subcommand};
 use futures::StreamExt;
 use nirion_lib::{
-    context::NirionContext,
-    health::{health_logs_stream, HealthLogStreamOptions},
+    backend::{HealthLogsRequest, NirionBackend},
+    health::HealthLogStreamOptions,
     projects::TargetSelector,
 };
 use std::time::Duration;
@@ -44,10 +44,10 @@ struct HealthLogsArgs {
 
 pub async fn handle_health(
     args: &HealthArgs,
-    context: &NirionContext,
+    backend: &dyn NirionBackend,
 ) -> Result<()> {
     match &args.command {
-        HealthCommand::Logs(args) => handle_health_logs(args, context).await?,
+        HealthCommand::Logs(args) => handle_health_logs(args, backend).await?,
     }
 
     Ok(())
@@ -55,15 +55,19 @@ pub async fn handle_health(
 
 async fn handle_health_logs(
     args: &HealthLogsArgs,
-    context: &NirionContext,
+    backend: &dyn NirionBackend,
 ) -> Result<()> {
     let options = HealthLogStreamOptions {
         follow: args.follow,
         refresh_interval: args.refresh,
     };
     let mut renderer = HealthRenderer::new();
-    let mut stream =
-        health_logs_stream(context.clone(), args.target.clone(), options);
+    let mut stream = backend
+        .health_log_stream(HealthLogsRequest {
+            target: args.target.clone(),
+            options,
+        })
+        .await;
 
     while let Some(event) = stream.next().await {
         renderer.render(event?)?;
