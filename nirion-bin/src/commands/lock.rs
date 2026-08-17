@@ -63,6 +63,9 @@ pub fn format_lock_update_event(event: LockUpdateEvent) -> String {
         LockUpdateEvent::ImageStarted { service, image } => {
             format!("Checking {service}: {image}")
         }
+        LockUpdateEvent::Warning { service, message } => {
+            format!("Warning {service}: {message}")
+        }
         LockUpdateEvent::ImageResolved { service } => {
             format!("Resolved {service}")
         }
@@ -210,6 +213,15 @@ mod tests {
         assert!(resolved
             .to_lowercase()
             .contains("resolved"));
+
+        let warning = format_lock_update_event(LockUpdateEvent::Warning {
+            service: "app.web".to_string(),
+            message: "version lookup failed".to_string(),
+        });
+        let warning = warning.to_lowercase();
+        assert!(warning.contains("warning"));
+        assert!(warning.contains("app.web"));
+        assert!(warning.contains("version lookup failed"));
 
         let changes =
             format_lock_update_event(LockUpdateEvent::ChangesDetected {

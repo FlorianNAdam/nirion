@@ -1,6 +1,9 @@
 use futures::{FutureExt, stream::FuturesUnordered};
 use futures::{StreamExt, channel::mpsc, stream::BoxStream};
-use nirion_oci_lib::{client::NirionOciClient, oci_client::Reference};
+use nirion_oci_lib::{
+    client::{NirionOciClient, VersionedImageResolution},
+    oci_client::Reference,
+};
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
@@ -79,7 +82,7 @@ async fn image_update_stream_inner(
             async move {
                 let _permit = semaphore.acquire().await.unwrap();
 
-                let versioned_image = if let Some(mut current) =
+                let resolved = if let Some(mut current) =
                     current_versioned_image
                 {
                     current.image = image.clone();
@@ -89,6 +92,16 @@ async fn image_update_stream_inner(
                     get_cached_image(&client, &image, &digest_cache).await?
                 };
 
+                for warning in resolved.warnings {
+                    emit_event(
+                        &event_tx,
+                        LockUpdateEvent::Warning {
+                            service: service.clone(),
+                            message: warning,
+                        },
+                    );
+                }
+
                 emit_event(
                     &event_tx,
                     LockUpdateEvent::ImageResolved {
@@ -96,7 +109,7 @@ async fn image_update_stream_inner(
                     },
                 );
 
-                Ok::<_, anyhow::Error>((service, versioned_image))
+                Ok::<_, anyhow::Error>((service, resolved.image))
             }
             .boxed(),
         );
@@ -145,26 +158,29 @@ async fn get_cached_image(
     client: &NirionOciClient,
     image: &str,
     cache: &Arc<RwLock<HashMap<String, VersionedImage>>>,
-) -> anyhow::Result<VersionedImage> {
+) -> anyhow::Result<VersionedImageResolution> {
     if let Some(existing) = {
         let locked_cache = cache.read().await;
         locked_cache.get(image).cloned()
     } {
-        return Ok(existing);
+        return Ok(VersionedImageResolution {
+            image: existing,
+            warnings: Vec::new(),
+        });
     }
 
     let reference = Reference::try_from(image)?;
-    let mut versioned_image = client
-        .get_versioned_image(&reference)
+    let mut resolved = client
+        .get_versioned_image_resolution(&reference)
         .await?;
-    versioned_image.image = image.to_string();
+    resolved.image.image = image.to_string();
 
     {
         let mut locked_cache = cache.write().await;
-        locked_cache.insert(image.to_string(), versioned_image.clone());
+        locked_cache.insert(image.to_string(), resolved.image.clone());
     }
 
-    Ok(versioned_image)
+    Ok(resolved)
 }
 
 #[cfg(test)]
@@ -176,10 +192,15 @@ mod tests {
     };
     use futures::StreamExt;
     use nirion_oci_lib::{
+        docker_hub::DockerHubClient,
         oci_client::secrets::RegistryAuth,
         test_registry::{RegistryHandle, http_nirion_client},
     };
-    use std::path::PathBuf;
+    use std::{io::ErrorKind, path::PathBuf};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
 
     fn image(
         image: &str,
@@ -322,6 +343,63 @@ mod tests {
 
         let written = written_lock_file(lock_file)?;
         assert_eq!(written.get("app.web").unwrap().image, configured_image);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn version_lookup_failure_emits_warning_and_continues()
+    -> anyhow::Result<()> {
+        let handle = RegistryHandle::start_anonymous().await?;
+        let test_image = handle
+            .push(
+                "library/nirion-lock-update-warning",
+                "latest",
+                &RegistryAuth::Anonymous,
+            )
+            .await?;
+        let (hub_base_url, hub_server) = start_failing_docker_hub(
+            "/namespaces/library/repositories/nirion-lock-update-warning/tags?page_size=100&page=1",
+        )
+        .await?;
+        let docker_hub = DockerHubClient::with_base_url(hub_base_url)
+            .with_registries([test_image.registry_addr.clone()]);
+        let dir = tempfile::tempdir()?;
+        let lock_file = dir.path().join("nirion.lock");
+
+        let events = collect_events(image_update_stream(
+            &context(
+                http_nirion_client()
+                    .docker_hub_client(docker_hub)
+                    .build(),
+                LockedImages::default(),
+                lock_file.clone(),
+            ),
+            BTreeMap::from([(
+                "app.web".to_string(),
+                test_image.reference.to_string(),
+            )]),
+            1,
+        ))
+        .await?;
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            LockUpdateEvent::Warning { service, message }
+                if service == "app.web" && message.contains("Failed to resolve version tag")
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            LockUpdateEvent::ChangesDetected { diffs }
+                if matches!(diffs.as_slice(), [DiffEntry::Added { service, new }] if service == "app.web" && new.version.is_none() && new.digest == test_image.digest)
+        )));
+
+        let written = written_lock_file(lock_file)?;
+        let locked = written.get("app.web").unwrap();
+        assert_eq!(locked.digest, test_image.digest);
+        assert_eq!(locked.version, None);
+
+        hub_server.await??;
 
         Ok(())
     }
@@ -499,30 +577,94 @@ mod tests {
 
         Ok(())
     }
+
+    async fn start_failing_docker_hub(
+        expected_target: &'static str
+    ) -> anyhow::Result<(String, tokio::task::JoinHandle<anyhow::Result<()>>)>
+    {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+
+        let server = tokio::spawn(async move {
+            serve_http_response(
+                &listener,
+                500,
+                r#"{"detail":"nope","message":"failed"}"#,
+                expected_target,
+            )
+            .await?;
+            Ok(())
+        });
+
+        Ok((format!("http://{addr}"), server))
+    }
+
+    async fn serve_http_response(
+        listener: &TcpListener,
+        status: u16,
+        body: &str,
+        expected_target: &str,
+    ) -> anyhow::Result<()> {
+        let (mut socket, _) = listener.accept().await?;
+        let mut request = vec![0; 4096];
+        let read = socket.read(&mut request).await?;
+
+        if read == 0 {
+            return Err(std::io::Error::new(
+                ErrorKind::UnexpectedEof,
+                "mock Docker Hub request was empty",
+            )
+            .into());
+        }
+
+        let request = std::str::from_utf8(&request[..read])?;
+        let target = request
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .ok_or_else(|| {
+                anyhow::anyhow!("mock Docker Hub request was invalid")
+            })?;
+        assert_eq!(target, expected_target);
+
+        let reason = if status == 200 { "OK" } else { "Error" };
+        let response = format!(
+            "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        socket
+            .write_all(response.as_bytes())
+            .await?;
+        Ok(())
+    }
 }
 
 async fn get_cached_updated_image(
     client: &NirionOciClient,
     versioned_image: &VersionedImage,
     cache: &Arc<RwLock<HashMap<String, VersionedImage>>>,
-) -> anyhow::Result<VersionedImage> {
+) -> anyhow::Result<VersionedImageResolution> {
     let image = versioned_image.image.as_str();
 
     if let Some(existing) = {
         let locked_cache = cache.read().await;
         locked_cache.get(image).cloned()
     } {
-        return Ok(existing);
+        return Ok(VersionedImageResolution {
+            image: existing,
+            warnings: Vec::new(),
+        });
     }
 
-    let versioned_image = client
-        .get_updated_versioned_image(versioned_image)
+    let resolved = client
+        .get_updated_versioned_image_resolution(versioned_image)
         .await?;
 
     {
         let mut locked_cache = cache.write().await;
-        locked_cache.insert(image.to_string(), versioned_image.clone());
+        locked_cache.insert(image.to_string(), resolved.image.clone());
     }
 
-    Ok(versioned_image)
+    Ok(resolved)
 }
