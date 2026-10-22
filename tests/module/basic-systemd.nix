@@ -6,33 +6,39 @@
 }:
 
 let
-  system = evalConfig [
-    {
-      virtualisation.nirion = {
-        lockFile = lockFile {
-          "web.nginx" = {
-            image = "nginx:latest";
-            version = "latest";
-            digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-          };
-        };
-        lockFileOutput = "/var/lib/nirion/lock.json";
-
-        projects.web = {
-          services.nginx = {
-            image = "nginx:latest";
-            ports = [ "8080:80" ];
-            restart = "unless-stopped";
-          };
+  module = {
+    virtualisation.nirion = {
+      lockFile = lockFile {
+        "web.nginx" = {
+          image = "nginx:latest";
+          version = "latest";
+          digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         };
       };
-    }
+      lockFileOutput = "/var/lib/nirion/lock.json";
+
+      projects.web = {
+        services.nginx = {
+          image = "nginx:latest";
+          ports = [ "8080:80" ];
+          restart = "unless-stopped";
+        };
+      };
+    };
+  };
+
+  system = evalConfig [ module ];
+  asyncSystem = evalConfig [
+    module
+    { virtualisation.nirion.systemd.asyncReload = true; }
   ];
 
   cfg = system.config.virtualisation.nirion;
   compose = cfg.out.compose.web.attrs;
   service = compose.services.nginx;
   unit = system.config.systemd.services.nirion-web;
+  asyncUnit = asyncSystem.config.systemd.services.nirion-web;
+  reloadUnit = asyncSystem.config.systemd.services.nirion-web-reload;
 in
 [
   {
@@ -78,5 +84,25 @@ in
   {
     assertion = lib.hasInfix "nirion down --plain web" unit.serviceConfig.ExecStop;
     message = "systemd stop command does not call nirion down";
+  }
+  {
+    assertion = !(builtins.hasAttr "nirion-web-reload" system.config.systemd.services);
+    message = "systemd reload worker was generated when asynchronous reloads are disabled";
+  }
+  {
+    assertion = lib.hasInfix "nirion reload --plain web" asyncUnit.serviceConfig.ExecReload;
+    message = "asynchronous reloads modified the project service reload command";
+  }
+  {
+    assertion = lib.hasInfix "nirion reload --plain web" reloadUnit.serviceConfig.ExecStart;
+    message = "systemd reload worker does not call nirion reload";
+  }
+  {
+    assertion = !reloadUnit.restartIfChanged;
+    message = "systemd reload worker may be restarted synchronously during activation";
+  }
+  {
+    assertion = reloadUnit.serviceConfig.Type == "exec";
+    message = "systemd reload worker does not become active asynchronously";
   }
 ]
