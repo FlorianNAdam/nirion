@@ -171,6 +171,8 @@ Generated systemd units call `nirion up --plain`, `nirion reload --plain`, and `
 
 Project-level sops secrets, templates, and generated compose-file templates add `nirion-<project>.service` to `reloadUnits` by default, so material changes reload the affected project unless `sops.reloadOnChange = false;` is set.
 
+Set `virtualisation.nirion.systemd.asyncReload = true` to direct generated sops `reloadUnits` to separate `nirion-<project>-reload.service` units. The main `nirion-<project>.service` units remain unchanged. Reload services use systemd's `exec` service type, allowing NixOS activation to continue once the reload process has started instead of waiting for Docker Compose to finish. Inspect the reload unit's status or journal to detect later failures.
+
 
 ## Nirion-Cli
 

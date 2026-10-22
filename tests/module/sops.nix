@@ -101,9 +101,9 @@ let
     config.sops.placeholder."custom/token" = "placeholder-custom-token";
   };
 
-  system = evalConfig [
-    fakeSopsModule
-    ({ config, ... }: {
+  nirionModule =
+    { config, ... }:
+    {
       virtualisation.nirion = baseNirionConfig // {
         sops = {
           defaultSopsFile = globalSopsFile;
@@ -160,12 +160,22 @@ let
           services.app.extraOptions.image = "example.invalid/no-reload:latest";
         };
       };
-    })
+    };
+
+  system = evalConfig [
+    fakeSopsModule
+    nirionModule
+  ];
+  asyncSystem = evalConfig [
+    fakeSopsModule
+    nirionModule
+    { virtualisation.nirion.systemd.asyncReload = true; }
   ];
 
   cfg = system.config;
   service = system.config.virtualisation.nirion.out.compose.secret.attrs.services.app;
   noReloadService = system.config.virtualisation.nirion.out.compose.no-reload.attrs.services.app;
+  asyncCfg = asyncSystem.config;
 in
 [
   {
@@ -264,5 +274,19 @@ in
   {
     assertion = cfg.sops.templates."nirion/no-reload/compose.yaml".reloadUnits == [ ];
     message = "sops.reloadOnChange = false should not add compose template reloadUnits";
+  }
+  {
+    assertion = asyncCfg.sops.secrets."app/password".reloadUnits == [ "nirion-secret-reload.service" ];
+    message = "asynchronous reloads did not target the separate service for project secrets";
+  }
+  {
+    assertion = asyncCfg.sops.templates."app.env".reloadUnits == [ "nirion-secret-reload.service" ];
+    message = "asynchronous reloads did not target the separate service for project templates";
+  }
+  {
+    assertion =
+      asyncCfg.sops.templates."nirion/secret/compose.yaml".reloadUnits
+      == [ "nirion-secret-reload.service" ];
+    message = "asynchronous reloads did not target the separate service for compose templates";
   }
 ]

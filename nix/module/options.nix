@@ -47,6 +47,14 @@ in
     description = "Nirion Docker Compose projects.";
   };
 
+  systemd = {
+    asyncReload = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Run project reloads asynchronously so NixOS activation does not wait for Docker Compose.";
+    };
+  };
+
   sops = {
     defaultSopsFile = mkOption {
       type = types.nullOr types.path;

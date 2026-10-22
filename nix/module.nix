@@ -63,6 +63,8 @@ let
 
   sopsTemplateName = projectName: "nirion/${projectName}/compose.yaml";
   sopsTemplatePath = projectName: config.sops.templates.${sopsTemplateName projectName}.path;
+  projectReloadUnit =
+    projectName: "nirion-${projectName}${lib.optionalString cfg.systemd.asyncReload "-reload"}.service";
   hasSops = options ? sops;
   hasProjectSops = lib.any (project: project.sops.secrets != { } || project.sops.templates != { }) (
     lib.attrValues cfg.projects
@@ -95,7 +97,7 @@ let
   projectSopsReloadUnits =
     projectName: project: entry:
     lib.optionalAttrs project.sops.reloadOnChange {
-      reloadUnits = lib.unique ((entry.reloadUnits or [ ]) ++ [ "nirion-${projectName}.service" ]);
+      reloadUnits = lib.unique ((entry.reloadUnits or [ ]) ++ [ (projectReloadUnit projectName) ]);
     };
 
   projectSopsEntry =
@@ -119,7 +121,7 @@ let
       uid = template.uid;
       gid = template.gid;
       reloadUnits =
-        template.reloadUnits ++ lib.optional project.sops.reloadOnChange "nirion-${projectName}.service";
+        template.reloadUnits ++ lib.optional project.sops.reloadOnChange (projectReloadUnit projectName);
       restartUnits = template.restartUnits;
     }
     // lib.optionalAttrs (template.path != null) {
@@ -258,7 +260,7 @@ in
             content = cfg.out.compose.${projectName}.text;
           }
           // lib.optionalAttrs project.sops.reloadOnChange {
-            reloadUnits = [ "nirion-${projectName}.service" ];
+            reloadUnits = [ (projectReloadUnit projectName) ];
           };
         }) cfg.projects;
       }
