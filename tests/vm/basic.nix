@@ -59,9 +59,9 @@ in
     machine.succeed("systemctl show nirion.target -p Wants --value | grep nirion-target-test.service")
     machine.fail("systemctl show nirion.target -p After --value | grep nirion-target-test.service")
     machine.succeed("systemctl reload --no-block nirion-target-test.service")
-    machine.wait_until_succeeds("test \"$(systemctl show nirion-target-test.service -p SubState --value)\" = reloading")
+    machine.wait_until_succeeds("test \"$(systemctl show nirion-target-test.service -p ActiveState --value)\" = reloading")
     machine.succeed("timeout 2 systemctl start nirion.target multi-user.target")
-    machine.succeed("test \"$(systemctl show nirion-target-test.service -p SubState --value)\" = reloading")
+    machine.succeed("test \"$(systemctl show nirion-target-test.service -p ActiveState --value)\" = reloading")
     machine.wait_until_succeeds("test \"$(systemctl show nirion-target-test.service -p SubState --value)\" = exited")
 
     nirion("list | grep -- '- web'")
