@@ -28,17 +28,12 @@ let
   };
 
   system = evalConfig [ module ];
-  asyncSystem = evalConfig [
-    module
-    { virtualisation.nirion.systemd.asyncReload = true; }
-  ];
 
   cfg = system.config.virtualisation.nirion;
   compose = cfg.out.compose.web.attrs;
   service = compose.services.nginx;
   unit = system.config.systemd.services.nirion-web;
-  asyncUnit = asyncSystem.config.systemd.services.nirion-web;
-  reloadUnit = asyncSystem.config.systemd.services.nirion-web-reload;
+  target = system.config.systemd.targets.nirion;
 in
 [
   {
@@ -86,23 +81,23 @@ in
     message = "systemd stop command does not call nirion down";
   }
   {
-    assertion = !(builtins.hasAttr "nirion-web-reload" system.config.systemd.services);
-    message = "systemd reload worker was generated when asynchronous reloads are disabled";
+    assertion = unit.wantedBy == [ "nirion.target" ];
+    message = "project service is not wanted by nirion.target";
   }
   {
-    assertion = lib.hasInfix "nirion reload --plain web" asyncUnit.serviceConfig.ExecReload;
-    message = "asynchronous reloads modified the project service reload command";
+    assertion = target.wantedBy == [ "multi-user.target" ];
+    message = "nirion.target is not wanted by multi-user.target";
   }
   {
-    assertion = lib.hasInfix "nirion reload --plain web" reloadUnit.serviceConfig.ExecStart;
-    message = "systemd reload worker does not call nirion reload";
+    assertion = !target.unitConfig.DefaultDependencies;
+    message = "nirion.target waits for project services through default dependencies";
   }
   {
-    assertion = !reloadUnit.restartIfChanged;
-    message = "systemd reload worker may be restarted synchronously during activation";
+    assertion = target.conflicts == [ "shutdown.target" ];
+    message = "nirion.target does not stop during shutdown";
   }
   {
-    assertion = reloadUnit.serviceConfig.Type == "exec";
-    message = "systemd reload worker does not become active asynchronously";
+    assertion = target.before == [ "shutdown.target" ];
+    message = "nirion.target is not ordered before shutdown";
   }
 ]

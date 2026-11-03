@@ -6,11 +6,19 @@
   pkgs,
 }:
 
-let
-  projectServices = lib.mapAttrs' (
+lib.mkIf (cfg.projects != { }) {
+  systemd.targets.nirion = {
+    description = "Nirion projects";
+    wantedBy = [ "multi-user.target" ];
+    conflicts = [ "shutdown.target" ];
+    before = [ "shutdown.target" ];
+    unitConfig.DefaultDependencies = false;
+  };
+
+  systemd.services = lib.mapAttrs' (
     projectName: _:
     lib.nameValuePair "nirion-${projectName}" {
-      wantedBy = [ "multi-user.target" ];
+      wantedBy = [ "nirion.target" ];
       after = [
         "docker.service"
         "docker.socket"
@@ -36,29 +44,4 @@ let
       };
     }
   ) cfg.projects;
-
-  reloadServices = lib.mapAttrs' (
-    projectName: _:
-    lib.nameValuePair "nirion-${projectName}-reload" {
-      description = "Reload Nirion project ${projectName}";
-      restartIfChanged = false;
-      after = [
-        "docker.service"
-        "docker.socket"
-      ];
-      requires = [ "docker.service" ];
-      environment = envVars;
-      path = [
-        nirionPkg
-        pkgs.docker
-      ];
-      serviceConfig = {
-        Type = "exec";
-        ExecStart = "${nirionPkg}/bin/nirion reload --plain ${lib.escapeShellArg projectName}";
-      };
-    }
-  ) cfg.projects;
-in
-lib.mkIf (cfg.projects != { }) {
-  systemd.services = projectServices // lib.optionalAttrs cfg.systemd.asyncReload reloadServices;
 }

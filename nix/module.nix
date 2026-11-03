@@ -63,8 +63,7 @@ let
 
   sopsTemplateName = projectName: "nirion/${projectName}/compose.yaml";
   sopsTemplatePath = projectName: config.sops.templates.${sopsTemplateName projectName}.path;
-  projectReloadUnit =
-    projectName: "nirion-${projectName}${lib.optionalString cfg.systemd.asyncReload "-reload"}.service";
+  projectReloadUnit = projectName: "nirion-${projectName}.service";
   hasSops = options ? sops;
   hasProjectSops = lib.any (project: project.sops.secrets != { } || project.sops.templates != { }) (
     lib.attrValues cfg.projects
