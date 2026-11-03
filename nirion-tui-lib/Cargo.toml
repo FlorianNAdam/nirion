@@ -5,4 +5,4 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
-console = "0.16.4"
+console = "0.16.6"
