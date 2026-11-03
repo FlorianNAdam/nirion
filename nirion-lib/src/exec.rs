@@ -14,7 +14,7 @@ use rustix::{
     termios::{Winsize, tcsetwinsize},
 };
 use tokio::{
-    io::unix::AsyncFd,
+    io::unix::{AsyncFd, AsyncFdReadyGuard},
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     sync::{mpsc, watch},
 };
@@ -199,17 +199,16 @@ async fn exec_with_pty(
     let master_out = File::from(pty.master);
     set_nonblocking(&master_in)?;
     set_nonblocking(&master_out)?;
+    let master_in = AsyncFile::register(master_in)?;
+    let master_out = AsyncFile::register(master_out)?;
     let (child_done_tx, child_done_rx) = watch::channel(false);
     let stdin_task = tokio::spawn(copy_channel_to_pty(
         io.input,
-        AsyncFd::new(master_in)?,
+        master_in,
         child_done_rx.clone(),
     ));
-    let stdout_task = tokio::spawn(copy_pty_to_channel(
-        AsyncFd::new(master_out)?,
-        io.output,
-        child_done_rx,
-    ));
+    let stdout_task =
+        tokio::spawn(copy_pty_to_channel(master_out, io.output, child_done_rx));
 
     let status = child.wait().await?;
     let _ = child_done_tx.send(true);
@@ -277,9 +276,31 @@ impl From<ExecTerminalSize> for Winsize {
     }
 }
 
+struct AsyncFile(AsyncFd<File>);
+
+impl AsyncFile {
+    fn register(file: File) -> anyhow::Result<Self> {
+        // SAFETY: File owns a stable descriptor, and this wrapper does not
+        // expose mutable access that could replace it while registered.
+        Ok(Self(unsafe { AsyncFd::register(file)? }))
+    }
+
+    fn get_ref(&self) -> &File {
+        self.0.get_ref()
+    }
+
+    async fn readable(&self) -> std::io::Result<AsyncFdReadyGuard<'_, File>> {
+        self.0.readable().await
+    }
+
+    async fn writable(&self) -> std::io::Result<AsyncFdReadyGuard<'_, File>> {
+        self.0.writable().await
+    }
+}
+
 async fn copy_channel_to_pty(
     mut input: mpsc::UnboundedReceiver<ExecInput>,
-    output: AsyncFd<File>,
+    output: AsyncFile,
     mut child_done: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
     loop {
@@ -309,7 +330,7 @@ async fn copy_channel_to_pty(
 }
 
 async fn copy_pty_to_channel(
-    input: AsyncFd<File>,
+    input: AsyncFile,
     output: mpsc::UnboundedSender<ExecOutput>,
     mut child_done: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
@@ -347,7 +368,7 @@ async fn copy_pty_to_channel(
 }
 
 async fn write_all_pty(
-    output: &AsyncFd<File>,
+    output: &AsyncFile,
     mut data: &[u8],
 ) -> anyhow::Result<()> {
     while !data.is_empty() {
@@ -368,7 +389,7 @@ async fn write_all_pty(
 }
 
 fn drain_pty(
-    input: &AsyncFd<File>,
+    input: &AsyncFile,
     output: &mpsc::UnboundedSender<ExecOutput>,
     buffer: &mut [u8],
 ) -> anyhow::Result<()> {
@@ -977,7 +998,7 @@ printf 'reply:%s\n' "$line"
             TokioDuration::from_secs(1),
             copy_channel_to_pty(
                 rx,
-                AsyncFd::new(master).unwrap(),
+                AsyncFile::register(master).unwrap(),
                 child_done_rx,
             ),
         )
@@ -999,8 +1020,8 @@ printf 'reply:%s\n' "$line"
             .write_all(b"drained from pty\n")
             .unwrap();
 
-        drain_pty(&AsyncFd::new(master).unwrap(), &output, &mut buffer)
-            .unwrap();
+        let master = AsyncFile::register(master).unwrap();
+        drain_pty(&master, &output, &mut buffer).unwrap();
 
         assert_eq!(
             output_rx.try_recv().unwrap(),
@@ -1018,7 +1039,7 @@ printf 'reply:%s\n' "$line"
 
         set_nonblocking(&master).unwrap();
         let task = tokio::spawn(copy_pty_to_channel(
-            AsyncFd::new(master).unwrap(),
+            AsyncFile::register(master).unwrap(),
             tx,
             child_done_rx,
         ));
@@ -1057,7 +1078,8 @@ printf 'reply:%s\n' "$line"
         drop(tx);
 
         set_nonblocking(&master).unwrap();
-        copy_channel_to_pty(rx, AsyncFd::new(master).unwrap(), child_done_rx)
+        let master = AsyncFile::register(master).unwrap();
+        copy_channel_to_pty(rx, master, child_done_rx)
             .await
             .unwrap();
 

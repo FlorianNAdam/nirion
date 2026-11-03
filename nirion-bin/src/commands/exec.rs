@@ -4,10 +4,11 @@ use nirion_lib::{
     exec::{ExecInput, ExecIo, ExecOutput, ExecRequest, ExecTerminalSize},
 };
 use rustix::fs::{fcntl_getfl, fcntl_setfl, OFlags};
+use rustix::io::dup;
 use rustix::termios::{
     isatty, tcgetattr, tcgetwinsize, tcsetattr, OptionalActions,
 };
-use std::io::Read;
+use std::{fs::File, io::Read};
 use tokio::{
     io::{self, unix::AsyncFd, AsyncReadExt, AsyncWriteExt},
     signal::unix::{signal, SignalKind},
@@ -263,11 +264,38 @@ impl Drop for RawMode {
     }
 }
 
+struct AsyncFile(AsyncFd<File>);
+
+impl AsyncFile {
+    fn register(file: File) -> anyhow::Result<Self> {
+        // SAFETY: File owns a stable descriptor, and the AsyncFd is encapsulated
+        // so the registered File cannot be replaced through get_mut().
+        Ok(Self(unsafe { AsyncFd::register(file)? }))
+    }
+
+    async fn read(
+        &self,
+        buffer: &mut [u8],
+    ) -> std::io::Result<usize> {
+        loop {
+            let mut guard = self.0.readable().await?;
+            match guard.try_io(|inner| {
+                let mut file = inner.get_ref();
+                file.read(buffer)
+            }) {
+                Ok(result) => return result,
+                Err(_would_block) => continue,
+            }
+        }
+    }
+}
+
 async fn read_interactive_stdin(
     input_tx: mpsc::UnboundedSender<ExecInput>,
     mut done: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
-    let stdin = AsyncFd::new(std::io::stdin())?;
+    let stdin = File::from(dup(std::io::stdin())?);
+    let stdin = AsyncFile::register(stdin)?;
     let mut buffer = [0; 8192];
 
     loop {
@@ -279,14 +307,10 @@ async fn read_interactive_stdin(
                 }
             }
 
-            ready = stdin.readable() => {
-                let mut guard = ready?;
-                match guard.try_io(|inner| {
-                    let mut stdin = inner.get_ref().lock();
-                    stdin.read(&mut buffer)
-                }) {
-                    Ok(Ok(0)) => break,
-                    Ok(Ok(n)) => {
+            read = stdin.read(&mut buffer) => {
+                match read {
+                    Ok(0) => break,
+                    Ok(n) => {
                         if input_tx
                             .send(ExecInput::Stdin(buffer[..n].to_vec()))
                             .is_err()
@@ -294,8 +318,7 @@ async fn read_interactive_stdin(
                             return Ok(());
                         }
                     }
-                    Ok(Err(error)) => return Err(error.into()),
-                    Err(_would_block) => continue,
+                    Err(error) => return Err(error.into()),
                 }
             }
         }
